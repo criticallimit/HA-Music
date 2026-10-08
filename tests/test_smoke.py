@@ -67,6 +67,11 @@ with patch.object(app, "ha_request") as mock:
     assert mock.call_args.args[0] == "/services/media_player/play_media"
     assert mock.call_args.args[1]["media"]["media_content_type"] == "custom"
     assert mock.call_args.args[1]["entity_id"] == "media_player.wohnzimmer"
+    assert set(app.DIRECT_STATIONS) == {"1live","wdr2","swr3","sommerhits","charts","80s","90s"}
+    assert app.DIRECT_STATIONS["charts"]["media_content_type"] == "AMAZON_MUSIC"
+    assert app.DIRECT_STATIONS["charts"]["media_content_id"] == "spiele  die charts auf Wohnung"
+    assert app.DIRECT_STATIONS["80s"]["media_content_id"] == "spiele best of achtziger auf Wohnung"
+    assert app.DIRECT_STATIONS["1live"]["media_content_id"] == "spiele eins live aus der ARD Audiothek auf Wohnung"
     try:
         app.perform("radio_direct", {"station":"other"})
         raise AssertionError("Unverified station accepted")
