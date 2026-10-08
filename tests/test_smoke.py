@@ -98,3 +98,5 @@ with patch.object(metadata, "probe_icy", side_effect=lambda station: {
     with patch.object(metadata, "CACHE", {}):
         assert metadata.now_playing("wdr2")["title"] == "Song A"
         assert metadata.now_playing("1live")["title"] == "Song B"
+
+assert metadata.parse_icy_title('WDR 2 Hotline: 0800 5678 222')['show'] == 'WDR 2 Hotline: 0800 5678 222'
