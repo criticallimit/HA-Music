@@ -304,6 +304,35 @@ def perform(action, body):
         found = next((x for x in players() if x["entity_id"] == entity), None)
         if not found and not any(x["entity_id"] == entity for x in classify_devices()["groups"]):
             raise ValueError("Media Player nicht gefunden")
+        if entity == "media_player.wohnung":
+            # Virtual group master: change only unmuted room speakers.
+            # Alexa's physical group volume would reactivate muted rooms.
+            room_players = players()
+            saved = speaker_levels()
+            active = [p for p in room_players
+                      if p["state"] not in ("unknown", "unavailable")
+                      and (saved.get(p["entity_id"], p.get("volume") or 0) > 0)]
+            if not active:
+                return {"ok": True, "updated": 0}
+            current = [saved.get(p["entity_id"], p.get("volume") or 0) for p in active]
+            peak = max(current)
+            if peak <= 0:
+                return {"ok": True, "updated": 0}
+            changed = {}
+            failed = []
+            for p in active:
+                target = round(min(1.0, max(0.0, saved.get(p["entity_id"], p.get("volume") or 0) * level / peak)), 3)
+                try:
+                    ha_request("/services/media_player/volume_set", {"entity_id": p["entity_id"], "volume_level": target})
+                    changed[p["entity_id"]] = target
+                except (RuntimeError, HTTPError, URLError, ValueError) as exc:
+                    failed.append(f"{p['entity_id']}: {exc}")
+            if changed:
+                save_speaker_levels(changed)
+            if failed:
+                print("[HA Music] Master partial failure: " + "; ".join(failed), flush=True)
+                raise RuntimeError("Master: " + "; ".join(failed))
+            return {"ok": True, "updated": len(changed)}
         result = ha_request("/services/media_player/volume_set", {"entity_id": entity, "volume_level": level})
         save_speaker_levels({entity: float(level)})
         print(f"[HA Music] Saved speaker {entity}: {round(level * 100)}%", flush=True)
