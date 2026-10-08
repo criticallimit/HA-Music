@@ -65,29 +65,6 @@ function renderRadioMetadata(station, external) {
     $("current-artist").textContent = "Aktuelle Programminformation nicht verfügbar";
   }
 }
-async function updateRadioMetadata() {
-  const station = selectedStation;
-  if (!["wdr2","1live","swr3"].includes(station) || metadataInFlight.has(station)) return;
-  metadataInFlight.add(station);
-  const epoch = stationEpoch;
-  try {
-    const item = await api("now-playing?station=" + encodeURIComponent(station));
-    if (stationEpoch !== epoch || station !== selectedStation) return;
-    if (item?.status === "available" && (item.title || item.show)) {
-      lastStationMetadata.set(station, {value:item, at:Date.now()});
-      renderRadioMetadata(station, item);
-    } else {
-      const prior = lastStationMetadata.get(station);
-      if (prior && Date.now() - prior.at < METADATA_GRACE_MS)
-        renderRadioMetadata(station, prior.value);
-      else renderRadioMetadata(station, null);
-    }
-  } catch (_) {
-    const prior = lastStationMetadata.get(station);
-    if (stationEpoch === epoch && (!prior || Date.now() - prior.at >= METADATA_GRACE_MS))
-      renderRadioMetadata(station, null);
-  } finally { metadataInFlight.delete(station); }
-}
 async function updateSong() {
   if (songRequestRunning) return;
   songRequestRunning = true;
@@ -156,8 +133,8 @@ function connectRadioEvents() {
   };
 }
 connectRadioEvents();
-// HTTP fallback if SSE is interrupted; avoid parallel normal polling.
-setInterval(() => { if (!radioEventsReady) updateRadioMetadata(); }, 15000);
+// The server provides live ICY changes over the event connection.
+
 // Alexa is the authoritative source for Amazon song and cover changes.
 setInterval(updateSong, 6000);
 const previous = new Map();
@@ -187,8 +164,6 @@ for (const [id,name] of STATIONS) {
       if (!["wdr2","1live","swr3"].includes(id)) {
         for (const delay of [5000, 9000, 15000, 22000]) setTimeout(updateSong, delay);
       }
-      updateRadioMetadata();
-      if (["wdr2","1live","swr3"].includes(id)) setTimeout(updateRadioMetadata, 3000);
       status(name + " direkt über den Alexa-Media-Player angefordert. Bitte Wiedergabe prüfen.");
     } catch(e) { status("Direkte Wiedergabe fehlgeschlagen: " + e.message); }
     finally { await loadRadioState(); }
