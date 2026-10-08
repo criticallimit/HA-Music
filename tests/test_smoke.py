@@ -60,16 +60,15 @@ with patch.object(app, "classify_devices", return_value={"groups":[{"name":"Wohn
         assert mocked.call_args.args[1]["media_content_type"] == "TUNEIN"
         assert mocked.call_args.args[1]["media_content_id"] == "WDR 2"
 
-# Radio actions are restricted to the seven known Home Assistant script entities.
+# Direct WDR2 playback is independent of external scripts.
 with patch.object(app, "ha_request") as mock:
-    mock.side_effect = lambda path, payload=None: ([{"entity_id": "script.radio_wdr2_uberall", "state": "off"}, {"entity_id":"switch.alexa_alle","state":"off"}] if path == "/states" else {})
-    app.perform("radio_script", {"station":"wdr2"})
-    assert mock.call_args.args[0] == "/services/script/turn_on"
-    assert mock.call_args.args[1]["entity_id"] == "script.radio_wdr2_uberall"
-    app.perform("radio_power", {"on":True})
-    assert mock.call_args.args[0] == "/services/switch/turn_on"
+    mock.side_effect = lambda path, payload=None: ([{"entity_id":"media_player.wohnzimmer","state":"idle"}] if path == "/states" else {})
+    app.perform("radio_direct", {"station":"wdr2"})
+    assert mock.call_args.args[0] == "/services/media_player/play_media"
+    assert mock.call_args.args[1]["media"]["media_content_type"] == "custom"
+    assert mock.call_args.args[1]["entity_id"] == "media_player.wohnzimmer"
     try:
-        app.perform("radio_script", {"station":"arbitrary"})
-        raise AssertionError("Unknown script key must be rejected")
+        app.perform("radio_direct", {"station":"other"})
+        raise AssertionError("Unverified station accepted")
     except ValueError:
         pass
