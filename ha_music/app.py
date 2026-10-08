@@ -21,17 +21,23 @@ ENTITY_RE = re.compile(r"^media_player\.[a-z0-9_]+$")
 
 VOLUME_FILE = Path(os.environ.get("VOLUME_FILE", "/config/volumes.json"))
 LOCK = threading.Lock()
-def integration_player_ids():
-    """Read actual entity-registry integration ownership via HA's template API."""
+def integration_inventory():
+    """Discover registered Alexa entities from both supported integration domains."""
     response = ha_request("/template", {
-        "template": "{{ integration_entities('alexa_devices') | to_json }}"
+        "template": "{{ dict(alexa_devices=integration_entities('alexa_devices'), alexa_media=integration_entities('alexa_media')) | to_json }}"
     })
     if not isinstance(response, str):
         raise ValueError("Unerwartete Antwort der Home-Assistant-Template-API")
-    ids = json.loads(response)
-    if not isinstance(ids, list):
-        raise ValueError("Ungültige Alexa-Geräteliste")
-    return {entity for entity in ids if isinstance(entity, str) and ENTITY_RE.fullmatch(entity)}
+    data = json.loads(response)
+    if not isinstance(data, dict):
+        raise ValueError("Ungültiges Alexa-Inventar")
+    return {domain: [eid for eid in data.get(domain, []) if isinstance(eid, str)]
+            for domain in ("alexa_devices", "alexa_media")}
+
+def integration_player_ids():
+    inventory = integration_inventory()
+    return {entity for values in inventory.values() for entity in values
+            if ENTITY_RE.fullmatch(entity)}
 
 def detected_devices():
     ids = integration_player_ids()
@@ -131,7 +137,12 @@ class Handler(BaseHTTPRequestHandler):
             return self.reply(200, now_playing(station))
         if name == "players" and "/api/" in path:
             try:
-                return self.reply(200, {"players": players(), "groups": [p for p in detected_devices() if p["possible_group"]], "remembered": remembered(), "discovery": "integration_registry"})
+                inventory = integration_inventory()
+                return self.reply(200, {"players": players(), "groups": [],
+                    "remembered": remembered(), "discovery": "integration_registry",
+                    "diagnostics": {domain: {"entities": len(values),
+                        "media_players": sum(v.startswith("media_player.") for v in values)}
+                        for domain, values in inventory.items()}})
             except (RuntimeError, HTTPError, URLError, ValueError) as exc:
                 return self.reply(503, {"error": str(exc)})
         name = name or "index.html"
