@@ -1,11 +1,11 @@
 <!doctype html>
 <html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>HA Music</title><link rel="stylesheet" href="style.css"></head>
 <body><main class="shell">
-<header><h1>HA Music</h1><nav aria-label="Musikquelle"><button id="radio-tab" class="active" type="button">Radio</button><button id="apple-tab" type="button">Apple Music</button></nav></header>
+<header><div class="header-spacer" aria-hidden="true"></div><nav aria-label="Musikquelle"><button id="radio-tab" class="active" type="button">Radio</button><button id="apple-tab" type="button">Apple Music</button></nav><div class="power-buttons"><button type="button" id="power-on" aria-label="Radio einschalten" title="Radio einschalten">⏻</button><button type="button" id="power-off" aria-label="Radio ausschalten" title="Radio ausschalten">⏻</button></div></header>
 <section id="radio-page" class="dashboard">
 <article class="now" aria-label="Aktuelle Wiedergabe"><div class="art"><img id="current-cover" alt="Senderlogo oder Albumcover" hidden><span class="art-placeholder" aria-hidden="true">♫</span></div><div class="now-overlay"><div class="now-head"><small>Internetradio</small><h2 id="current-title">Noch kein Sender ausgewählt</h2></div><div class="now-description"><div id="current-artist">Aktuelle Programminformation nicht verfügbar</div><div id="now-ticker" class="now-ticker" hidden><span id="now-ticker-text"></span></div><small id="playback-state">Prüfe Wiedergabe …</small></div></div></article>
 <div class="dashboard-right">
-<div class="powerbar"><span id="radio-state" role="status">Prüfe Radiozustand …</span><div class="power-buttons"><button type="button" id="power-on" aria-label="Radio einschalten" title="Radio einschalten">⏻</button><button type="button" id="power-off" aria-label="Radio ausschalten" title="Radio ausschalten">⏻</button></div></div>
+<div id="radio-state" class="sr-info" role="status">Prüfe Radiozustand …</div>
 <div id="master-volume" class="players master-volume">Lade Master-Lautstärke …</div>
 <div id="groups" class="sr-info">Prüfe Wohnung …</div>
 <div id="players" class="players speaker-list" aria-label="Lautsprecher">Lade Geräte …</div>
@@ -15,5 +15,5 @@
 </div>
 </section>
 <section id="apple-page" hidden><article class="notice"><h2>Apple Music</h2><p>In Vorbereitung. Später sind Alben, Playlists und Familienprofile vorgesehen.</p></article></section>
-<footer>HA Music</footer>
+
 </main><script src="app.js"></script></body></html>
