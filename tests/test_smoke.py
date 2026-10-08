@@ -39,3 +39,17 @@ with tempfile.TemporaryDirectory() as temp:
     app.save_remembered("media_player.kueche", 0.4)
     assert app.remembered()["media_player.kueche"] == 0.4
 print("HA Music smoke checks passed")
+
+# WDR 2 test is unavailable unless Wohnung explicitly advertises PLAY_MEDIA.
+with patch.object(app, "classify_devices", return_value={"groups":[{"name":"Wohnung","entity_id":"media_player.wohnung","state":"idle","features":0}],"players":[],"excluded":[]}):
+    assert app.playback_capability()["available"] is False
+    try:
+        app.perform("test_wdr2", {})
+        raise AssertionError("Unsupported group must not receive a play command")
+    except ValueError:
+        pass
+with patch.object(app, "classify_devices", return_value={"groups":[{"name":"Wohnung","entity_id":"media_player.wohnung","state":"idle","features":512}],"players":[],"excluded":[]}):
+    with patch.object(app, "ha_request", return_value={}) as request:
+        app.perform("test_wdr2", {})
+        assert request.call_args.args[0] == "/services/media_player/play_media"
+        assert request.call_args.args[1]["entity_id"] == "media_player.wohnung"
