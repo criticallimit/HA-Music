@@ -17,6 +17,27 @@ async function api(path, data) {
 }
 let ready = false;
 let selectedStation = "";
+$("test-wdr2").addEventListener("click", async () => {
+  const button = $("test-wdr2");
+  if (!confirm("WDR 2 jetzt auf der Alexa-Gruppe Wohnung starten? Eine laufende Wiedergabe kann unterbrochen werden.")) return;
+  button.disabled = true;
+  try {
+    await api("test_wdr2", {});
+    $("test-info").textContent = "Testbefehl gesendet. Bitte prüfen, ob alle Gruppenlautsprecher synchron Radio spielen.";
+  } catch(e) {
+    $("test-info").textContent = "Test fehlgeschlagen: " + e.message;
+  } finally { await checkPlayback(); }
+});
+async function checkPlayback() {
+  try {
+    const result = await api("playback-check");
+    $("test-wdr2").disabled = !result.available;
+    $("test-info").textContent = result.reason + (result.entity_id ? " (" + result.entity_id + ")" : "");
+  } catch (e) {
+    $("test-wdr2").disabled = true;
+    $("test-info").textContent = "Fähigkeitsprüfung fehlgeschlagen: " + e.message;
+  }
+}
 async function updateSong() {
   if (!selectedStation) return;
   try {
@@ -48,6 +69,7 @@ async function refresh() {
   } catch(e) { status(e.message); }
   try {
     const {players,remembered,groups,excluded,diagnostics} = await api("players");
+    await checkPlayback();
     $("groups").textContent = groups.length ? "Gruppe: " + groups.map(p => p.name + " (" + p.state + ")").join(", ") + " · Die direkte Wiedergabe wird noch geprüft." : "Multiroom-Gruppe Wohnung derzeit nicht erkannt.";
     $("excluded").textContent = excluded?.length ? "Weitere Alexa-Geräte (nicht als Raumlautsprecher): " + excluded.map(p => p.name).join(", ") : "";
     const wrap = $("players"); wrap.replaceChildren();
