@@ -203,6 +203,10 @@ def radio_start_sequence(generation):
 
             # A successful play_media service call does not prove the Echo plays.
             station = last_selected_station()
+            if not station:
+                print("[HA Music] No saved station; cannot verify playback readiness", flush=True)
+                time.sleep(4)
+                continue
             if station:
                 confirmed = False
                 for play_attempt in range(5):
