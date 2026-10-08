@@ -26,6 +26,7 @@ VOLUME_FILE = Path(os.environ.get("VOLUME_FILE", "/data/volumes.json"))
 STATION_FILE = Path(os.environ.get("STATION_FILE", "/data/last_station.json"))
 SPEAKER_FILE = Path(os.environ.get("SPEAKER_FILE", "/data/speaker_levels.json"))
 VIEW_FILE = Path(os.environ.get("VIEW_FILE", "/data/selected_view.json"))
+CARD_INSTALLED_FILE = Path("/data/dashboard_card_installed")
 STARTED_AT = None
 RESTORE_GENERATION = 0
 RADIO_MONITOR_STOP = threading.Event()
@@ -313,6 +314,15 @@ def save_selected_station(station):
         temporary.replace(STATION_FILE)
 
 
+def dashboard_card_installed():
+    return CARD_INSTALLED_FILE.is_file()
+
+
+def mark_dashboard_card_installed():
+    CARD_INSTALLED_FILE.parent.mkdir(parents=True, exist_ok=True)
+    CARD_INSTALLED_FILE.touch(exist_ok=True)
+
+
 def selected_view():
     try:
         value = json.loads(VIEW_FILE.read_text()).get("view")
@@ -348,6 +358,7 @@ def radio_state():
             "last_station":last_selected_station(),
             "selected_view":selected_view(),
             "startup_remaining":startup_remaining(),
+            "dashboard_card_installed":dashboard_card_installed(),
             "stations":[{"id":key, "name":item["name"],
                          "available":item["target"] in states and
                             states[item["target"]].get("state") not in ("unknown","unavailable")}
@@ -514,7 +525,7 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         path = unquote(urlsplit(self.path).path)
         action = path.rsplit("/", 1)[-1]
-        if "/api/" not in path or action not in ("volume", "radio_direct", "radio_power", "selected_view"):
+        if "/api/" not in path or action not in ("volume", "radio_direct", "radio_power", "selected_view", "dashboard_card_installed"):
             return self.reply(404, {"error": "Not found"})
         try:
             size = int(self.headers.get("Content-Length", "0"))
@@ -523,7 +534,9 @@ class Handler(BaseHTTPRequestHandler):
             body = json.loads(self.rfile.read(size))
             if not isinstance(body, dict):
                 raise ValueError("Invalid body")
-            if action == "selected_view":
+            if action == "dashboard_card_installed":
+                mark_dashboard_card_installed()
+            elif action == "selected_view":
                 save_selected_view(body.get("view"))
             else:
                 perform(action, body)
