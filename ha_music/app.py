@@ -131,14 +131,14 @@ def playback_capability():
                       else "Gruppe unterstützt play_media nicht"}
 
 def perform(action, body):
-    if action == "test_wdr2":
+    if action in ("test_wdr2", "test_tunein_wdr2"):
         capability = playback_capability()
         if not capability["available"]:
             raise ValueError(capability["reason"])
         return ha_request("/services/media_player/play_media", {
             "entity_id": capability["entity_id"],
-            "media_content_type": "music",
-            "media_content_id": WDR2_STREAM,
+            "media_content_type": "TUNEIN" if action == "test_tunein_wdr2" else "music",
+            "media_content_id": "WDR 2" if action == "test_tunein_wdr2" else WDR2_STREAM,
         })
     if action == "volume":
         entity = body.get("entity_id", "")
@@ -206,7 +206,7 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         path = unquote(urlsplit(self.path).path)
         action = path.rsplit("/", 1)[-1]
-        if "/api/" not in path or action not in ("volume", "test_wdr2"):
+        if "/api/" not in path or action not in ("volume", "test_wdr2", "test_tunein_wdr2"):
             return self.reply(404, {"error": "Not found"})
         try:
             size = int(self.headers.get("Content-Length", "0"))
