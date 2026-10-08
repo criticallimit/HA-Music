@@ -23,11 +23,18 @@ async function updateSong() {
     const details = info.details;
     const title = details?.title;
     const artist = details?.artist;
-    $("current-title").textContent = title || (selectedStation ? STATIONS.find(s => s[0] === selectedStation)?.[1] : null) || "Kein Titel verfügbar";
-    $("current-artist").textContent = [artist, details?.album].filter(Boolean).join(" · ") ||
+    const isRadio = ["wdr2","1live","swr3"].includes(selectedStation);
+    let external = null;
+    if (isRadio && (!artist || !title || (details?.image && !artist))) {
+      try { const item = await api("now-playing?station=" + encodeURIComponent(selectedStation));
+        if (item.status === "available" && item.title && item.artist) external = item;
+      } catch (_) { /* Keep Alexa media attributes when station lookup fails. */ }
+    }
+    $("current-title").textContent = external?.title || title || (selectedStation ? STATIONS.find(s => s[0] === selectedStation)?.[1] : null) || "Kein Titel verfügbar";
+    $("current-artist").textContent = [external?.artist || artist, external ? "" : details?.album].filter(Boolean).join(" · ") ||
       (info.playing ? "Wiedergabe aktiv · Titelinformationen nicht verfügbar" : "Keine bestätigte Wiedergabe");
     const cover = $("current-cover");
-    const picture = details?.image;
+    const picture = external?.cover || details?.image;
     if (picture && (picture.startsWith("/") || picture.startsWith("https://"))) {
       cover.src = picture; cover.hidden = false;
     } else { cover.hidden = true; cover.removeAttribute("src"); }
@@ -35,7 +42,7 @@ async function updateSong() {
       "Alexa meldet derzeit keine aktive Wiedergabe" ;
   } catch(e) { $("playback-state").textContent = "Wiedergabestatus nicht verfügbar: " + e.message; }
 }
-setInterval(updateSong, 15000);
+setInterval(updateSong, 30000);
 const previous = new Map();
 function status(text) { $("message").textContent = text; }
 const stationButtons = new Map();
@@ -51,6 +58,7 @@ for (const [id,name] of STATIONS) {
       selectedStation = id;
       $("current-title").textContent = name;
       setTimeout(updateSong, 2500);
+      if (["wdr2","1live","swr3"].includes(id)) setTimeout(updateSong, 10000);
       status(name + " direkt über den Alexa-Media-Player angefordert. Bitte Wiedergabe prüfen.");
     } catch(e) { status("Direkte Wiedergabe fehlgeschlagen: " + e.message); }
     finally { await loadRadioState(); }
@@ -84,6 +92,29 @@ for (const [id,on] of [["power-on",true],["power-off",false]]) {
   });
 }
 setInterval(loadRadioState, 20000);
+let volumeReconcileGeneration = 0;
+function scheduleVolumeReconciliation(value) {
+  const generation = ++volumeReconcileGeneration;
+  const room = $("players");
+  for (const row of room.querySelectorAll(".player-row")) {
+    const slider = row.querySelector("input[type=range]");
+    const label = row.querySelectorAll("span")[1];
+    const name = row.querySelector("span")?.textContent || "";
+    if (!slider || slider.disabled || /unavailable/i.test(name)) continue;
+    slider.value = Math.round(value * 100);
+    if (label) label.textContent = Math.round(value * 100) + "%*";
+  }
+  status("Master-Lautstärke gesendet. Raumwerte vorläufig angezeigt (*); Bestätigung durch Alexa steht aus.");
+  setTimeout(async () => {
+    if (generation !== volumeReconcileGeneration) return;
+    await refreshPlayers();
+    status("Lautsprecherwerte erneut aus Home Assistant eingelesen.");
+  }, 3000);
+  setTimeout(async () => {
+    if (generation !== volumeReconcileGeneration) return;
+    await refreshPlayers();
+  }, 15000);
+}
 function volumeRow(p, remembered, master) {
   const row = document.createElement("div"); row.className = "player-row";
   const title = document.createElement("span"); title.textContent = (master ? "Master Volume" : p.name + " (" + p.state + ")");
@@ -96,14 +127,14 @@ function volumeRow(p, remembered, master) {
       mute.textContent = Number(slider.value) === 0 ? "Ein" : "Stumm";
       slider.addEventListener("change", async () => {
         const volume = Number(slider.value)/100;
-        try { await api("volume",{entity_id:p.entity_id,volume}); if(volume>0)previous.set(p.entity_id,volume);label.textContent=slider.value+"%"; }
+        try { await api("volume",{entity_id:p.entity_id,volume}); if(volume>0)previous.set(p.entity_id,volume);label.textContent=slider.value+"%";mute.textContent=volume?"Stumm":"Ein"; if (master) scheduleVolumeReconciliation(volume); }
         catch(e){status(e.message);}
       });
       mute.addEventListener("click",async () => {
         const current = Number(slider.value)/100;
         const next = current > 0 ? 0 : (previous.get(p.entity_id) || remembered[p.entity_id] || 0.3);
         if(current>0) previous.set(p.entity_id,current);
-        try { await api("volume",{entity_id:p.entity_id,volume:next});slider.value=Math.round(next*100);label.textContent=slider.value+"%";mute.textContent=next?"Stumm":"Ein"; }
+        try { await api("volume",{entity_id:p.entity_id,volume:next});slider.value=Math.round(next*100);label.textContent=slider.value+"%";mute.textContent=next?"Stumm":"Ein";if(master) scheduleVolumeReconciliation(next); }
         catch(e){status(e.message);}
       });
 
