@@ -18,6 +18,7 @@ async function api(path, data) {
 let ready = false;
 let selectedStation = "";
 let testRunning = false;
+const playbackButtons = [$("test-wdr2"), $("test-tunein")];
 function testResult(message, error = false) {
   const element = $("test-result");
   element.textContent = message;
@@ -27,8 +28,8 @@ $("test-wdr2").addEventListener("click", async () => {
   if (!confirm("WDR 2 jetzt auf der Alexa-Gruppe Wohnung starten? Eine laufende Wiedergabe kann unterbrochen werden.")) return;
   testRunning = true;
   const button = $("test-wdr2");
-  button.disabled = true;
-  testResult("WDR-2-Test läuft …");
+  playbackButtons.forEach(b => b.disabled = true);
+  testResult("MP3-Stream-Test läuft …");
   try {
     await api("test_wdr2", {});
     testResult("Home Assistant hat den Wiedergabebefehl ohne API-Fehler angenommen. Ob auf Wohnung tatsächlich Audio abgespielt wird, ist damit noch nicht bestätigt.");
@@ -39,13 +40,24 @@ $("test-wdr2").addEventListener("click", async () => {
     await checkPlayback();
   }
 });
+$("test-tunein").addEventListener("click", async () => {
+  if (!confirm("WDR 2 über TuneIn auf Wohnung testen? Eine laufende Wiedergabe kann unterbrochen werden.")) return;
+  testRunning = true;
+  playbackButtons.forEach(b => b.disabled = true);
+  testResult("TuneIn-Test läuft …");
+  try {
+    await api("test_tunein_wdr2", {});
+    testResult("TuneIn-Befehl ohne API-Fehler übermittelt. Bitte prüfen, ob WDR 2 tatsächlich hörbar ist.");
+  } catch(e) { testResult("TuneIn-Test fehlgeschlagen: " + e.message, true); }
+  finally { testRunning = false; await checkPlayback(); }
+});
 async function checkPlayback() {
   try {
     const result = await api("playback-check");
-    $("test-wdr2").disabled = testRunning || !result.available;
+    playbackButtons.forEach(b => b.disabled = testRunning || !result.available);
     $("test-info").textContent = result.reason + (result.entity_id ? " (" + result.entity_id + ")" : "");
   } catch (e) {
-    $("test-wdr2").disabled = true;
+    playbackButtons.forEach(b => b.disabled = true);
     $("test-info").textContent = "Fähigkeitsprüfung fehlgeschlagen: " + e.message;
   }
 }
