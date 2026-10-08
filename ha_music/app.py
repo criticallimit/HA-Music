@@ -153,49 +153,72 @@ def set_radio_ready(enabled):
 
 
 def radio_start_sequence(generation):
-    """Run once per actual switch-on edge, independently of dashboard sessions."""
+    """Wait for Alexa boot, refresh entities, restore levels, and confirm playback."""
     try:
-        # Echo devices may be unavailable immediately after power is applied.
-        for attempt in range(60):
+        # HA media_player states can look available while physical Echos still boot.
+        print("[HA Music] Waiting 45s for Echo startup", flush=True)
+        for _ in range(45):
+            if generation != RESTORE_GENERATION:
+                return
+            time.sleep(1)
+        for attempt in range(90):
             if generation != RESTORE_GENERATION:
                 return
             states = state_snapshot()
             if states.get(RADIO_SWITCH, {}).get("state") != "on":
                 return
-            reachable = all(states.get(entity, {}).get("state") not in
-                            (None, "unknown", "unavailable") for entity in RADIO_PLAYERS)
-            if reachable:
-                # Force a fresh state update, as the old HA automation did.
+            try:
                 ha_request("/services/homeassistant/update_entity",
                            {"entity_id": list(RADIO_PLAYERS)})
-                time.sleep(5)
-                if generation != RESTORE_GENERATION:
-                    return
-                states = state_snapshot()
-                if states.get(RADIO_SWITCH, {}).get("state") != "on":
-                    return
-                if all(states.get(entity, {}).get("state") not in
-                       (None, "unknown", "unavailable") for entity in RADIO_PLAYERS):
-                    set_radio_ready(True)
+            except (RuntimeError, HTTPError, URLError, ValueError) as exc:
+                print(f"[HA Music] Entity refresh retry: {exc}", flush=True)
+            time.sleep(5)
+            if generation != RESTORE_GENERATION:
+                return
+            states = state_snapshot()
+            if states.get(RADIO_SWITCH, {}).get("state") != "on":
+                return
+            if not all(states.get(e, {}).get("state") not in
+                       (None, "unknown", "unavailable") for e in RADIO_PLAYERS):
+                time.sleep(2)
+                continue
+
+            # A successful play_media service call does not prove the Echo plays.
+            station = last_selected_station()
+            if station:
+                confirmed = False
+                for play_attempt in range(5):
                     if generation != RESTORE_GENERATION:
                         return
-                    restore_speakers(generation)
-                    # Do not interrupt music already started by an external controller.
-                    station = last_selected_station()
-                    if station and generation == RESTORE_GENERATION:
-                        playing = any(states.get(e, {}).get("state") == "playing"
-                                      for e in RADIO_PLAYERS)
-                        if not playing:
-                            try:
-                                perform("radio_direct", {"station": station})
-                                MONITOR.select(station)
-                                print(f"[HA Music] Resumed station {station}", flush=True)
-                            except (RuntimeError, HTTPError, URLError, ValueError) as exc:
-                                print(f"[HA Music] Station resume failed: {exc}", flush=True)
-                    print("[HA Music] Alexa initialization completed", flush=True)
-                    return
-            time.sleep(2)
-        print("[HA Music] Alexa initialization timed out; readiness stays off", flush=True)
+                    states = state_snapshot()
+                    if states.get(RADIO_SWITCH, {}).get("state") != "on":
+                        return
+                    if any(states.get(e, {}).get("state") == "playing" for e in RADIO_PLAYERS):
+                        confirmed = True
+                        break
+                    try:
+                        perform("radio_direct", {"station": station})
+                        print(f"[HA Music] Starting {station}, attempt {play_attempt+1}", flush=True)
+                    except (RuntimeError, HTTPError, URLError, ValueError) as exc:
+                        print(f"[HA Music] Station start retry: {exc}", flush=True)
+                    time.sleep(8)
+                if not confirmed:
+                    states = state_snapshot()
+                    confirmed = any(states.get(e, {}).get("state") == "playing"
+                                    for e in RADIO_PLAYERS)
+                if not confirmed:
+                    print("[HA Music] Playback unconfirmed; retrying Alexa readiness", flush=True)
+                    time.sleep(4)
+                    continue
+                MONITOR.select(station)
+
+            restore_speakers(generation)
+            if generation != RESTORE_GENERATION:
+                return
+            set_radio_ready(True)
+            print("[HA Music] Alexa initialization completed", flush=True)
+            return
+        print("[HA Music] Alexa startup timed out; readiness stays off", flush=True)
     except (RuntimeError, HTTPError, URLError, ValueError) as exc:
         print(f"[HA Music] Initialization failed: {exc}", flush=True)
 
