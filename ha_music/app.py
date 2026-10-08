@@ -248,11 +248,11 @@ class Handler(BaseHTTPRequestHandler):
             except (RuntimeError, HTTPError, URLError, ValueError) as exc:
                 return self.reply(503, {"error": str(exc)})
         name = name or "index.html"
-        if name not in ("index.html", "style.css", "app.js"):
+        if name not in ("index.html", "style.css", "app.js", "1live.svg", "wdr2.svg", "swr3.svg"):
             self.send_error(404)
             return
         content = (WEB / name).read_bytes()
-        mime = {"index.html": "text/html", "style.css": "text/css", "app.js": "application/javascript"}[name]
+        mime = {"index.html": "text/html", "style.css": "text/css", "app.js": "application/javascript", "1live.svg": "image/svg+xml", "wdr2.svg": "image/svg+xml", "swr3.svg": "image/svg+xml"}[name]
         self.send_response(200)
         self.send_header("Content-Type", mime + "; charset=utf-8")
         self.send_header("Content-Length", str(len(content)))
