@@ -48,18 +48,11 @@ footer{font-size:11px;color:#717781;margin-top:12px}
 @media(max-width:920px){.shell{padding:14px}.dashboard{grid-template-columns:1fr}.now{height:420px}.dashboard-right{gap:10px}.stations{margin-top:0}.speaker-list{display:grid;grid-template-columns:repeat(3,minmax(0,1fr))}.speaker-list .player-row{padding:12px;min-height:100px}.station{min-height:90px}}
 @media(max-width:550px){header{align-items:flex-start;flex-direction:column}.now{height:330px}.now-overlay{max-height:57%;padding:36px 15px 13px}.now-description{height:100px}.stations{grid-template-columns:repeat(3,minmax(0,1fr))}.speaker-list{grid-template-columns:1fr}.powerbar{height:52px}.power-buttons button{width:45px;height:45px;font-size:26px}.now-ticker{font-size:15px}}
 
-/* Broadcast branding follows the reference: centered, complete, clear padding. */
-.now.radio-selected .art{background:#fff}
-.now.radio-selected .art img:not([hidden]){width:100%;height:100%;object-fit:contain;object-position:center;padding:clamp(22px,5%,46px)}
-.now:not(.radio-selected) .art img:not([hidden]){padding:0;object-fit:contain}
-.now.radio-selected .art-placeholder{display:none}
-
 /* Alignment and playback artwork corrections */
 .now{border-radius:24px}
 .now:not(.radio-selected) .art{background:#17191d}
 .now:not(.radio-selected) .art img:not([hidden]){object-fit:cover;object-position:center;width:100%;height:100%;padding:0}
-.now.radio-selected .art{background:#fff}
-.now.radio-selected .art img:not([hidden]){object-fit:contain;width:100%;height:100%;padding:3%;background:#fff}
+
 .now.radio-selected .now-overlay{background:linear-gradient(to bottom,transparent,rgba(35,35,38,.46) 44%,rgba(32,32,34,.6));padding-bottom:16px}
 .now-overlay{bottom:0;border-radius:0 0 24px 24px}
 .now-description{height:auto;max-height:100px}
@@ -147,25 +140,30 @@ header .power-buttons button{width:48px;height:48px;border-radius:14px;font-size
   .now{height:330px}
 }
 
-/* A dedicated, responsive viewport above the fixed text overlay.
-   The old global .art img rule used position:absolute: that caused the logo
-   to escape the flex layout and be cropped when the column became narrow. */
-.now.radio-selected .art{
-  position:absolute;top:0;right:0;bottom:192px;left:0;
-  display:flex;align-items:center;justify-content:center;
-  min-width:0;min-height:0;overflow:hidden;background:#fff;
-}
-.now.radio-selected .art img:not([hidden]){
-  position:static;inset:auto;display:block;
-  width:100%;height:100%;max-width:100%;max-height:100%;
-  min-width:0;min-height:0;flex:0 1 auto;
-  padding:clamp(12px,3%,28px);box-sizing:border-box;
-  object-fit:contain;object-position:center;
-}
-@media(max-width:550px){.now.radio-selected .art{bottom:172px}}
 header .header-radio-state{grid-column:1;justify-self:start;align-self:center;min-width:0;max-width:100%;font-size:12px;line-height:1.35;color:#9ba9b7;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 @media(max-width:550px){
   header .header-radio-state{grid-column:1;grid-row:2;font-size:11px}
   header nav{grid-column:1;grid-row:1}
   header .power-buttons{grid-column:2;grid-row:1}
+}
+
+/* One canonical responsive radio-logo rule; no absolute positioning on the image.
+   The image scales using its natural aspect ratio within the available width. */
+.now.radio-selected .art{
+  position:absolute;inset:0 0 192px 0;
+  display:grid;place-items:center;
+  overflow:hidden;min-width:0;min-height:0;background:#fff;
+}
+.now.radio-selected .art img:not([hidden]){
+  position:relative;inset:auto;
+  display:block;box-sizing:border-box;
+  width:calc(100% - 40px);height:auto;
+  max-width:calc(100% - 40px);max-height:calc(100% - 30px);
+  min-width:0;min-height:0;
+  object-fit:contain;object-position:center;
+  padding:0;margin:auto;transform:none;
+}
+@media(max-width:550px){
+  .now.radio-selected .art{bottom:172px}
+  .now.radio-selected .art img:not([hidden]){width:calc(100% - 24px);max-width:calc(100% - 24px)}
 }
