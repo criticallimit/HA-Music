@@ -142,8 +142,14 @@ function status(text) { $("message").textContent = text; }
 const stationButtons = new Map();
 for (const [id,name] of STATIONS) {
   const button = document.createElement("button");
-  button.textContent = name;
   button.className = "station";
+  const pictogram = document.createElement("span");
+  pictogram.className = "station-icon";
+  pictogram.setAttribute("aria-hidden", "true");
+  pictogram.textContent = ["1live","wdr2","swr3"].includes(id) ? "▣" : "♫";
+  const label = document.createElement("span");
+  label.textContent = name;
+  button.append(pictogram, label);
   button.setAttribute("aria-pressed", "false");
   button.disabled = true;
   button.addEventListener("click", async () => {
