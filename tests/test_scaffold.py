@@ -14,7 +14,7 @@ for expected in ("radio-page", "apple-page", "radio-tab", "apple-tab"):
     assert expected in html and expected in js, expected
 assert "ingress: true" in config
 assert "ingress_port: 8099" in config
-assert "now-playing" in js
+assert "api/events" in js
 assert "echo_entities" not in config
 assert "save_remembered" in source
 assert "detected_devices" in source
@@ -48,6 +48,9 @@ assert "MONITOR.select(body" in source
 assert 'new EventSource("api/events")' in js
 assert "if (!isRadio)" in js and "details?.image" in js
 assert "metadata_feed.py" in dockerfile
+assert "now-playing?station=" not in js
+assert "icy-diagnostics" not in source
+assert "metadata-probe" not in source
 # Station pictures must never be overwritten by delayed Alexa radio artwork.
 assert "if (!isRadio) {\n      const cover" in js
 print("Radio event-stream and Amazon artwork contracts passed")
