@@ -155,12 +155,8 @@ def set_radio_ready(enabled):
 def radio_start_sequence(generation):
     """Wait for Alexa boot, refresh entities, restore levels, and confirm playback."""
     try:
-        # HA media_player states can look available while physical Echos still boot.
-        print("[HA Music] Waiting 45s for Echo startup", flush=True)
-        for _ in range(45):
-            if generation != RESTORE_GENERATION:
-                return
-            time.sleep(1)
+        # Probe the Echo states immediately; playback confirmation is the readiness test.
+        print("[HA Music] Checking Echo responsiveness", flush=True)
         for attempt in range(90):
             if generation != RESTORE_GENERATION:
                 return
