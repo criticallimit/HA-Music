@@ -8,7 +8,7 @@ function show(page) {
 }
 $("radio-tab").addEventListener("click", () => show("radio"));
 $("apple-tab").addEventListener("click", () => show("apple"));
-const STATIONS = [["wdr2","WDR 2"],["1live","1LIVE"],["wdr4","WDR 4"],["80s80s","80s80s"],["ndr2","NDR 2"],["radiobob","Radio BOB!"]];
+const STATIONS = [["1live","1LIVE"],["wdr2","WDR 2"],["swr3","SWR3"],["sommerhits","Sommerhits"],["charts","Charts"],["80s","80er"],["90s","90er"]];
 async function api(path, data) {
   const response = await fetch("api/" + path, data ? {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(data)} : {});
   const body = await response.json();
@@ -75,20 +75,56 @@ async function updateSong() {
 setInterval(updateSong, 60000);
 const previous = new Map();
 function status(text) { $("message").textContent = text; }
+const stationButtons = new Map();
 for (const [id,name] of STATIONS) {
   const button = document.createElement("button");
   button.textContent = name;
   button.className = "station";
+  button.disabled = true;
   button.addEventListener("click", async () => {
-    selectedStation=id; $("current-title").textContent = name;
-    updateSong(); status("Titelanzeige ausgewählt. Direkte Alexa-Gruppenwiedergabe ist noch nicht verfügbar.");
+    button.disabled = true;
+    try {
+      await api("radio_script", {station:id});
+      selectedStation = id;
+      $("current-title").textContent = name;
+      if (["wdr2","1live"].includes(id)) updateSong();
+      status("Skript für " + name + " an Home Assistant übermittelt. Die tatsächliche Wiedergabe bitte auf den Echo Dots kontrollieren.");
+    } catch(e) { status("Radioskript fehlgeschlagen: " + e.message); }
+    finally { await loadRadioState(); }
   });
+  stationButtons.set(id, button);
   $("station-list").appendChild(button);
 }
+async function loadRadioState() {
+  try {
+    const data = await api("radio-state");
+    const state = new Map(data.stations.map(s => [s.id,s]));
+    for (const [key,button] of stationButtons) button.disabled = !state.get(key)?.available;
+    const label = data.power === "on" && data.ready !== "on" ? "Radio startet …" :
+      data.power === "on" ? "Radio eingeschaltet" :
+      data.power === "off" ? "Radio ausgeschaltet" : "Radio nicht verfügbar";
+    $("radio-state").textContent = label;
+    $("power-on").disabled = data.power === "on" || data.power === "unavailable";
+    $("power-off").disabled = data.power === "off" || data.power === "unavailable";
+  } catch(e) {
+    $("radio-state").textContent = "Radiozustand nicht verfügbar: " + e.message;
+    for (const button of stationButtons.values()) button.disabled = true;
+  }
+}
+for (const [id,on] of [["power-on",true],["power-off",false]]) {
+  $(id).addEventListener("click", async () => {
+    $(id).disabled = true;
+    try { await api("radio_power",{on}); status(on ? "Radio-Einschaltbefehl gesendet." : "Radio-Ausschaltbefehl gesendet."); }
+    catch(e){status(e.message);}
+    finally{await loadRadioState();}
+  });
+}
+setInterval(loadRadioState, 20000);
 async function refresh() {
   try {
     const config = await api("status"); ready = config.backend === "connected";
-    status(ready ? "Geräteerkennung aktiv. Radio-Senderwahl zeigt derzeit Metadaten; direkter Multiroom-Start folgt." : "Home-Assistant-Verbindung nicht verfügbar.");
+    await loadRadioState();
+    status(ready ? "Radiosender verwenden deine vorhandenen Home-Assistant-Skripte." : "Home-Assistant-Verbindung nicht verfügbar.");
   } catch(e) { status(e.message); }
   try {
     const {players,remembered,groups,excluded,diagnostics} = await api("players");
