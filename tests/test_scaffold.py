@@ -14,5 +14,8 @@ for expected in ("radio-page", "apple-page", "radio-tab", "apple-tab"):
     assert expected in html and expected in js, expected
 assert "ingress: true" in config
 assert "ingress_port: 8099" in config
-assert "send_text_command" not in js
+assert "now-playing" in js
+assert "echo_entities" in config
+assert "save_remembered" in source
+assert "allowed_entities" in source
 print("Scaffold validation passed")
