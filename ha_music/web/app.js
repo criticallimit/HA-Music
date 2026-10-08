@@ -93,6 +93,7 @@ function volumeRow(p, remembered, master) {
       const mute = document.createElement("button"); mute.type="button"; mute.textContent="Stumm";
       slider.disabled = p.state === "unavailable" || p.volume === null || p.volume === undefined;
       mute.disabled = slider.disabled;
+      mute.textContent = Number(slider.value) === 0 ? "Ein" : "Stumm";
       slider.addEventListener("change", async () => {
         const volume = Number(slider.value)/100;
         try { await api("volume",{entity_id:p.entity_id,volume}); if(volume>0)previous.set(p.entity_id,volume);label.textContent=slider.value+"%"; }
@@ -122,6 +123,7 @@ async function refresh() {
     const master = groups.find(p => p.entity_id === "media_player.wohnung");
     $("master-volume").replaceChildren();
     if (master) $("master-volume").appendChild(volumeRow(master, remembered, true));
+    else $("master-volume").textContent = "Master-Lautstärke nicht verfügbar";
     $("excluded").textContent = excluded?.length ? "Weitere Alexa-Geräte (nicht als Raumlautsprecher): " + excluded.map(p => p.name).join(", ") : "";
     const wrap = $("players"); wrap.replaceChildren();
     if (!players.length) { const d = diagnostics || {};
@@ -131,4 +133,17 @@ async function refresh() {
     for (const p of players) wrap.appendChild(volumeRow(p, remembered, false));
   } catch(e) { $("players").textContent = "Geräte konnten nicht geladen werden: "+e.message; }
 }
+async function refreshPlayers() {
+  try {
+    const {players,groups,remembered} = await api("players");
+    const master = groups.find(p => p.entity_id === "media_player.wohnung");
+    $("master-volume").replaceChildren();
+    if (master) $("master-volume").appendChild(volumeRow(master, remembered, true));
+    else $("master-volume").textContent = "Master-Lautstärke nicht verfügbar";
+    $("groups").textContent = groups.length ? "Gruppe: " + groups.map(p => p.name).join(", ") + " · Alexa-Multiroom" : "Multiroom-Gruppe Wohnung derzeit nicht erkannt.";
+    const wrap = $("players"); wrap.replaceChildren();
+    for (const p of players) wrap.appendChild(volumeRow(p, remembered, false));
+  } catch (e) { status("Lautsprecherstatus nicht aktualisiert: " + e.message); }
+}
 refresh();
+setInterval(() => { if (!document.querySelector("input[type=range]:active")) refreshPlayers(); }, 30000);
