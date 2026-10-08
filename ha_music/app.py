@@ -320,7 +320,10 @@ def perform(action, body):
                     changed[p["entity_id"]] = float(level)
                 except (RuntimeError, HTTPError, URLError, ValueError) as exc:
                     failed.append(f"{p['entity_id']}: {exc}")
-            save_speaker_levels({"media_player.wohnung": float(level), **changed})
+            # At 0%, preserve each room's active/muted intent so raising master
+            # can restore active rooms without reactivating explicitly muted ones.
+            save_speaker_levels({"media_player.wohnung": float(level),
+                                 **(changed if level > 0 else {})})
             if failed:
                 print("[HA Music] Master partial failure: " + "; ".join(failed), flush=True)
                 raise RuntimeError("Master: " + "; ".join(failed))
