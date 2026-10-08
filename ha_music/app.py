@@ -21,6 +21,7 @@ STATIONS = {"wdr2": "WDR 2", "1live": "1LIVE", "wdr4": "WDR 4",
 ENTITY_RE = re.compile(r"^media_player\.[a-z0-9_]+$")
 
 VOLUME_FILE = Path(os.environ.get("VOLUME_FILE", "/config/volumes.json"))
+STATION_FILE = Path(os.environ.get("STATION_FILE", "/config/last_station.json"))
 LOCK = threading.Lock()
 def integration_inventory():
     """Discover registered Alexa entities from both supported integration domains."""
@@ -128,6 +129,24 @@ DIRECT_STATIONS = {
     "90s": {"name": "90er", "target": "media_player.wohnzimmer", "media_content_type": "AMAZON_MUSIC", "media_content_id": "spiele hits der neunziger auf Wohnung"},
 }
 
+def last_selected_station():
+    try:
+        station = json.loads(STATION_FILE.read_text()).get("station", "")
+        return station if station in DIRECT_STATIONS else ""
+    except (OSError, ValueError, AttributeError):
+        return ""
+
+
+def save_selected_station(station):
+    if station not in DIRECT_STATIONS:
+        return
+    with LOCK:
+        STATION_FILE.parent.mkdir(parents=True, exist_ok=True)
+        temporary = STATION_FILE.with_suffix(".tmp")
+        temporary.write_text(json.dumps({"station": station}))
+        temporary.replace(STATION_FILE)
+
+
 def state_snapshot():
     states = ha_request("/states")
     return {s["entity_id"]:s for s in states if isinstance(s,dict) and isinstance(s.get("entity_id"),str)}
@@ -136,6 +155,7 @@ def radio_state():
     states = state_snapshot()
     return {"power":states.get(RADIO_SWITCH,{}).get("state","unavailable"),
             "ready":states.get(RADIO_READY,{}).get("state","unavailable"),
+            "last_station":last_selected_station(),
             "stations":[{"id":key, "name":item["name"],
                          "available":item["target"] in states and
                             states[item["target"]].get("state") not in ("unknown","unavailable")}
@@ -286,6 +306,7 @@ class Handler(BaseHTTPRequestHandler):
             perform(action, body)
             if action == "radio_direct":
                 MONITOR.select(body["station"])
+                save_selected_station(body["station"])
             elif action == "radio_power" and not body["on"]:
                 MONITOR.select("")
             return self.reply(200, {"ok": True})
