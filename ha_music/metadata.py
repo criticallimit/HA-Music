@@ -62,7 +62,7 @@ def parse_recent_playlist(station, html, now=None):
         # Prefer the explicit "... mit ..." item in the station's player.
         player_section = plain.split("Stream im 1LIVE-Player hören", 1)[-1]
         player_section = player_section.split("Ausführliche Playlist", 1)[0]
-        match = re.search(r"(\\d{1,2})[.:](\\d{2})\\s+(.{2,75}?)\\s+mit\\s+(.{2,100}?)(?=\\s+\\d{1,2}[.:]\\d{2}\\s|$)", player_section, re.I)
+        match = re.search(r"(\d{1,2})[.:](\d{2})\s+(.{2,75}?)\s+mit\s+(.{2,100}?)(?=\s+\d{1,2}[.:]\d{2}\s|$)", player_section, re.I)
         if match:
             hour, minute = int(match[1]), int(match[2])
             song_time = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
