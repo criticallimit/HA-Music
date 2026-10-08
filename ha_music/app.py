@@ -228,10 +228,10 @@ class Handler(BaseHTTPRequestHandler):
                 while True:
                     next_seq, station, payload = MONITOR.await_change(seq, timeout=15)
                     if next_seq == seq:
-                        self.wfile.write(b": keepalive\\n\\n")
+                        self.wfile.write(b": keepalive\n\n")
                     else:
                         message = json.dumps({"station": station, "metadata": payload}, ensure_ascii=False)
-                        self.wfile.write(("data: " + message + "\\n\\n").encode("utf-8"))
+                        self.wfile.write(("data: " + message + "\n\n").encode("utf-8"))
                         seq = next_seq
                     self.wfile.flush()
             except (BrokenPipeError, ConnectionResetError, OSError):
