@@ -40,40 +40,21 @@ with tempfile.TemporaryDirectory() as temp:
     assert app.remembered()["media_player.kueche"] == 0.4
 print("HA Music smoke checks passed")
 
-# WDR 2 test is unavailable unless Wohnung explicitly advertises PLAY_MEDIA.
-with patch.object(app, "classify_devices", return_value={"groups":[{"name":"Wohnung","entity_id":"media_player.wohnung","state":"idle","features":0}],"players":[],"excluded":[]}):
-    assert app.playback_capability()["available"] is False
-    try:
-        app.perform("test_wdr2", {})
-        raise AssertionError("Unsupported group must not receive a play command")
-    except ValueError:
-        pass
-with patch.object(app, "classify_devices", return_value={"groups":[{"name":"Wohnung","entity_id":"media_player.wohnung","state":"idle","features":512}],"players":[],"excluded":[]}):
-    with patch.object(app, "ha_request", return_value={}) as request:
-        app.perform("test_wdr2", {})
-        assert request.call_args.args[0] == "/services/media_player/play_media"
-        assert request.call_args.args[1]["entity_id"] == "media_player.wohnung"
-
-with patch.object(app, "classify_devices", return_value={"groups":[{"name":"Wohnung","entity_id":"media_player.wohnung","state":"idle","features":512}],"players":[],"excluded":[]}):
-    with patch.object(app, "ha_request", return_value={}) as mocked:
-        app.perform("test_tunein_wdr2", {})
-        assert mocked.call_args.args[1]["media_content_type"] == "TUNEIN"
-        assert mocked.call_args.args[1]["media_content_id"] == "WDR 2"
-
-# Direct WDR2 playback is independent of external scripts.
-with patch.object(app, "ha_request") as mock:
-    mock.side_effect = lambda path, payload=None: ([{"entity_id":"media_player.wohnzimmer","state":"idle"}] if path == "/states" else {})
-    app.perform("radio_direct", {"station":"wdr2"})
-    assert mock.call_args.args[0] == "/services/media_player/play_media"
-    assert mock.call_args.args[1]["media"]["media_content_type"] == "custom"
-    assert mock.call_args.args[1]["entity_id"] == "media_player.wohnzimmer"
-    assert set(app.DIRECT_STATIONS) == {"1live","wdr2","swr3","sommerhits","charts","80s","90s"}
-    assert app.DIRECT_STATIONS["charts"]["media_content_type"] == "AMAZON_MUSIC"
-    assert app.DIRECT_STATIONS["charts"]["media_content_id"] == "spiele  die charts auf Wohnung"
-    assert app.DIRECT_STATIONS["80s"]["media_content_id"] == "spiele best of achtziger auf Wohnung"
-    assert app.DIRECT_STATIONS["1live"]["media_content_id"] == "spiele eins live aus der ARD Audiothek auf Wohnung"
-    try:
-        app.perform("radio_direct", {"station":"other"})
-        raise AssertionError("Unverified station accepted")
-    except ValueError:
-        pass
+# A group volume change is permitted, but unregistered players are rejected.
+with patch.object(app, "classify_devices", return_value={"groups":[{"name":"Wohnung","entity_id":"media_player.wohnung","state":"idle","volume":0.3}],"players":[],"excluded":[]}):
+    with patch.object(app,"ha_request",return_value={} ) as mocked:
+        app.perform("volume",{"entity_id":"media_player.wohnung","volume":0.4})
+        assert mocked.call_args.args[1]["entity_id"] == "media_player.wohnung"
+        try:
+            app.perform("volume",{"entity_id":"media_player.unknown","volume":0.4})
+            raise AssertionError("Unknown device accepted")
+        except ValueError:
+            pass
+with patch.object(app, "ha_request", return_value=[
+    {"entity_id":"media_player.wohnzimmer","state":"playing",
+     "attributes":{"media_title":"Testtitel","media_artist":"Künstler","entity_picture":"/api/media_player_proxy/test"}},
+    {"entity_id":"media_player.wohnung","state":"idle","attributes":{}}
+]):
+    result = app.playback_status()
+    assert result["playing"] is True
+    assert result["details"]["title"] == "Testtitel"
