@@ -79,8 +79,11 @@ nav button.active{background:#275276;border-color:#4d8bb8;color:#fff}
  .station{min-height:90px}
 }
 
-/* Visible labels distinguish the two power actions without relying on color. */
-.power-buttons button{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px}
-.power-buttons .power-icon{display:block;font-size:25px;line-height:1}
-.power-buttons .power-label{display:block;font-size:10px;line-height:1.2;font-weight:650;letter-spacing:.02em;color:#d2dae4}
-@media(max-width:550px){.power-buttons .power-icon{font-size:21px}.power-buttons .power-label{font-size:9px}}
+/* Classic IEC-style distinct I / O controls, matching the approved concept A. */
+.power-buttons button{display:flex;align-items:center;justify-content:center;background:#20252d}
+.power-buttons .power-icon{display:block;font-family:Arial,Helvetica,sans-serif;font-size:30px;font-weight:650;line-height:1}
+.power-buttons #power-on{color:#78e985;border-color:#34694b}
+.power-buttons #power-off{color:#f16e78;border-color:#72414b}
+.power-buttons #power-on:not(:disabled):hover{background:#213b30}
+.power-buttons #power-off:not(:disabled):hover{background:#3b262b}
+@media(max-width:550px){.power-buttons .power-icon{font-size:26px}}
