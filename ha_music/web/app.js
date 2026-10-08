@@ -260,6 +260,16 @@ async function loadRadioState() {
     const state = new Map(data.stations.map(s => [s.id,s]));
     const radioReady = data.power === "on" && data.ready === "on";
     displayRadioReadiness(radioReady);
+    // Restore the actual HA Music preset after a power cycle, not merely its artwork.
+    const restored = data.last_station;
+    if (radioReady && !selectedStation && state.has(restored)) {
+      selectedStation = restored;
+      stationEpoch++;
+      setActiveStation(restored);
+      updateStationLogo(restored);
+      $("current-title").textContent = STATIONS.find(item => item[0] === restored)?.[1] || restored;
+      updateSong();
+    }
 
     for (const [key,button] of stationButtons) button.disabled = !radioReady || !state.get(key)?.available;
     const label = data.power === "on" && data.ready !== "on" ? "Radio startet …" :
