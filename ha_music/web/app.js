@@ -22,6 +22,7 @@ const STATION_LOGOS = {
   "swr3": "swr3.svg"
 };
 function updateStationLogo(station) {
+  document.querySelector(".now").classList.toggle("radio-selected", Boolean(STATION_LOGOS[station]));
   const cover = $("current-cover");
   const logo = STATION_LOGOS[station];
   if (logo) {
