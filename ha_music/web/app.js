@@ -34,8 +34,12 @@ async function updateSong() {
     $("current-title").textContent = stationName || title || "Kein Sender ausgewählt";
     const hasSong = Boolean(external?.title && external?.artist);
     const alexaSong = !isRadio && title && artist;
+    const cleanAlexaShow = isRadio && details?.album &&
+      !/^(ARD|WDR\s*2(?:\s+Rhein und Ruhr)?|1LIVE|SWR3)$/i.test(details.album.trim())
+      ? details.album.trim() : "";
     const songLine = hasSong ? external.artist + " – " + external.title :
-      external?.show ? external.show : alexaSong ? artist + " – " + title : "";
+      external?.show ? external.show : cleanAlexaShow ||
+      (alexaSong ? artist + " – " + title : "");
     const ticker = $("now-ticker");
     const tickerText = $("now-ticker-text");
     if (songLine) {
@@ -47,7 +51,7 @@ async function updateSong() {
       ticker.classList.remove("scrolling");
       tickerText.textContent = "";
     }
-    $("current-artist").textContent = hasSong ? "Jetzt läuft" : external?.show ? "Aktuelle Sendung" : songLine ? "Jetzt läuft" : "Aktuelle Programminformation nicht verfügbar";
+    $("current-artist").textContent = hasSong ? "Jetzt läuft" : (external?.show || cleanAlexaShow) ? "Aktuelle Sendung" : songLine ? "Jetzt läuft" : "Aktuelle Programminformation nicht verfügbar";
     const cover = $("current-cover");
     // Keep Alexa's station logo in the radio panel, independently of track data.
     const picture = isRadio ? details?.image : (external?.cover || details?.image);
