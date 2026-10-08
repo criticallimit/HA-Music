@@ -1,0 +1,20 @@
+name: Check
+on:
+  push:
+    branches: [main]
+    paths:
+      - "ha_music/**"
+      - ".github/workflows/check.yml"
+  workflow_dispatch:
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Check Python syntax and frontend contracts
+        run: |
+          python -m py_compile ha_music/app.py
+          python tests/test_scaffold.py
