@@ -59,11 +59,11 @@ function renderRadioMetadata(station, external) {
     if (text.textContent !== line) text.textContent = line;
     text.title = line;
     ticker.hidden = false;
-    $("current-artist").textContent = external?.title && external?.artist ? "Jetzt läuft" : "Aktueller Radiotext";
+    $("current-artist").textContent = "Aktueller Radiotext";
   } else {
     ticker.hidden = true;
     text.textContent = "";
-    $("current-artist").textContent = "Aktuelle Programminformation nicht verfügbar";
+    $("current-artist").textContent = "Aktueller Radiotext";
   }
 }
 async function updateSong() {
@@ -164,7 +164,7 @@ for (const [id,name] of STATIONS) {
       setActiveStation(id);
       stationEpoch++;
       songRequestEpoch++;
-      $("current-artist").textContent = "Aktuelle Programminformation wird geladen …";
+      $("current-artist").textContent = ["1live","wdr2","swr3"].includes(id) ? "Aktueller Radiotext" : "Jetzt läuft";
       $("current-title").textContent = name;
       $("now-ticker").hidden = true;
       $("now-ticker-text").textContent = "";
