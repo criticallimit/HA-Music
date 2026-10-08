@@ -8,6 +8,7 @@ import json
 import os
 import re
 import threading
+import time
 from metadata import now_playing
 from metadata_feed import MONITOR
 
@@ -22,6 +23,8 @@ ENTITY_RE = re.compile(r"^media_player\.[a-z0-9_]+$")
 
 VOLUME_FILE = Path(os.environ.get("VOLUME_FILE", "/config/volumes.json"))
 STATION_FILE = Path(os.environ.get("STATION_FILE", "/config/last_station.json"))
+SPEAKER_FILE = Path(os.environ.get("SPEAKER_FILE", "/config/speaker_levels.json"))
+RESTORE_GENERATION = 0
 LOCK = threading.Lock()
 def integration_inventory():
     """Discover registered Alexa entities from both supported integration domains."""
@@ -89,6 +92,73 @@ def save_remembered(entity, level):
         temporary = VOLUME_FILE.with_suffix(".tmp")
         temporary.write_text(json.dumps(obj))
         temporary.replace(VOLUME_FILE)
+def speaker_levels():
+    try:
+        data = json.loads(SPEAKER_FILE.read_text())
+        return {key: float(value) for key, value in data.items()
+                if isinstance(key, str) and ENTITY_RE.fullmatch(key)
+                and type(value) in (int, float) and 0 <= value <= 1}
+    except (OSError, ValueError, TypeError, AttributeError):
+        return {}
+
+
+def save_speaker_levels(levels):
+    with LOCK:
+        state = speaker_levels()
+        state.update(levels)
+        SPEAKER_FILE.parent.mkdir(parents=True, exist_ok=True)
+        temporary = SPEAKER_FILE.with_suffix(".tmp")
+        temporary.write_text(json.dumps(state))
+        temporary.replace(SPEAKER_FILE)
+
+
+def capture_speaker_levels(states):
+    # Capture before the radio switch powers the devices down.
+    permitted = allowed_entities()
+    saved = {}
+    for entity in permitted:
+        entry = states.get(entity, {})
+        if entry.get("state") in ("unavailable", "unknown"):
+            continue
+        value = (entry.get("attributes") or {}).get("volume_level")
+        if type(value) in (float, int) and 0 <= value <= 1:
+            saved[entity] = float(value)
+    if saved:
+        save_speaker_levels(saved)
+
+
+def restore_speakers(generation):
+    # Wait for the existing Alexa-ready helper; do not impose levels while booting.
+    for _ in range(60):
+        time.sleep(2)
+        if generation != RESTORE_GENERATION:
+            return
+        try:
+            states = state_snapshot()
+            if states.get(RADIO_SWITCH, {}).get("state") != "on":
+                return
+            if states.get(RADIO_READY, {}).get("state") != "on":
+                continue
+            available = allowed_entities()
+            levels = speaker_levels()
+            # Set group before individual rooms so saved room mute levels win.
+            targets = sorted(levels, key=lambda e: (e != "media_player.wohnung", e))
+            for entity in targets:
+                if generation != RESTORE_GENERATION:
+                    return
+                if entity not in available or states.get(entity, {}).get("state") in ("unknown", "unavailable"):
+                    continue
+                try:
+                    ha_request("/services/media_player/volume_set", {
+                        "entity_id": entity, "volume_level": levels[entity]})
+                except (RuntimeError, HTTPError, URLError, ValueError) as exc:
+                    print(f"[HA Music] Could not restore {entity}: {exc}", flush=True)
+            return
+        except (RuntimeError, HTTPError, URLError, ValueError):
+            continue
+    print("[HA Music] Speaker restore skipped: radio did not become ready", flush=True)
+
+
 def options():
     try:
         data = json.loads(OPTIONS.read_text())
@@ -199,13 +269,23 @@ def perform(action, body):
                 "media_content_id":preset["media_content_id"],
                 "media_content_type":preset["media_content_type"], "metadata":{}}})
     if action == "radio_power":
+        global RESTORE_GENERATION
         turn_on = body.get("on")
         if not isinstance(turn_on, bool):
             raise ValueError("Ungültiger Schaltzustand")
         states = state_snapshot()
         if RADIO_SWITCH not in states or states[RADIO_SWITCH].get("state") in ("unavailable", "unknown"):
             raise ValueError("Radioschalter nicht verfügbar")
-        return ha_request("/services/switch/" + ("turn_on" if turn_on else "turn_off"), {"entity_id": RADIO_SWITCH})
+        if not turn_on:
+            # Snapshot live speaker values before shutdown alters them.
+            capture_speaker_levels(states)
+        response = ha_request("/services/switch/" + ("turn_on" if turn_on else "turn_off"), {"entity_id": RADIO_SWITCH})
+        with LOCK:
+            RESTORE_GENERATION += 1
+            generation = RESTORE_GENERATION
+        if turn_on:
+            threading.Thread(target=restore_speakers, args=(generation,), daemon=True).start()
+        return response
     if action == "volume":
         entity = body.get("entity_id", "")
         level = body.get("volume")
@@ -217,6 +297,7 @@ def perform(action, body):
         if not found and not any(x["entity_id"] == entity for x in classify_devices()["groups"]):
             raise ValueError("Media Player nicht gefunden")
         result = ha_request("/services/media_player/volume_set", {"entity_id": entity, "volume_level": level})
+        save_speaker_levels({entity: float(level)})
         if level > 0: save_remembered(entity, level)
         return result
     raise ValueError("Unbekannte Aktion")
