@@ -328,7 +328,7 @@ class HAMusicCard extends HTMLElement {
           padding:0;
           margin:0;
           overflow:hidden;
-          background:var(--primary-background-color);
+          background:transparent;
           box-shadow:none;
           border:0;
         }
@@ -346,7 +346,7 @@ class HAMusicCard extends HTMLElement {
           display:block;
           width:100%;
           border:0;
-          background:var(--primary-background-color);
+          background:transparent;
         }
       </style>
       <ha-card>
@@ -496,9 +496,7 @@ class HAMusicCard extends HTMLElement {
       iframeUrl.searchParams.set("ha_music_theme", this._config.theme || "__dashboard__");
       iframe.src = iframeUrl.toString();
       iframe.style.height = this._config.height + "px";
-      iframe.style.background =
-        getComputedStyle(this).getPropertyValue("--primary-background-color").trim() ||
-        "transparent";
+      iframe.style.background = "transparent";
       iframe.style.opacity = "0";
       iframe.style.transition = "opacity 80ms linear";
       iframe.setAttribute("allow", "clipboard-read; clipboard-write");
