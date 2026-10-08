@@ -306,13 +306,17 @@ async function loadRadioState() {
     if (isDashboardCard) reportDashboardCardLoaded();
     strictStandby = data.standby === true;
     const radioReady = data.power === "on" && data.ready === "on";
+    const becameReady = radioReady && !radioReadyForViews;
     if (!radioReady) closeRadioEvents();
-    else connectRadioEvents();
     radioReadyForViews = radioReady;
+    if (radioReady) connectRadioEvents();
+    if (becameReady) refreshPlayers();
     preferredView = data.selected_view === "apple" ? "apple" : "radio";
     $("radio-tab").disabled = !radioReady;
     $("apple-tab").disabled = !radioReady;
     show(radioReady ? preferredView : "radio");
+    // The room controls are refreshed immediately at the ready transition,
+    // rather than waiting for the next 30-second background interval.
     displayRadioReadiness(radioReady);
     countdownEndsAt = data.power === "on" && !radioReady && data.startup_remaining != null
       ? Date.now() + data.startup_remaining * 1000 : null;
