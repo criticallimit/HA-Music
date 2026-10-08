@@ -105,7 +105,20 @@ async function updateSong() {
       $("now-ticker").hidden = !line;
       $("current-artist").textContent = line ? "Jetzt läuft" : "Aktuelle Programminformation nicht verfügbar";
     }
-    // Do not overwrite station branding with delayed artwork from Alexa.
+    // Fixed branding is exclusively for broadcast stations.
+    // Amazon presets use the artwork supplied by Alexa.
+    if (!isRadio) {
+      const cover = $("current-cover");
+      const image = details?.image;
+      if (image && (image.startsWith("/") || image.startsWith("https://"))) {
+        if (cover.getAttribute("src") !== image) cover.src = image;
+        cover.alt = details?.album || details?.title || "Amazon Music";
+        cover.hidden = false;
+      } else {
+        cover.hidden = true;
+        cover.removeAttribute("src");
+      }
+    }
     $("playback-state").textContent = info.playing ? "Wiedergabe aktiv" : "Alexa meldet derzeit keine aktive Wiedergabe";
   } catch(e) {
     if (stationEpoch === epoch) $("playback-state").textContent = "Wiedergabestatus nicht verfügbar: " + e.message;
@@ -132,13 +145,14 @@ for (const [id,name] of STATIONS) {
       stationEpoch++;
       songRequestEpoch++;
       $("current-artist").textContent = "Aktuelle Programminformation wird geladen …";
-      $("current-cover").hidden = true;
-      $("current-cover").removeAttribute("src");
       $("current-title").textContent = name;
       $("now-ticker").hidden = true;
       $("now-ticker-text").textContent = "";
       updateSong();
       setTimeout(updateSong, 2500);
+      if (!["wdr2","1live","swr3"].includes(id)) {
+        for (const delay of [5000, 9000, 15000, 22000]) setTimeout(updateSong, delay);
+      }
       updateRadioMetadata();
       if (["wdr2","1live","swr3"].includes(id)) setTimeout(updateRadioMetadata, 3000);
       status(name + " direkt über den Alexa-Media-Player angefordert. Bitte Wiedergabe prüfen.");
