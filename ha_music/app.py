@@ -150,7 +150,7 @@ def restore_speakers(generation):
             levels = speaker_levels()
             print(f"[HA Music] Restoring {len(levels)} saved speaker levels", flush=True)
             # Set group before individual rooms so saved room mute levels win.
-            targets = sorted(levels, key=lambda e: (e != "media_player.wohnung", e))
+            targets = sorted(e for e in levels if e != "media_player.wohnung")
             for entity in targets:
                 if generation != RESTORE_GENERATION:
                     return
@@ -391,7 +391,7 @@ class Handler(BaseHTTPRequestHandler):
                 inventory = integration_inventory()
                 classified = classify_devices()
                 return self.reply(200, {"players": classified["players"], "groups": classified["groups"], "excluded": classified["excluded"],
-                    "remembered": remembered(), "discovery": "integration_registry",
+                    "remembered": remembered(), "saved_levels": speaker_levels(), "discovery": "integration_registry",
                     "diagnostics": {domain: {"entities": len(values),
                         "media_players": sum(v.startswith("media_player.") for v in values)}
                         for domain, values in inventory.items()}})
