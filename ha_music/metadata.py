@@ -15,7 +15,6 @@ ICY_LATEST = {}
 ICY_WORKERS = {}
 ICY_LAST_REQUEST = {}
 ICY_IDLE_LIMIT = 45
-ICY_STREAM_HANDLES = {}
 ICY_MAX_AGE = 30
 
 def parse_icy_title(value):
@@ -44,33 +43,22 @@ def _icy_blocks(station):
     req = Request(ICY_STREAMS[station], headers={
         "User-Agent": "HA-Music/0.0.3", "Icy-MetaData": "1"})
     with urlopen(req, timeout=8) as stream:
-        with LOCK:
-            ICY_STREAM_HANDLES[station] = stream
-        try:
-            yield from _icy_stream_metadata(stream)
-        finally:
-            with LOCK:
-                if ICY_STREAM_HANDLES.get(station) is stream:
-                    ICY_STREAM_HANDLES.pop(station, None)
-
-
-def _icy_stream_metadata(stream):
-    value = stream.headers.get("icy-metaint", "")
-    if not value.isdigit() or not 0 < int(value) <= 131072:
-        raise ValueError("ICY-Metadatenintervall nicht verfügbar")
-    interval = int(value)
-    while True:
-        _read_exact(stream, interval)
-        length = _read_exact(stream, 1)[0] * 16
-        if length:
-            raw = _read_exact(stream, length).decode("utf-8", "replace")
-            match = re.search(r"StreamTitle='([^']*)'", raw)
-            if match and match.group(1).strip():
-                yield match.group(1).strip()
+        value = stream.headers.get("icy-metaint", "")
+        if not value.isdigit() or not 0 < int(value) <= 131072:
+            raise ValueError("ICY-Metadatenintervall nicht verfügbar")
+        interval = int(value)
+        while True:
+            _read_exact(stream, interval)
+            length = _read_exact(stream, 1)[0] * 16
+            if length:
+                raw = _read_exact(stream, length).decode("utf-8", "replace")
+                match = re.search(r"StreamTitle='([^']*)'", raw)
+                if match and match.group(1).strip():
+                    yield match.group(1).strip()
+                else:
+                    yield None
             else:
                 yield None
-        else:
-            yield None
 
 
 def _icy_worker(station):
@@ -92,18 +80,6 @@ def _icy_worker(station):
             pass
         time.sleep(retry)
         retry = min(retry * 2, 30)
-
-def stop_icy_workers():
-    """Close active streams immediately when radio switches off."""
-    with LOCK:
-        ICY_LAST_REQUEST.clear()
-        handles = list(ICY_STREAM_HANDLES.values())
-    for stream in handles:
-        try:
-            stream.close()
-        except OSError:
-            pass
-
 
 def ensure_icy_worker(station):
     if station not in ICY_STREAMS:
