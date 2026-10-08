@@ -17,62 +17,25 @@ async function api(path, data) {
 }
 let ready = false;
 let selectedStation = "";
-let testRunning = false;
-const playbackButtons = [$("test-wdr2"), $("test-tunein")];
-function testResult(message, error = false) {
-  const element = $("test-result");
-  element.textContent = message;
-  element.dataset.status = error ? "error" : "info";
-}
-$("test-wdr2").addEventListener("click", async () => {
-  if (!confirm("WDR 2 jetzt auf der Alexa-Gruppe Wohnung starten? Eine laufende Wiedergabe kann unterbrochen werden.")) return;
-  testRunning = true;
-  const button = $("test-wdr2");
-  playbackButtons.forEach(b => b.disabled = true);
-  testResult("MP3-Stream-Test läuft …");
-  try {
-    await api("test_wdr2", {});
-    testResult("Home Assistant hat den Wiedergabebefehl ohne API-Fehler angenommen. Ob auf Wohnung tatsächlich Audio abgespielt wird, ist damit noch nicht bestätigt.");
-  } catch(e) {
-    testResult("Wiedergabetest fehlgeschlagen: " + e.message, true);
-  } finally {
-    testRunning = false;
-    await checkPlayback();
-  }
-});
-$("test-tunein").addEventListener("click", async () => {
-  if (!confirm("WDR 2 über TuneIn auf Wohnung testen? Eine laufende Wiedergabe kann unterbrochen werden.")) return;
-  testRunning = true;
-  playbackButtons.forEach(b => b.disabled = true);
-  testResult("TuneIn-Test läuft …");
-  try {
-    await api("test_tunein_wdr2", {});
-    testResult("TuneIn-Befehl ohne API-Fehler übermittelt. Bitte prüfen, ob WDR 2 tatsächlich hörbar ist.");
-  } catch(e) { testResult("TuneIn-Test fehlgeschlagen: " + e.message, true); }
-  finally { testRunning = false; await checkPlayback(); }
-});
-async function checkPlayback() {
-  try {
-    const result = await api("playback-check");
-    playbackButtons.forEach(b => b.disabled = testRunning || !result.available);
-    $("test-info").textContent = result.reason + (result.entity_id ? " (" + result.entity_id + ")" : "");
-  } catch (e) {
-    playbackButtons.forEach(b => b.disabled = true);
-    $("test-info").textContent = "Fähigkeitsprüfung fehlgeschlagen: " + e.message;
-  }
-}
 async function updateSong() {
-  if (!selectedStation) return;
   try {
-    const info = await api("now-playing?station=" + encodeURIComponent(selectedStation));
-    $("current-title").textContent = info.title || info.station || "Titel nicht verfügbar";
-    $("current-artist").textContent = info.artist || "Keine aktuellen Metadaten";
+    const info = await api("playback-status");
+    const details = info.details;
+    const title = details?.title;
+    const artist = details?.artist;
+    $("current-title").textContent = title || (selectedStation ? STATIONS.find(s => s[0] === selectedStation)?.[1] : null) || "Kein Titel verfügbar";
+    $("current-artist").textContent = [artist, details?.album].filter(Boolean).join(" · ") ||
+      (info.playing ? "Wiedergabe aktiv · Titelinformationen nicht verfügbar" : "Keine bestätigte Wiedergabe");
     const cover = $("current-cover");
-    cover.hidden = !info.cover;
-    if (info.cover) cover.src = info.cover;
-  } catch { $("current-artist").textContent = "Metadaten derzeit nicht verfügbar"; }
+    const picture = details?.image;
+    if (picture && (picture.startsWith("/") || picture.startsWith("https://"))) {
+      cover.src = picture; cover.hidden = false;
+    } else { cover.hidden = true; cover.removeAttribute("src"); }
+    $("playback-state").textContent = info.playing ? "Wiedergabe aktiv" :
+      "Alexa meldet derzeit keine aktive Wiedergabe" ;
+  } catch(e) { $("playback-state").textContent = "Wiedergabestatus nicht verfügbar: " + e.message; }
 }
-setInterval(updateSong, 60000);
+setInterval(updateSong, 15000);
 const previous = new Map();
 function status(text) { $("message").textContent = text; }
 const stationButtons = new Map();
@@ -87,7 +50,7 @@ for (const [id,name] of STATIONS) {
       await api("radio_direct", {station:id});
       selectedStation = id;
       $("current-title").textContent = name;
-      if (["wdr2","1live"].includes(id)) updateSong();
+      setTimeout(updateSong, 2500);
       status(name + " direkt über den Alexa-Media-Player angefordert. Bitte Wiedergabe prüfen.");
     } catch(e) { status("Direkte Wiedergabe fehlgeschlagen: " + e.message); }
     finally { await loadRadioState(); }
@@ -121,30 +84,14 @@ for (const [id,on] of [["power-on",true],["power-off",false]]) {
   });
 }
 setInterval(loadRadioState, 20000);
-async function refresh() {
-  try {
-    const config = await api("status"); ready = config.backend === "connected";
-    await loadRadioState();
-    status(ready ? "Sender werden direkt über Home Assistant abgespielt, ohne externe Skripte." : "Home-Assistant-Verbindung nicht verfügbar.");
-  } catch(e) { status(e.message); }
-  try {
-    const {players,remembered,groups,excluded,diagnostics} = await api("players");
-    await checkPlayback();
-    $("groups").textContent = groups.length ? "Gruppe: " + groups.map(p => p.name + " (" + p.state + ")").join(", ") + " · Die direkte Wiedergabe wird noch geprüft." : "Multiroom-Gruppe Wohnung derzeit nicht erkannt.";
-    $("excluded").textContent = excluded?.length ? "Weitere Alexa-Geräte (nicht als Raumlautsprecher): " + excluded.map(p => p.name).join(", ") : "";
-    const wrap = $("players"); wrap.replaceChildren();
-    if (!players.length) { const d = diagnostics || {};
-      const show = key => (d[key]?.entities ?? 0) + " Entitäten, " + (d[key]?.media_players ?? 0) + " Media Player";
-      wrap.textContent = "Keine Alexa-Media-Player gefunden. Alexa Devices: " + show("alexa_devices") + "; Alexa Media Player: " + show("alexa_media") + ".";
-      return; }
-    for (const p of players) {
-      const row = document.createElement("div"); row.className = "player-row";
-      const title = document.createElement("span"); title.textContent = p.name + " (" + p.state + ")";
-      const slider = document.createElement("input"); slider.type="range"; slider.min=0; slider.max=100; slider.step=5;
+function volumeRow(p, remembered, master) {
+  const row = document.createElement("div"); row.className = "player-row";
+  const title = document.createElement("span"); title.textContent = (master ? "Master Volume" : p.name + " (" + p.state + ")");
+  const slider = document.createElement("input"); slider.type="range"; slider.min=0; slider.max=100; slider.step=5;
       slider.value = Math.round((p.volume ?? 0) * 100);
       const label = document.createElement("span"); label.textContent=slider.value+"%";
       const mute = document.createElement("button"); mute.type="button"; mute.textContent="Stumm";
-      slider.disabled = p.volume === null || p.volume === undefined;
+      slider.disabled = p.state === "unavailable" || p.volume === null || p.volume === undefined;
       mute.disabled = slider.disabled;
       slider.addEventListener("change", async () => {
         const volume = Number(slider.value)/100;
@@ -158,8 +105,30 @@ async function refresh() {
         try { await api("volume",{entity_id:p.entity_id,volume:next});slider.value=Math.round(next*100);label.textContent=slider.value+"%";mute.textContent=next?"Stumm":"Ein"; }
         catch(e){status(e.message);}
       });
-      row.append(title,slider,label,mute); wrap.append(row);
-    }
+
+  row.append(title,slider,label,mute);
+  return row;
+}
+async function refresh() {
+  try {
+    const config = await api("status"); ready = config.backend === "connected";
+    await loadRadioState();
+    status(ready ? "Sender werden direkt über Home Assistant abgespielt, ohne externe Skripte." : "Home-Assistant-Verbindung nicht verfügbar.");
+  } catch(e) { status(e.message); }
+  try {
+    const {players,remembered,groups,excluded,diagnostics} = await api("players");
+    await updateSong();
+    $("groups").textContent = groups.length ? "Gruppe: " + groups.map(p => p.name).join(", ") + " · Alexa-Multiroom" : "Multiroom-Gruppe Wohnung derzeit nicht erkannt.";
+    const master = groups.find(p => p.entity_id === "media_player.wohnung");
+    $("master-volume").replaceChildren();
+    if (master) $("master-volume").appendChild(volumeRow(master, remembered, true));
+    $("excluded").textContent = excluded?.length ? "Weitere Alexa-Geräte (nicht als Raumlautsprecher): " + excluded.map(p => p.name).join(", ") : "";
+    const wrap = $("players"); wrap.replaceChildren();
+    if (!players.length) { const d = diagnostics || {};
+      const show = key => (d[key]?.entities ?? 0) + " Entitäten, " + (d[key]?.media_players ?? 0) + " Media Player";
+      wrap.textContent = "Keine Alexa-Media-Player gefunden. Alexa Devices: " + show("alexa_devices") + "; Alexa Media Player: " + show("alexa_media") + ".";
+      return; }
+    for (const p of players) wrap.appendChild(volumeRow(p, remembered, false));
   } catch(e) { $("players").textContent = "Geräte konnten nicht geladen werden: "+e.message; }
 }
 refresh();
