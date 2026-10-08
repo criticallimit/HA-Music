@@ -69,3 +69,14 @@ assert parsed["show"] == "WDR 2 Popnacht", parsed
 example_talk = "<div>Jetzt läuft: </div><div>09.00 - 12.00 Uhr WDR 2 Der Vormittag</div><span>Mail ins Studio</span>"
 parsed = metadata.parse_wdr_live(example_talk)
 assert parsed["kind"] == "show" and parsed["show"] == "WDR 2 Der Vormittag", parsed
+
+# Fresh playlist data may be shown, but old tracks cannot masquerade as live.
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
+now = datetime(2026, 10, 8, 18, 30, tzinfo=ZoneInfo("Europe/Berlin"))
+live_1 = "<div>18.28 Artist Name mit Example Song</div><div>18.24 Other Artist mit Prior Song</div><div>Ausführliche Playlist</div>"
+assert metadata.parse_recent_playlist("1live", live_1, now)["title"] == "Example Song"
+assert metadata.parse_recent_playlist("1live", live_1, now + timedelta(minutes=10))["kind"] == "unavailable"
+swr = "<div>08.10.2026 18:28 Image: New Track</div><div>Titel New Track Interpret Test Band</div><button>Credits</button>"
+assert metadata.parse_recent_playlist("swr3", swr, now)["artist"] == "Test Band"
+assert metadata.parse_recent_playlist("swr3", swr, now + timedelta(minutes=15))["kind"] == "unavailable"
