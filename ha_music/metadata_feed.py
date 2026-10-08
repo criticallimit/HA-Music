@@ -5,7 +5,7 @@ A single worker polls the broadcaster; browsers subscribe to updates over SSE.
 import json
 import threading
 import time
-from metadata import now_playing, ensure_icy_worker, stop_icy_workers
+from metadata import now_playing, ensure_icy_worker
 
 RADIO = frozenset(("1live", "wdr2", "swr3"))
 
@@ -29,10 +29,6 @@ class MetadataMonitor:
                 self.latest = None
                 self.sequence += 1
                 self.condition.notify_all()
-
-    def stop(self):
-        self.select("")
-        stop_icy_workers()
 
     def snapshot(self):
         with self.condition:
