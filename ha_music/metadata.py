@@ -27,6 +27,7 @@ ICY_MAX_AGE = 30
 ICY_OBSERVATIONS = {}
 ICY_ERRORS = {}
 ICY_DIAGNOSTIC_UNTIL = 0
+ICY_DIAGNOSTIC_STARTED = False
 ICY_DIAGNOSTIC_LOCK = threading.Lock()
 
 
@@ -285,9 +286,10 @@ def _diagnostic_runner():
 
 def icy_diagnostics():
     """Observe live metadata for 15 minutes, without changing playback."""
-    global ICY_DIAGNOSTIC_UNTIL
+    global ICY_DIAGNOSTIC_UNTIL, ICY_DIAGNOSTIC_STARTED
     with ICY_DIAGNOSTIC_LOCK:
-        if time.monotonic() >= ICY_DIAGNOSTIC_UNTIL:
+        if not ICY_DIAGNOSTIC_STARTED:
+            ICY_DIAGNOSTIC_STARTED = True
             ICY_DIAGNOSTIC_UNTIL = time.monotonic() + 900
             threading.Thread(target=_diagnostic_runner, daemon=True,
                              name="icy-diagnostics").start()
