@@ -15,13 +15,35 @@ async function api(path, data) {
   if (!response.ok) throw new Error(body.error || "Anfrage fehlgeschlagen");
   return body;
 }
+// Logos are selected by station ID, never read from Alexa's delayed media state.
+const STATION_LOGOS = {
+  "1live": "https://commons.wikimedia.org/wiki/Special:FilePath/WDR_1LIVE_Logo_2016.svg",
+  "wdr2": "https://commons.wikimedia.org/wiki/Special:FilePath/WDR_2_logo.svg",
+  "swr3": "https://commons.wikimedia.org/wiki/Special:FilePath/SWR3_Logo.svg"
+};
+function updateStationLogo(station) {
+  const cover = $("current-cover");
+  const logo = STATION_LOGOS[station];
+  if (logo) {
+    if (cover.getAttribute("src") !== logo) cover.src = logo;
+    cover.hidden = false;
+  } else {
+    cover.hidden = true;
+    cover.removeAttribute("src");
+  }
+}
+function setActiveStation(station) {
+  for (const [id, button] of stationButtons) {
+    const active = id === station;
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-pressed", String(active));
+  }
+}
 let ready = false;
 let selectedStation = "";
 let stationEpoch = 0;
 let songRequestEpoch = 0;
 let songRequestRunning = false;
-let awaitingStationLogo = false;
-let logoRetryUntil = 0;
 const lastStationMetadata = new Map();
 const METADATA_GRACE_MS = 90000;
 const metadataInFlight = new Set();
@@ -82,16 +104,7 @@ async function updateSong() {
       $("now-ticker").hidden = !line;
       $("current-artist").textContent = line ? "Jetzt läuft" : "Aktuelle Programminformation nicht verfügbar";
     }
-    const image = details?.image;
-    const cover = $("current-cover");
-    if (image && (image.startsWith("/") || image.startsWith("https://"))) {
-      if (cover.getAttribute("src") !== image) cover.src = image;
-      cover.hidden = false;
-      awaitingStationLogo = false;
-    } else if (awaitingStationLogo) {
-      cover.hidden = true;
-      cover.removeAttribute("src");
-    }
+    // Do not overwrite station branding with delayed artwork from Alexa.
     $("playback-state").textContent = info.playing ? "Wiedergabe aktiv" : "Alexa meldet derzeit keine aktive Wiedergabe";
   } catch(e) {
     if (stationEpoch === epoch) $("playback-state").textContent = "Wiedergabestatus nicht verfügbar: " + e.message;
@@ -99,10 +112,6 @@ async function updateSong() {
 }
 setInterval(updateRadioMetadata, 5000);
 setInterval(updateSong, 30000);
-// Recheck Alexa artwork promptly after a station change, then return to normal polling.
-setInterval(() => {
-  if (awaitingStationLogo && Date.now() < logoRetryUntil) updateSong();
-}, 3000);
 const previous = new Map();
 function status(text) { $("message").textContent = text; }
 const stationButtons = new Map();
@@ -110,16 +119,17 @@ for (const [id,name] of STATIONS) {
   const button = document.createElement("button");
   button.textContent = name;
   button.className = "station";
+  button.setAttribute("aria-pressed", "false");
   button.disabled = true;
   button.addEventListener("click", async () => {
     button.disabled = true;
     try {
       await api("radio_direct", {station:id});
       selectedStation = id;
+      updateStationLogo(id);
+      setActiveStation(id);
       stationEpoch++;
       songRequestEpoch++;
-      awaitingStationLogo = true;
-      logoRetryUntil = Date.now() + 45000;
       $("current-artist").textContent = "Aktuelle Programminformation wird geladen …";
       $("current-cover").hidden = true;
       $("current-cover").removeAttribute("src");
