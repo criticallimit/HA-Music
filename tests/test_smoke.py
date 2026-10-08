@@ -80,3 +80,5 @@ assert metadata.parse_recent_playlist("1live", live_1, now + timedelta(minutes=1
 swr = "<div>08.10.2026 18:28 Image: New Track</div><div>Titel New Track Interpret Test Band</div><button>Credits</button>"
 assert metadata.parse_recent_playlist("swr3", swr, now)["artist"] == "Test Band"
 assert metadata.parse_recent_playlist("swr3", swr, now + timedelta(minutes=15))["kind"] == "unavailable"
+
+assert "einslive-playlist-100.html" in metadata.URLS["1live"]
