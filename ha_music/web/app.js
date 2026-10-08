@@ -65,6 +65,8 @@ async function reportDashboardCardLoaded() {
 let radioReadyForViews = false;
 let preferredView = "radio";
 let countdownEndsAt = null;
+let strictStandby = false;
+let radioEventSource = null;
 function show(page) {
   const radio = page === "radio";
   $("radio-page").hidden = !radio;
@@ -171,7 +173,7 @@ function renderRadioMetadata(station, external) {
   }
 }
 async function updateSong() {
-  if (songRequestRunning) return;
+  if (strictStandby || !radioReadyForViews || songRequestRunning) return;
   songRequestRunning = true;
   const station = selectedStation;
   const epoch = stationEpoch;
@@ -210,7 +212,9 @@ async function updateSong() {
 let radioEventsReady = false;
 function connectRadioEvents() {
   if (!window.EventSource) return;
+  if (strictStandby || !radioReadyForViews || radioEventSource) return;
   const source = new EventSource("api/events");
+  radioEventSource = source;
   source.onopen = () => { radioEventsReady = true; };
   source.onerror = () => { radioEventsReady = false; };
   source.onmessage = event => {
@@ -237,8 +241,12 @@ function connectRadioEvents() {
     } catch (_) { /* Ignore invalid event payloads. */ }
   };
 }
-connectRadioEvents();
-// The server provides live ICY changes over the event connection.
+function closeRadioEvents() {
+  if (radioEventSource) radioEventSource.close();
+  radioEventSource = null;
+  radioEventsReady = false;
+}
+ // The server provides live ICY changes over the event connection.
 
 // Alexa is the authoritative source for Amazon song and cover changes.
 setInterval(updateSong, 6000);
@@ -296,7 +304,10 @@ async function loadRadioState() {
     showDashboardSetup = data.show_dashboard_setup === true;
     applyCardSetupVisibility(Boolean(data.dashboard_card_installed));
     if (isDashboardCard) reportDashboardCardLoaded();
+    strictStandby = data.standby === true;
     const radioReady = data.power === "on" && data.ready === "on";
+    if (!radioReady) closeRadioEvents();
+    else connectRadioEvents();
     radioReadyForViews = radioReady;
     preferredView = data.selected_view === "apple" ? "apple" : "radio";
     $("radio-tab").disabled = !radioReady;
@@ -326,6 +337,7 @@ async function loadRadioState() {
     $("power-off").disabled = data.power === "off" || data.power === "unavailable";
   } catch(e) {
     radioReadyForViews = false;
+    closeRadioEvents();
     $("radio-tab").disabled = true;
     $("apple-tab").disabled = true;
     show("radio");
@@ -344,12 +356,15 @@ for (const [id,on] of [["power-on",true],["power-off",false]]) {
       countdownEndsAt = null;
       $("radio-standby-text").textContent = "Radio ausgeschaltet";
     }
-    try { await api("radio_power",{on}); status(on ? "Radio-Einschaltbefehl gesendet." : "Radio-Ausschaltbefehl gesendet."); }
+    try { await api("radio_power",{on});
+      if (on) strictStandby = false; status(on ? "Radio-Einschaltbefehl gesendet." : "Radio-Ausschaltbefehl gesendet."); }
     catch(e){countdownEndsAt = null; status(e.message);}
     finally{await loadRadioState();}
   });
 }
-setInterval(loadRadioState, 3000);
+setInterval(() => {
+  if (!strictStandby || !document.hidden) loadRadioState();
+}, 3000);
 let volumeReconcileGeneration = 0;
 function scheduleVolumeReconciliation(value) {
   const generation = ++volumeReconcileGeneration;
@@ -418,6 +433,7 @@ async function refresh() {
     status(ready ? "Sender werden direkt über Home Assistant abgespielt, ohne externe Skripte." : "Home-Assistant-Verbindung nicht verfügbar.");
   } catch(e) { status(e.message); }
   try {
+    if (strictStandby || !radioReadyForViews) return;
     const {players,remembered,groups,excluded,diagnostics,saved_levels} = await api("players");
     await updateSong();
     $("groups").textContent = groups.length ? "Gruppe: " + groups.map(p => p.name).join(", ") + " · Alexa-Multiroom" : "Multiroom-Gruppe Wohnung derzeit nicht erkannt.";
@@ -435,6 +451,7 @@ async function refresh() {
   } catch(e) { $("players").textContent = "Geräte konnten nicht geladen werden: "+e.message; }
 }
 async function refreshPlayers() {
+  if (strictStandby || !radioReadyForViews) return;
   try {
     const {players,groups,remembered,saved_levels} = await api("players");
     const master = masterView(groups, players, saved_levels);
@@ -447,4 +464,4 @@ async function refreshPlayers() {
   } catch (e) { status("Lautsprecherstatus nicht aktualisiert: " + e.message); }
 }
 refresh();
-setInterval(() => { if (!document.querySelector("input[type=range]:active")) refreshPlayers(); }, 30000);
+setInterval(() => { if (!strictStandby && radioReadyForViews && !document.querySelector("input[type=range]:active")) refreshPlayers(); }, 30000);
