@@ -379,7 +379,6 @@ class HAMusicCard extends HTMLElement {
       if (
         panel.key.endsWith("_ha_music") ||
         panel.key === "ha_music" ||
-        panel.title === "HA Music" ||
         panel.title === "HA Music"
       ) {
         return panel.addon || panel.key;
@@ -397,7 +396,6 @@ class HAMusicCard extends HTMLElement {
       if (
         String(key).endsWith("_ha_music") ||
         String(key) === "ha_music" ||
-        title === "HA Music" ||
         title === "HA Music"
       ) {
         return String(key);
@@ -535,7 +533,7 @@ if (!window.customCards.some(card => card.type === "ha-music-card")) {
   window.customCards.push({
     type:"ha-music-card",
     name:"HA Music",
-    description:"Full-width TV guide with the same features as the sidebar panel",
+    description:"HA Music – Alexa Multiroom radio dashboard",
     preview:true
   });
 }
