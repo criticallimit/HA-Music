@@ -30,11 +30,27 @@ async function updateSong() {
         if (item.status === "available" && item.title && item.artist) external = item;
       } catch (_) { /* Keep Alexa media attributes when station lookup fails. */ }
     }
-    $("current-title").textContent = external?.title || title || (selectedStation ? STATIONS.find(s => s[0] === selectedStation)?.[1] : null) || "Kein Titel verfügbar";
-    $("current-artist").textContent = [external?.artist || artist, external ? "" : details?.album].filter(Boolean).join(" · ") ||
-      (info.playing ? "Wiedergabe aktiv · Titelinformationen nicht verfügbar" : "Keine bestätigte Wiedergabe");
+    const stationName = selectedStation ? STATIONS.find(s => s[0] === selectedStation)?.[1] : null;
+    $("current-title").textContent = stationName || title || "Kein Sender ausgewählt";
+    const hasSong = Boolean(external?.title && external?.artist);
+    const alexaSong = !isRadio && title && artist;
+    const songLine = hasSong ? external.artist + " – " + external.title :
+      alexaSong ? artist + " – " + title : "";
+    const ticker = $("now-ticker");
+    const tickerText = $("now-ticker-text");
+    if (songLine) {
+      if (tickerText.textContent !== songLine) tickerText.textContent = songLine;
+      ticker.hidden = false;
+      ticker.classList.toggle("scrolling", songLine.length > 36);
+    } else {
+      ticker.hidden = true;
+      ticker.classList.remove("scrolling");
+      tickerText.textContent = "";
+    }
+    $("current-artist").textContent = songLine ? "Jetzt läuft" : "Aktueller Musiktitel nicht verfügbar";
     const cover = $("current-cover");
-    const picture = external ? (external.cover || null) : (isRadio ? null : details?.image);
+    // Keep Alexa's station logo in the radio panel, independently of track data.
+    const picture = isRadio ? details?.image : (external?.cover || details?.image);
     if (picture && (picture.startsWith("/") || picture.startsWith("https://"))) {
       cover.src = picture; cover.hidden = false;
     } else { cover.hidden = true; cover.removeAttribute("src"); }
@@ -57,6 +73,8 @@ for (const [id,name] of STATIONS) {
       await api("radio_direct", {station:id});
       selectedStation = id;
       $("current-title").textContent = name;
+      $("now-ticker").hidden = true;
+      $("now-ticker-text").textContent = "";
       setTimeout(updateSong, 2500);
       if (["wdr2","1live","swr3"].includes(id)) setTimeout(updateSong, 10000);
       status(name + " direkt über den Alexa-Media-Player angefordert. Bitte Wiedergabe prüfen.");
