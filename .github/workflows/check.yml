@@ -18,3 +18,4 @@ jobs:
         run: |
           python -m py_compile ha_music/app.py ha_music/metadata.py
           python tests/test_scaffold.py
+          python tests/test_smoke.py
