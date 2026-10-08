@@ -58,3 +58,14 @@ with patch.object(app, "ha_request", return_value=[
     result = app.playback_status()
     assert result["playing"] is True
     assert result["details"]["title"] == "Testtitel"
+
+# Live page programme/song parsing must never substitute playlist search content.
+import metadata
+example_song = "<div>Jetzt läuft: Always on the run von ISAAK</div><div>00.00 - 05.00 Uhr WDR 2 Popnacht</div><div>Mail ins Studio</div>"
+parsed = metadata.parse_wdr_live(example_song)
+assert parsed["title"] == "Always on the run", parsed
+assert parsed["artist"] == "ISAAK", parsed
+assert parsed["show"] == "WDR 2 Popnacht", parsed
+example_talk = "<div>Jetzt läuft: </div><div>09.00 - 12.00 Uhr WDR 2 Der Vormittag</div><span>Mail ins Studio</span>"
+parsed = metadata.parse_wdr_live(example_talk)
+assert parsed["kind"] == "show" and parsed["show"] == "WDR 2 Der Vormittag", parsed
