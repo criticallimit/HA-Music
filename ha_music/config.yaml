@@ -18,6 +18,5 @@ hassio_api: true
 map:
   - type: homeassistant_config
     read_only: false
-    path: /config
 options: {}
 schema: {}
