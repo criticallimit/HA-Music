@@ -130,7 +130,50 @@ def playback_capability():
             "reason": "play_media verfügbar; Streamunterstützung nicht bestätigt" if supported
                       else "Gruppe unterstützt play_media nicht"}
 
+RADIO_SCRIPTS = {
+    "1live": ("1LIVE", "script.radio_1live_uberall"),
+    "wdr2": ("WDR 2", "script.radio_wdr2_uberall"),
+    "swr3": ("SWR3", "script.radio_swr3_uberall"),
+    "sommerhits": ("Sommerhits", "script.radio_sommerhits"),
+    "charts": ("Charts", "script.radio_spotify_top_100_uberall_duplizieren"),
+    "80s": ("80er", "script.1690801421597"),
+    "90s": ("90er", "script.1690800965371"),
+}
+RADIO_SWITCH = "switch.alexa_alle"
+RADIO_READY = "input_boolean.alexa_hochgefahren"
+
+def state_snapshot():
+    states = ha_request("/states")
+    return {state["entity_id"]: state for state in states if isinstance(state, dict) and isinstance(state.get("entity_id"), str)}
+
+def radio_state():
+    states = state_snapshot()
+    return {
+        "power": states.get(RADIO_SWITCH, {}).get("state", "unavailable"),
+        "ready": states.get(RADIO_READY, {}).get("state", "unavailable"),
+        "stations": [{"id": key, "name": name, "available": entity in states and
+                      states[entity].get("state") not in ("unavailable", "unknown")}
+                     for key, (name, entity) in RADIO_SCRIPTS.items()],
+    }
+
 def perform(action, body):
+    if action == "radio_script":
+        key = body.get("station")
+        if not isinstance(key, str) or key not in RADIO_SCRIPTS:
+            raise ValueError("Unbekannter Sender")
+        states = state_snapshot()
+        entity = RADIO_SCRIPTS[key][1]
+        if entity not in states or states[entity].get("state") in ("unavailable", "unknown"):
+            raise ValueError("Radioskript in Home Assistant nicht verfügbar")
+        return ha_request("/services/script/turn_on", {"entity_id": entity})
+    if action == "radio_power":
+        turn_on = body.get("on")
+        if not isinstance(turn_on, bool):
+            raise ValueError("Ungültiger Schaltzustand")
+        states = state_snapshot()
+        if RADIO_SWITCH not in states or states[RADIO_SWITCH].get("state") in ("unavailable", "unknown"):
+            raise ValueError("Radioschalter nicht verfügbar")
+        return ha_request("/services/switch/" + ("turn_on" if turn_on else "turn_off"), {"entity_id": RADIO_SWITCH})
     if action in ("test_wdr2", "test_tunein_wdr2"):
         capability = playback_capability()
         if not capability["available"]:
@@ -175,6 +218,11 @@ class Handler(BaseHTTPRequestHandler):
             from urllib.parse import parse_qs
             station = parse_qs(urlsplit(self.path).query).get("station", [""])[0]
             return self.reply(200, now_playing(station))
+        if name == "radio-state" and "/api/" in path:
+            try:
+                return self.reply(200, radio_state())
+            except (RuntimeError, HTTPError, URLError, ValueError) as exc:
+                return self.reply(503, {"error": str(exc)})
         if name == "playback-check" and "/api/" in path:
             try:
                 return self.reply(200, playback_capability())
@@ -206,7 +254,7 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         path = unquote(urlsplit(self.path).path)
         action = path.rsplit("/", 1)[-1]
-        if "/api/" not in path or action not in ("volume", "test_wdr2", "test_tunein_wdr2"):
+        if "/api/" not in path or action not in ("volume", "test_wdr2", "test_tunein_wdr2", "radio_script", "radio_power"):
             return self.reply(404, {"error": "Not found"})
         try:
             size = int(self.headers.get("Content-Length", "0"))
