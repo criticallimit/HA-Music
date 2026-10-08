@@ -22,7 +22,7 @@ let songRequestEpoch = 0;
 let songRequestRunning = false;
 const lastStationMetadata = new Map();
 const METADATA_GRACE_MS = 90000;
-let metadataInFlight = false;
+const metadataInFlight = new Set();
 function renderRadioMetadata(station, external) {
   if (station !== selectedStation) return;
   const line = external?.title && external?.artist
@@ -42,8 +42,8 @@ function renderRadioMetadata(station, external) {
 }
 async function updateRadioMetadata() {
   const station = selectedStation;
-  if (!["wdr2","1live","swr3"].includes(station) || metadataInFlight) return;
-  metadataInFlight = true;
+  if (!["wdr2","1live","swr3"].includes(station) || metadataInFlight.has(station)) return;
+  metadataInFlight.add(station);
   const epoch = stationEpoch;
   try {
     const item = await api("now-playing?station=" + encodeURIComponent(station));
@@ -61,7 +61,7 @@ async function updateRadioMetadata() {
     const prior = lastStationMetadata.get(station);
     if (stationEpoch === epoch && (!prior || Date.now() - prior.at >= METADATA_GRACE_MS))
       renderRadioMetadata(station, null);
-  } finally { metadataInFlight = false; }
+  } finally { metadataInFlight.delete(station); }
 }
 async function updateSong() {
   if (songRequestRunning) return;
