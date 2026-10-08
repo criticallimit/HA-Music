@@ -6,7 +6,6 @@ url: https://github.com/criticallimit/HA-Music
 arch:
   - aarch64
   - amd64
-  - armv7
 startup: application
 boot: auto
 init: false
@@ -16,6 +15,8 @@ panel_icon: mdi:music-circle
 homeassistant_api: true
 hassio_api: true
 map:
-  - addon_config:rw
+  - type: app_config
+    read_only: false
+    path: /config
 options: {}
 schema: {}
