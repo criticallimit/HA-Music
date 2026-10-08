@@ -19,6 +19,7 @@ let ready = false;
 let selectedStation = "";
 let stationEpoch = 0;
 let songRequestEpoch = 0;
+let songRequestRunning = false;
 $("metadata-probe").addEventListener("click", async () => {
   if (!selectedStation) { $("metadata-result").textContent = "Zuerst einen Radiosender auswählen."; return; }
   const station = selectedStation;
@@ -32,6 +33,8 @@ $("metadata-probe").addEventListener("click", async () => {
   finally { $("metadata-probe").disabled = false; }
 });
 async function updateSong() {
+  if (songRequestRunning) return;
+  songRequestRunning = true;
   const station = selectedStation;
   const epoch = stationEpoch;
   const requestEpoch = ++songRequestEpoch;
@@ -61,7 +64,11 @@ async function updateSong() {
     const ticker = $("now-ticker");
     const tickerText = $("now-ticker-text");
     if (songLine) {
-      if (tickerText.textContent !== songLine) tickerText.textContent = songLine;
+      if (tickerText.textContent !== songLine) {
+        tickerText.textContent = songLine;
+        ticker.classList.remove("scrolling");
+        void ticker.offsetWidth;
+      }
       ticker.hidden = false;
       ticker.classList.toggle("scrolling", songLine.length > 36);
     } else {
@@ -79,8 +86,10 @@ async function updateSong() {
     $("playback-state").textContent = info.playing ? "Wiedergabe aktiv" :
       "Alexa meldet derzeit keine aktive Wiedergabe" ;
   } catch(e) { if (stationEpoch === epoch && songRequestEpoch === requestEpoch) $("playback-state").textContent = "Wiedergabestatus nicht verfügbar: " + e.message; }
+  finally { songRequestRunning = false; }
 }
-setInterval(updateSong, 30000);
+setInterval(() => { if (selectedStation === "wdr2" || selectedStation === "1live") updateSong(); }, 5000);
+setInterval(() => { if (selectedStation !== "wdr2" && selectedStation !== "1live") updateSong(); }, 30000);
 const previous = new Map();
 function status(text) { $("message").textContent = text; }
 const stationButtons = new Map();
