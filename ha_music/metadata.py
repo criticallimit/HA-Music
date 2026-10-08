@@ -21,6 +21,8 @@ LOCK = threading.Lock()
 ICY_LATEST = {}
 ICY_WORKERS = {}
 ICY_STOP = {}
+ICY_LAST_REQUEST = {}
+ICY_IDLE_LIMIT = 45
 ICY_MAX_AGE = 30
 
 
@@ -169,6 +171,10 @@ def _icy_blocks(station):
                 match = re.search(r"StreamTitle='([^']*)'", raw)
                 if match and match.group(1).strip():
                     yield match.group(1).strip()
+                else:
+                    yield None
+            else:
+                yield None
 
 
 def _icy_worker(station, stop):
@@ -176,10 +182,12 @@ def _icy_worker(station, stop):
     while not stop.is_set():
         try:
             for value in _icy_blocks(station):
-                if stop.is_set():
-                    break
                 with LOCK:
-                    ICY_LATEST[station] = (time.monotonic(), value)
+                    idle = time.monotonic() - ICY_LAST_REQUEST.get(station, 0) > ICY_IDLE_LIMIT
+                    if value:
+                        ICY_LATEST[station] = (time.monotonic(), value)
+                if stop.is_set() or idle:
+                    return
                 retry = 2
         except (OSError, ValueError, EOFError):
             pass
@@ -192,6 +200,7 @@ def ensure_icy_worker(station):
     if station not in ICY_STREAMS:
         return
     with LOCK:
+        ICY_LAST_REQUEST[station] = time.monotonic()
         current = ICY_WORKERS.get(station)
         if current and current.is_alive():
             return
