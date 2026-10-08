@@ -237,16 +237,18 @@ function volumeRow(p, remembered, master) {
       slider.disabled = p.state === "unavailable" || p.volume === null || p.volume === undefined;
       mute.disabled = slider.disabled;
       mute.textContent = Number(slider.value) === 0 ? "Ein" : "Stumm";
+      mute.classList.toggle("is-muted", Number(slider.value) === 0);
+      mute.setAttribute("aria-label", Number(slider.value) === 0 ? "Ton einschalten" : "Stummschalten");
       slider.addEventListener("change", async () => {
         const volume = Number(slider.value)/100;
-        try { await api("volume",{entity_id:p.entity_id,volume}); if(volume>0)previous.set(p.entity_id,volume);label.textContent=slider.value+"%";mute.textContent=volume?"Stumm":"Ein"; if (master) scheduleVolumeReconciliation(volume); }
+        try { await api("volume",{entity_id:p.entity_id,volume}); if(volume>0)previous.set(p.entity_id,volume);label.textContent=slider.value+"%";mute.textContent=volume?"Stumm":"Ein";mute.classList.toggle("is-muted",volume===0);mute.setAttribute("aria-label",volume?"Stummschalten":"Ton einschalten"); if (master) scheduleVolumeReconciliation(volume); }
         catch(e){status(e.message);}
       });
       mute.addEventListener("click",async () => {
         const current = Number(slider.value)/100;
         const next = current > 0 ? 0 : (previous.get(p.entity_id) || remembered[p.entity_id] || 0.3);
         if(current>0) previous.set(p.entity_id,current);
-        try { await api("volume",{entity_id:p.entity_id,volume:next});slider.value=Math.round(next*100);label.textContent=slider.value+"%";mute.textContent=next?"Stumm":"Ein";if(master) scheduleVolumeReconciliation(next); }
+        try { await api("volume",{entity_id:p.entity_id,volume:next});slider.value=Math.round(next*100);label.textContent=slider.value+"%";mute.textContent=next?"Stumm":"Ein";mute.classList.toggle("is-muted",next===0);mute.setAttribute("aria-label",next?"Stummschalten":"Ton einschalten");if(master) scheduleVolumeReconciliation(next); }
         catch(e){status(e.message);}
       });
 
