@@ -15,17 +15,6 @@ async function api(path, data) {
   if (!response.ok) throw new Error(body.error || "Anfrage fehlgeschlagen");
   return body;
 }
-$("stream-test").addEventListener("click", async () => {
-  const button = $("stream-test");
-  button.disabled = true;
-  $("stream-test-result").textContent = "Sende offiziellen WDR-2-MP3-Stream an Wohnzimmer …";
-  try {
-    await api("stream_test", {station:"wdr2"});
-    $("stream-test-result").textContent = "Befehl akzeptiert. Bitte prüfen, ob WDR 2 im Wohnzimmer hörbar ist. Multiroom wurde dabei NICHT aktiviert.";
-  } catch(e) {
-    $("stream-test-result").textContent = "Streamtest fehlgeschlagen: " + e.message;
-  } finally { button.disabled = false; }
-});
 let ready = false;
 let selectedStation = "";
 let stationEpoch = 0;
