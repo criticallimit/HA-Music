@@ -80,3 +80,31 @@ footer{font-size:11px;color:#717781;margin-top:12px}
 .station.active{background:linear-gradient(145deg,#213b51,#246182);border-color:#4ebdfb}
 .station.active .station-icon{color:#ffb923}
 @media(max-width:920px){.speaker-list .player-row{grid-template-columns:32px minmax(0,1fr) 42px;column-gap:7px}}
+
+/* HA Music dark UI system: subdued surfaces and one consistent blue accent. */
+:root{--hm-bg:#15171b;--hm-surface:#20242b;--hm-surface-hover:#2a323d;--hm-border:#333b46;--hm-text:#eef2f6;--hm-muted:#9caabb;--hm-accent:#48a9ec}
+body{background:var(--hm-bg);color:var(--hm-text)}
+.shell{max-width:1460px}
+header{margin-bottom:16px}
+header h1{font-size:19px;font-weight:650;color:#e3eaf3}
+nav{display:inline-flex;align-items:center;gap:4px;background:#20252c;border:1px solid #37414d;border-radius:13px;padding:4px}
+nav button{border:1px solid transparent;border-radius:9px;background:transparent;color:#aebac7;padding:9px 16px;font-size:14px;font-weight:600}
+nav button:hover:not(:disabled){background:#2c3540;color:white}
+nav button.active{border-color:#4d8bb8;background:#275276;color:white;box-shadow:inset 0 0 0 1px rgba(134,201,248,.18)}
+nav .soon{font-weight:400;color:#8794a3}
+.master-volume,.speaker-list .player-row,.stations .station{background:#20252d;border:1px solid #353d48;border-radius:18px;box-shadow:none}
+.station{min-height:108px;gap:11px;font-size:14px;font-weight:600;transition:background .16s,border-color .16s,box-shadow .16s}
+.station:not(:disabled):hover{background:#293441;border-color:#61768b}
+.station.active,.station.active:disabled{background:#254d6a;border:1px solid #60b6f2;box-shadow:inset 0 0 0 1px rgba(96,182,242,.1);opacity:1}
+.station-icon{display:flex;align-items:center;justify-content:center;width:36px;height:36px;color:#90b0c8}
+.station-icon svg{width:34px;height:34px}
+.station.active .station-icon{color:#e9f5ff}
+.player-row button{background:transparent;border:1px solid transparent;border-radius:8px;color:#b9c7d5}
+.player-row button:hover:not(:disabled){background:#334251;border-color:#536a7b}
+.player-row button::after,.player-row button.is-muted::after{content:"";display:block;width:22px;height:22px;background-size:contain;background-position:center;background-repeat:no-repeat}
+.player-row button::after{background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23b9c7d5' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M11 5 6 9H3v6h3l5 4V5Z'/%3E%3Cpath d='M15 9a5 5 0 0 1 0 6'/%3E%3Cpath d='M18 6a9 9 0 0 1 0 12'/%3E%3C/svg%3E")}
+.player-row button.is-muted::after{background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23b9c7d5' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M11 5 6 9H3v6h3l5 4V5Z'/%3E%3Cpath d='m16 9 5 6m0-6-5 6'/%3E%3C/svg%3E")}
+.player-row input[type=range]{accent-color:var(--hm-accent)}
+.notice#message{display:none!important}
+.power-buttons button{background:#20252d;border-color:#353d48;box-shadow:none}
+@media(max-width:550px){nav button{padding:8px 11px}.stations{gap:8px}}
