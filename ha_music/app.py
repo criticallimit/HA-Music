@@ -113,7 +113,33 @@ def ha_request(path, payload=None):
 def players():
     return classify_devices()["players"]
 
+WDR2_STREAM = "https://wdr-wdr2-rheinruhr.icecastssl.wdr.de/wdr/wdr2/rheinruhr/mp3/128/stream.mp3"
+PLAY_MEDIA_FEATURE = 512
+
+def wohnung_group():
+    return next((group for group in classify_devices()["groups"]
+                 if group["name"].strip().casefold() == "wohnung"), None)
+
+def playback_capability():
+    group = wohnung_group()
+    if not group:
+        return {"available": False, "reason": "Gruppe Wohnung nicht gefunden"}
+    supported = bool((group.get("features") or 0) & PLAY_MEDIA_FEATURE)
+    return {"available": supported, "entity_id": group["entity_id"],
+            "state": group["state"], "features": group["features"],
+            "reason": "play_media verfügbar; Streamunterstützung nicht bestätigt" if supported
+                      else "Gruppe unterstützt play_media nicht"}
+
 def perform(action, body):
+    if action == "test_wdr2":
+        capability = playback_capability()
+        if not capability["available"]:
+            raise ValueError(capability["reason"])
+        return ha_request("/services/media_player/play_media", {
+            "entity_id": capability["entity_id"],
+            "media_content_type": "music",
+            "media_content_id": WDR2_STREAM,
+        })
     if action == "volume":
         entity = body.get("entity_id", "")
         level = body.get("volume")
@@ -149,6 +175,11 @@ class Handler(BaseHTTPRequestHandler):
             from urllib.parse import parse_qs
             station = parse_qs(urlsplit(self.path).query).get("station", [""])[0]
             return self.reply(200, now_playing(station))
+        if name == "playback-check" and "/api/" in path:
+            try:
+                return self.reply(200, playback_capability())
+            except (RuntimeError, HTTPError, URLError, ValueError) as exc:
+                return self.reply(503, {"error": str(exc)})
         if name == "players" and "/api/" in path:
             try:
                 inventory = integration_inventory()
@@ -175,7 +206,7 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         path = unquote(urlsplit(self.path).path)
         action = path.rsplit("/", 1)[-1]
-        if "/api/" not in path or action != "volume":
+        if "/api/" not in path or action not in ("volume", "test_wdr2"):
             return self.reply(404, {"error": "Not found"})
         try:
             size = int(self.headers.get("Content-Length", "0"))
