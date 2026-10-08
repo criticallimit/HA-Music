@@ -136,7 +136,7 @@ def restore_speakers(generation):
         try:
             states = state_snapshot()
             if states.get(RADIO_SWITCH, {}).get("state") != "on":
-                return
+                continue
             if states.get(RADIO_READY, {}).get("state") != "on":
                 continue
             available = allowed_entities()
