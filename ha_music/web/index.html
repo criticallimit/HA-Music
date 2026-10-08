@@ -1,14 +1,13 @@
-<!doctype html>
-<html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>HA Music</title><link rel="stylesheet" href="style.css"></head>
-<body><main class="shell">
+<!doctype html><html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>HA Music</title><link rel="stylesheet" href="style.css"></head><body><main class="shell">
 <header><span class="symbol" aria-hidden="true">♫</span><div><h1>HA Music</h1><p>Radio und Multiroom</p></div></header>
 <nav aria-label="Musikquelle"><button id="radio-tab" class="active" type="button">Radio</button><button id="apple-tab" type="button">Apple Music <span class="soon">In Vorbereitung</span></button></nav>
 <section id="radio-page">
-<article class="now"><div class="art" aria-label="Sendercover noch nicht verfügbar">♫</div><div><small>Radio · Vorschau</small><h2>Noch kein Sender ausgewählt</h2><p>Songtitel und Cover erscheinen nach Anbindung einer Metadatenquelle.</p></div></article>
+<article class="now"><div class="art" aria-label="Noch kein Albumcover">♫</div><div><small>Internetradio</small><h2 id="current-title">Noch kein Sender ausgewählt</h2><p>Live-Titel und Cover folgen mit der Sender-Metadaten-Anbindung.</p></div></article>
 <h3>Radiosender</h3><div id="station-list" class="stations"></div>
-<h3>Lautsprecher</h3><div class="notice">Echo Dots werden nach Verbindung mit Home Assistant angezeigt. Es werden noch keine Alexa-Befehle ausgeführt.</div>
+<div id="message" class="notice" role="status">Lade Verbindungsstatus …</div>
+<h3>Lautsprecher</h3><div id="players" class="players notice">Lade Geräte …</div>
+<p class="hint">Einzelne Echo Dots können hier vorerst über Lautstärke 0 stummgeschaltet werden. Die Multiroom-Gruppenzugehörigkeit bleibt unverändert.</p>
 </section>
-<section id="apple-page" hidden><article class="notice"><h2>Apple Music</h2><p>In Vorbereitung. Später sind Alben, Playlists und Familienprofile vorgesehen. Für private Mediatheken ist die jeweilige Freigabe oder Anmeldung erforderlich.</p></article></section>
-<footer>Entwicklungsvorschau · noch keine Alexa-Wiedergabe</footer>
+<section id="apple-page" hidden><article class="notice"><h2>Apple Music</h2><p>In Vorbereitung. Später sind Alben, Playlists und Familienprofile vorgesehen.</p></article></section>
+<footer>HA Music · Entwicklungsstand auf main · Kein Release</footer>
 </main><script src="app.js"></script></body></html>
