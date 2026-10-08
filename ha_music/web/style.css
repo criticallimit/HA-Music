@@ -1,12 +1,49 @@
-:root{color-scheme:light dark;font-family:system-ui,-apple-system,Segoe UI,sans-serif}*{box-sizing:border-box}body{margin:0;background:#15181d;color:#f2f4f7}.shell{max-width:960px;margin:auto;padding:20px}header{display:flex;align-items:center;gap:15px;margin-bottom:22px}.symbol{font-size:35px;background:#2a3440;border-radius:14px;padding:8px 15px}h1{margin:0;font-size:27px}header p,small,footer,.hint{color:#a9b1bd}header p{margin:2px 0}nav{display:flex;gap:9px;margin-bottom:20px;flex-wrap:wrap}button{font:inherit;cursor:pointer;background:#292f38;border:1px solid #424b58;border-radius:11px;color:inherit;padding:12px 18px}button.active{border-color:#79b5ec;background:#22374a}button:disabled{opacity:.45;cursor:not-allowed}.soon{font-size:11px;color:#bfc9d2;margin-left:8px}.now{display:flex;align-items:center;gap:20px;background:#252b34;border-radius:17px;padding:18px;min-height:155px}.now h2{margin:6px 0;font-size:21px}.now p{color:#adb5bf}.art{width:118px;height:118px;border-radius:13px;background:#455464;display:grid;place-items:center;font-size:52px;flex:none}h3{font-size:17px;margin:24px 0 12px}.stations{display:grid;grid-template-columns:repeat(auto-fit,minmax(125px,1fr));gap:10px}.station{min-height:85px}.notice{background:#252b34;border:1px solid #414a55;border-radius:13px;padding:18px;color:#c3cad3}.hint{font-size:12px}.player-row{display:grid;grid-template-columns:minmax(100px,1fr) minmax(80px,2fr) 45px 90px;gap:12px;align-items:center;padding:8px 0}.player-row+.player-row{border-top:1px solid #444}input[type=range]{width:100%}footer{font-size:12px;margin-top:25px}[hidden]{display:none!important}@media(prefers-color-scheme:light){body{background:#f5f6f8;color:#151d24}button,.now,.notice{background:#fff;color:#151d24}.now p,.notice,.hint{color:#515c68}.symbol{background:#e3e9f1}button.active{background:#e1effc}.art{background:#d6e0e9}.soon{color:#56616d}}@media(max-width:520px){.now{align-items:flex-start}.art{width:86px;height:86px;font-size:36px}.shell{padding:13px}.player-row{grid-template-columns:1fr 1fr 42px 80px}.player-row span:first-child{grid-column:1/-1}}
-
-.art{overflow:hidden;position:relative}.art img:not([hidden]){position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
-
-/* Static radio text: no marquee, respect requested compact 20% width. */
-.now>div:last-child{min-width:0;flex:1}
-.now-ticker{width:20%;max-width:100%;margin:8px 0;font-weight:500;overflow-wrap:anywhere;white-space:normal}
-.now-ticker span{display:block;white-space:normal;animation:none!important;transform:none!important;padding:0!important}
-@media(max-width:520px){.now-ticker{width:100%}}
-
-/* Keep the selected radio preset visibly active until a different preset succeeds. */
-.station.active,.station.active:disabled{background:#224c6b;border-color:#8acaff;color:#fff;opacity:1;box-shadow:inset 0 0 0 1px #8acaff}
+:root{color-scheme:dark;font-family:Arial,Helvetica,sans-serif;font-size:16px}
+*{box-sizing:border-box}body{margin:0;color:#e6e8ed;background:repeating-linear-gradient(135deg,#161719 0px,#161719 2px,#202123 2px,#202123 4px)}
+button,input{font:inherit}button{cursor:pointer;color:inherit;border:0}button:disabled{cursor:not-allowed;opacity:.52}
+.shell{width:min(1460px,100%);margin:0 auto;padding:16px 28px}
+header{display:flex;align-items:center;justify-content:space-between;gap:15px;margin-bottom:12px}
+h1{font-size:18px;font-weight:500;margin:0;color:#aeb7c3}
+nav{display:flex;gap:8px}nav button{padding:8px 15px;background:#191b1f;border-radius:12px;font-size:13px;color:#adb9c5}
+nav button.active{background:#27384a;color:#fff}.soon{opacity:.6}
+.dashboard{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:14px;align-items:stretch}
+.now{height:680px;min-height:0;border-radius:25px;position:relative;overflow:hidden;background:#fff;color:#222}
+.art{position:absolute;inset:0;display:flex;justify-content:center;align-items:center;background:#fff;color:#bac0c6;overflow:hidden}
+.art img:not([hidden]){width:100%;height:100%;object-fit:contain}
+.art img:not([hidden])+.art-placeholder{display:none}
+.art-placeholder{font-size:120px}
+.now-overlay{position:absolute;bottom:0;left:0;right:0;max-height:43%;overflow:hidden;padding:44px 24px 20px;color:#fff;background:linear-gradient(transparent,rgba(10,10,12,.65) 20%,rgba(10,10,12,.88))}
+.now-head small{display:none}.now h2{font-size:20px;margin:0 0 6px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.now-description{height:112px;min-height:0;overflow:hidden}
+#current-artist{font-size:13px;opacity:.9;margin:3px 0 5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.now-ticker{width:100%;max-width:100%;line-height:1.35;font-size:17px;font-weight:600;overflow:hidden;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:3;line-clamp:3;overflow-wrap:anywhere}
+.now-ticker span{display:inline;animation:none!important;white-space:normal}
+#playback-state{display:block;font-size:12px;margin-top:6px;opacity:.75}
+.dashboard-right{display:flex;min-width:0;min-height:0;flex-direction:column;gap:11px}
+.powerbar{height:68px;display:flex;justify-content:space-between;align-items:center;gap:12px}
+#radio-state{font-size:12px;opacity:.7;max-width:60%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.power-buttons{display:flex;gap:8px}.power-buttons button{font-size:31px;line-height:1;width:60px;height:60px;border-radius:20px;background:linear-gradient(#111216,#242629);color:#e9ac22;box-shadow:inset 0 0 4px #090a0c}
+.power-buttons #power-on{color:#e9ac22}.power-buttons #power-off{color:#87929d}
+.players{display:flex;flex-direction:column;gap:10px}
+.master-volume,.speaker-list .player-row,.stations .station{background:linear-gradient(145deg,rgba(10,11,14,.78),rgba(25,26,28,.72));border:1px solid rgba(80,84,90,.3);border-radius:24px;box-shadow:0 2px 5px rgba(0,0,0,.3)}
+.master-volume{min-height:104px;padding:0 24px;justify-content:center}
+.speaker-list{gap:10px}.speaker-list .player-row{min-height:104px;padding:16px 24px}
+.player-row{display:grid;grid-template-columns:1fr auto;align-items:center;column-gap:10px;row-gap:12px}
+.player-row>span:first-child{grid-column:1/-1;color:#afd0df;font-size:14px;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.player-row input{grid-column:1;min-width:0;width:100%;accent-color:#1394d0;cursor:pointer}
+.player-row>span:nth-of-type(2){grid-column:2;grid-row:2;color:#afd0df;font-size:14px;min-width:35px;text-align:right}
+.player-row button{grid-column:1;grid-row:2;justify-self:start;position:relative;font-size:0;width:26px;height:26px;background:none;padding:0;color:#afd0df}
+.player-row button::after{content:"◖))";font-size:19px}
+.player-row input{padding-left:34px}
+.stations{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:9px;margin-top:auto}
+.station{min-height:108px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;font-size:14px;padding:10px 4px;white-space:nowrap}
+.station-icon{font-size:42px;line-height:1;color:#558fbe}
+.station.active,.station.active:disabled{opacity:1;background:linear-gradient(145deg,#193d54,#245f7d);border-color:#45b8f7;box-shadow:inset 0 0 0 1px #45b8f7}
+.station.active .station-icon{color:#ffbc2d}
+.notice{font-size:12px;color:#a7afbb;line-height:1.4;min-height:16px}
+.sr-info{position:absolute!important;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+footer{font-size:11px;color:#717781;margin-top:12px}
+[hidden]{display:none!important}
+@media(min-width:1200px){.dashboard{grid-template-columns:1fr 1fr}.now{height:720px}}
+@media(max-width:920px){.shell{padding:14px}.dashboard{grid-template-columns:1fr}.now{height:420px}.dashboard-right{gap:10px}.stations{margin-top:0}.speaker-list{display:grid;grid-template-columns:repeat(3,minmax(0,1fr))}.speaker-list .player-row{padding:12px;min-height:100px}.station{min-height:90px}}
+@media(max-width:550px){header{align-items:flex-start;flex-direction:column}.now{height:330px}.now-overlay{max-height:57%;padding:36px 15px 13px}.now-description{height:100px}.stations{grid-template-columns:repeat(3,minmax(0,1fr))}.speaker-list{grid-template-columns:1fr}.powerbar{height:52px}.power-buttons button{width:45px;height:45px;font-size:26px}.now-ticker{font-size:15px}}
