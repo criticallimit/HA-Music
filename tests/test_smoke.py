@@ -59,61 +59,20 @@ with patch.object(app, "ha_request", return_value=[
     assert result["playing"] is True
     assert result["details"]["title"] == "Testtitel"
 
-# Live page programme/song parsing must never substitute playlist search content.
+# Radio title lookups use ICY only.
 import metadata
-example_song = "<div>Jetzt läuft: Always on the run von ISAAK</div><div>00.00 - 05.00 Uhr WDR 2 Popnacht</div><div>Mail ins Studio</div>"
-parsed = metadata.parse_wdr_live(example_song)
-assert parsed["title"] == "Always on the run", parsed
-assert parsed["artist"] == "ISAAK", parsed
-assert parsed["show"] == "WDR 2 Popnacht", parsed
-example_talk = "<div>Jetzt läuft: </div><div>09.00 - 12.00 Uhr WDR 2 Der Vormittag</div><span>Mail ins Studio</span>"
-parsed = metadata.parse_wdr_live(example_talk)
-assert parsed["kind"] == "show" and parsed["show"] == "WDR 2 Der Vormittag", parsed
-
-# Fresh playlist data may be shown, but old tracks cannot masquerade as live.
-from datetime import datetime, timedelta
-from zoneinfo import ZoneInfo
-now = datetime(2026, 10, 8, 18, 30, tzinfo=ZoneInfo("Europe/Berlin"))
-live_1 = "<div>18.28 Artist Name mit Example Song</div><div>18.24 Other Artist mit Prior Song</div><div>Ausführliche Playlist</div>"
-assert metadata.parse_recent_playlist("1live", live_1, now)["title"] == "Example Song"
-assert metadata.parse_recent_playlist("1live", live_1, now + timedelta(minutes=10))["kind"] == "unavailable"
-swr = "<div>08.10.2026 18:28 Image: New Track</div><div>Titel New Track Interpret Test Band</div><button>Credits</button>"
-assert metadata.parse_recent_playlist("swr3", swr, now)["artist"] == "Test Band"
-assert metadata.parse_recent_playlist("swr3", swr, now + timedelta(minutes=15))["kind"] == "unavailable"
-
-assert "einslive-playlist-100.html" in metadata.URLS["1live"]
-
-# Stream probing is constrained to an explicit allowlist.
-assert set(metadata.ICY_STREAMS) == {'1live','wdr2','swr3'}
-assert metadata.ICY_STREAMS['swr3'].startswith('https://liveradio.swr.de/')
-
-# ICY text is split into artist/title only when a separator is provided.
-assert metadata.parse_icy_title("Sabrina Carpenter - Espresso") == {
-    "title":"Espresso", "artist":"Sabrina Carpenter", "show":None, "kind":"song"}
-assert metadata.parse_icy_title("WDR 2 Der Vormittag")["kind"] == "show"
-# Persistent per-station metadata must not leak across programmes.
+assert set(metadata.ICY_STREAMS) == {"1live", "wdr2", "swr3"}
+assert not hasattr(metadata, "URLS")
+assert not hasattr(metadata, "icy_diagnostics")
+assert metadata.parse_icy_title("Artist - Track")["title"] == "Track"
+assert metadata.parse_icy_title("WDR 2 Hotline")["show"] == "WDR 2 Hotline"
 with patch.object(metadata, "ensure_icy_worker"):
     with patch.object(metadata, "ICY_LATEST", {
         "wdr2": (metadata.time.monotonic(), "Artist A - Song A"),
         "1live": (metadata.time.monotonic(), "Artist B - Song B"),
         "swr3": (metadata.time.monotonic(), "SWR3 Nachrichten"),
     }):
+        assert metadata.now_playing("wdr2")["source"] == "icy"
         assert metadata.now_playing("wdr2")["title"] == "Song A"
         assert metadata.now_playing("1live")["title"] == "Song B"
         assert metadata.now_playing("swr3")["show"] == "SWR3 Nachrichten"
-
-assert metadata.parse_icy_title('WDR 2 Hotline: 0800 5678 222')['show'] == 'WDR 2 Hotline: 0800 5678 222'
-
-# Official player headline is parsed without the preceding time/stream labels.
-sample = ("Stream im 1LIVE-Player hören Stream im eigenen Player starten "
-          "1LIVE (mp3, 128 kBit/s) mehr 1LIVE (für iOS) mehr "
-          "Ariana Grande - hate that i made you love me "
-          "Image: Moderatoren 17.33 Ariana Grande mit hate that i made you love me "
-          "Ausführliche Playlist")
-assert metadata.parse_1live_player(sample)["artist"] == "Ariana Grande"
-assert metadata.parse_1live_player(sample)["title"] == "hate that i made you love me"
-assert metadata.parse_1live_player("17.33 Uhr: Ariana Grande - Test")["kind"] == "unavailable"
-# Official WDR live-page data outranks a prior ICY text.
-with patch.object(metadata, "fetch", return_value=example_song):
-    with patch.object(metadata, "CACHE", {}):
-        assert metadata.now_playing("wdr2")["source"] == "official_player"
