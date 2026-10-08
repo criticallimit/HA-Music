@@ -47,10 +47,13 @@ async function refresh() {
     status(ready ? "Geräteerkennung aktiv. Radio-Senderwahl zeigt derzeit Metadaten; direkter Multiroom-Start folgt." : "Home-Assistant-Verbindung nicht verfügbar.");
   } catch(e) { status(e.message); }
   try {
-    const {players,remembered,groups} = await api("players");
+    const {players,remembered,groups,diagnostics} = await api("players");
     $("groups").textContent = groups.length ? "Mögliche Alexa-Gruppen: " + groups.map(p=>p.name).join(", ") + " (Mitgliedschaft nicht verifiziert)" : "Keine Alexa-Multiroom-Gruppe in den sichtbaren Media-Player-Zuständen erkannt.";
     const wrap = $("players"); wrap.replaceChildren();
-    if (!players.length) { wrap.textContent = "Die Alexa-Devices-Integration stellt derzeit keine Media-Player-Entitäten bereit. Bitte in Home Assistant prüfen, ob sie aktiviert sind."; return; }
+    if (!players.length) { const d = diagnostics || {};
+      const show = key => (d[key]?.entities ?? 0) + " Entitäten, " + (d[key]?.media_players ?? 0) + " Media Player";
+      wrap.textContent = "Keine Alexa-Media-Player gefunden. Alexa Devices: " + show("alexa_devices") + "; Alexa Media Player: " + show("alexa_media") + ".";
+      return; }
     for (const p of players) {
       const row = document.createElement("div"); row.className = "player-row";
       const title = document.createElement("span"); title.textContent = p.name + " (" + p.state + ")";
