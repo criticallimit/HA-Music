@@ -18,6 +18,32 @@ if (window.parent !== window) {
   window.parent.postMessage({type:"ha-music-theme-request"}, window.location.origin);
 }
 
+// Report actual visible content height to the Lovelace host.
+// ResizeObserver reacts when the radio powers on/off or speaker controls change.
+if (new URLSearchParams(window.location.search).get("ha_music_card") === "1" && window.parent !== window) {
+  let pendingHeightFrame = 0;
+  let lastReportedHeight = 0;
+  const reportHeight = () => {
+    pendingHeightFrame = 0;
+    const shell = document.querySelector(".shell");
+    if (!shell) return;
+    const height = Math.ceil(shell.getBoundingClientRect().height);
+    if (!Number.isFinite(height) || height < 1 || height === lastReportedHeight) return;
+    lastReportedHeight = height;
+    window.parent.postMessage({type:"ha-music-content-height", height}, window.location.origin);
+  };
+  const scheduleHeight = () => {
+    if (!pendingHeightFrame) pendingHeightFrame = requestAnimationFrame(reportHeight);
+  };
+  if (window.ResizeObserver) {
+    const observer = new ResizeObserver(scheduleHeight);
+    observer.observe(document.querySelector(".shell"));
+  }
+  window.addEventListener("load", scheduleHeight);
+  window.addEventListener("resize", scheduleHeight);
+  scheduleHeight();
+}
+
 const $ = id => document.getElementById(id);
 function show(page) {
   const radio = page === "radio";
