@@ -21,9 +21,9 @@ STATIONS = {"wdr2": "WDR 2", "1live": "1LIVE", "wdr4": "WDR 4",
             "80s80s": "80s80s", "ndr2": "NDR 2", "radiobob": "Radio BOB!"}
 ENTITY_RE = re.compile(r"^media_player\.[a-z0-9_]+$")
 
-VOLUME_FILE = Path(os.environ.get("VOLUME_FILE", "/config/volumes.json"))
-STATION_FILE = Path(os.environ.get("STATION_FILE", "/config/last_station.json"))
-SPEAKER_FILE = Path(os.environ.get("SPEAKER_FILE", "/config/speaker_levels.json"))
+VOLUME_FILE = Path(os.environ.get("VOLUME_FILE", "/data/volumes.json"))
+STATION_FILE = Path(os.environ.get("STATION_FILE", "/data/last_station.json"))
+SPEAKER_FILE = Path(os.environ.get("SPEAKER_FILE", "/data/speaker_levels.json"))
 RESTORE_GENERATION = 0
 LOCK = threading.Lock()
 def integration_inventory():
@@ -148,6 +148,7 @@ def restore_speakers(generation):
                 return
             available = allowed_entities()
             levels = speaker_levels()
+            print(f"[HA Music] Restoring {len(levels)} saved speaker levels", flush=True)
             # Set group before individual rooms so saved room mute levels win.
             targets = sorted(levels, key=lambda e: (e != "media_player.wohnung", e))
             for entity in targets:
@@ -158,6 +159,7 @@ def restore_speakers(generation):
                 try:
                     ha_request("/services/media_player/volume_set", {
                         "entity_id": entity, "volume_level": levels[entity]})
+                    print(f"[HA Music] Restored {entity}: {round(levels[entity] * 100)}%", flush=True)
                 except (RuntimeError, HTTPError, URLError, ValueError) as exc:
                     print(f"[HA Music] Could not restore {entity}: {exc}", flush=True)
             return
@@ -283,12 +285,8 @@ def perform(action, body):
         states = state_snapshot()
         if RADIO_SWITCH not in states or states[RADIO_SWITCH].get("state") in ("unavailable", "unknown"):
             raise ValueError("Radioschalter nicht verfügbar")
-        if not turn_on:
-            # Persist any readable speaker values; never block power-off on discovery failure.
-            try:
-                capture_speaker_levels(states)
-            except (RuntimeError, HTTPError, URLError, ValueError, OSError) as exc:
-                print(f"[HA Music] Speaker snapshot skipped: {exc}", flush=True)
+        # Keep the last deliberately selected volume/mute settings across shutdown.
+        # Live Alexa state may already contain a startup default such as 30%.
         response = ha_request("/services/switch/" + ("turn_on" if turn_on else "turn_off"), {"entity_id": RADIO_SWITCH})
         with LOCK:
             RESTORE_GENERATION += 1
@@ -308,6 +306,7 @@ def perform(action, body):
             raise ValueError("Media Player nicht gefunden")
         result = ha_request("/services/media_player/volume_set", {"entity_id": entity, "volume_level": level})
         save_speaker_levels({entity: float(level)})
+        print(f"[HA Music] Saved speaker {entity}: {round(level * 100)}%", flush=True)
         if level > 0: save_remembered(entity, level)
         return result
     raise ValueError("Unbekannte Aktion")
