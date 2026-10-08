@@ -5,7 +5,7 @@ A single worker polls the broadcaster; browsers subscribe to updates over SSE.
 import json
 import threading
 import time
-from metadata import now_playing
+from metadata import now_playing, ensure_icy_worker
 
 RADIO = frozenset(("1live", "wdr2", "swr3"))
 
@@ -48,6 +48,7 @@ class MetadataMonitor:
                     self.condition.wait(timeout=30)
                     continue
             try:
+                ensure_icy_worker(station)
                 value = now_playing(station)
             except Exception:
                 value = None
