@@ -147,13 +147,22 @@ header .power-buttons button{width:48px;height:48px;border-radius:14px;font-size
   .now{height:330px}
 }
 
-/* Responsive logo: constrain the actual image box, not just its SVG canvas. */
-.now.radio-selected .art{display:flex;align-items:center;justify-content:center;min-width:0;min-height:0;overflow:hidden}
-.now.radio-selected .art img:not([hidden]){
-  display:block;width:100%;height:100%;max-width:100%;max-height:100%;
-  min-width:0;min-height:0;flex:0 1 auto;
-  padding:clamp(10px,2.5%,24px);box-sizing:border-box;object-fit:contain;object-position:center;
+/* A dedicated, responsive viewport above the fixed text overlay.
+   The old global .art img rule used position:absolute: that caused the logo
+   to escape the flex layout and be cropped when the column became narrow. */
+.now.radio-selected .art{
+  position:absolute;top:0;right:0;bottom:192px;left:0;
+  display:flex;align-items:center;justify-content:center;
+  min-width:0;min-height:0;overflow:hidden;background:#fff;
 }
+.now.radio-selected .art img:not([hidden]){
+  position:static;inset:auto;display:block;
+  width:100%;height:100%;max-width:100%;max-height:100%;
+  min-width:0;min-height:0;flex:0 1 auto;
+  padding:clamp(12px,3%,28px);box-sizing:border-box;
+  object-fit:contain;object-position:center;
+}
+@media(max-width:550px){.now.radio-selected .art{bottom:172px}}
 header .header-radio-state{grid-column:1;justify-self:start;align-self:center;min-width:0;max-width:100%;font-size:12px;line-height:1.35;color:#9ba9b7;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 @media(max-width:550px){
   header .header-radio-state{grid-column:1;grid-row:2;font-size:11px}
