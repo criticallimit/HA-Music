@@ -99,8 +99,8 @@ async function updateSong() {
   } catch(e) { if (stationEpoch === epoch && songRequestEpoch === requestEpoch) $("playback-state").textContent = "Wiedergabestatus nicht verfügbar: " + e.message; }
   finally { songRequestRunning = false; }
 }
-setInterval(() => { if (selectedStation === "wdr2" || selectedStation === "1live") updateSong(); }, 5000);
-setInterval(() => { if (selectedStation !== "wdr2" && selectedStation !== "1live") updateSong(); }, 30000);
+setInterval(() => { if (["wdr2","1live","swr3"].includes(selectedStation)) updateSong(); }, 5000);
+setInterval(() => { if (!["wdr2","1live","swr3"].includes(selectedStation)) updateSong(); }, 30000);
 const previous = new Map();
 function status(text) { $("message").textContent = text; }
 const stationButtons = new Map();
