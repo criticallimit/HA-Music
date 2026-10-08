@@ -152,6 +152,27 @@ def set_radio_ready(enabled):
                {"entity_id": RADIO_READY})
 
 
+def set_probe_volume(generation):
+    """Temporary 2% volume for unmuted rooms; never write it to saved settings."""
+    saved = speaker_levels()
+    states = state_snapshot()
+    for entity in RADIO_PLAYERS:
+        if generation != RESTORE_GENERATION:
+            return
+        if entity == "media_player.wohnung":
+            continue  # Never change the Alexa group master.
+        if states.get(entity, {}).get("state") in (None, "unknown", "unavailable"):
+            continue
+        # Preserve explicitly muted devices. Unconfigured devices are kept quiet.
+        if saved.get(entity) == 0:
+            continue
+        try:
+            ha_request("/services/media_player/volume_set",
+                       {"entity_id": entity, "volume_level": 0.02})
+        except (RuntimeError, HTTPError, URLError, ValueError) as exc:
+            print(f"[HA Music] Probe volume failed for {entity}: {exc}", flush=True)
+
+
 def radio_start_sequence(generation):
     """Wait for Alexa boot, refresh entities, restore levels, and confirm playback."""
     try:
@@ -192,6 +213,10 @@ def radio_start_sequence(generation):
                     if any(states.get(e, {}).get("state") == "playing" for e in RADIO_PLAYERS):
                         confirmed = True
                         break
+                    # Keep the playback probe quiet, including after Alexa reconnects.
+                    set_probe_volume(generation)
+                    if generation != RESTORE_GENERATION:
+                        return
                     try:
                         perform("radio_direct", {"station": station})
                         print(f"[HA Music] Starting {station}, attempt {play_attempt+1}", flush=True)
