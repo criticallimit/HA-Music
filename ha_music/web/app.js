@@ -147,7 +147,9 @@ for (const [id,name] of STATIONS) {
   const pictogram = document.createElement("span");
   pictogram.className = "station-icon";
   pictogram.setAttribute("aria-hidden", "true");
-  pictogram.textContent = ["1live","wdr2","swr3"].includes(id) ? "▣" : "♫";
+  pictogram.innerHTML = ["1live","wdr2","swr3"].includes(id)
+    ? '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="9" width="18" height="12" rx="2"/><path d="M5 9 18 3"/><circle cx="9" cy="15" r="2"/><path d="M15 14h3m-3 3h3"/></svg>'
+    : '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>';
   const label = document.createElement("span");
   label.textContent = name;
   button.append(pictogram, label);
