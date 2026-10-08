@@ -9,6 +9,7 @@ import os
 import re
 import threading
 import time
+from datetime import datetime, timezone
 from metadata import now_playing
 from metadata_feed import MONITOR
 
@@ -210,23 +211,41 @@ def radio_start_sequence(generation):
                     states = state_snapshot()
                     if states.get(RADIO_SWITCH, {}).get("state") != "on":
                         return
-                    if any(states.get(e, {}).get("state") == "playing" for e in RADIO_PLAYERS):
-                        confirmed = True
-                        break
-                    # Keep the playback probe quiet, including after Alexa reconnects.
+                    # Never trust an old 'playing' state retained from before boot.
+                    # Require a fresh state transition after our actual play command.
                     set_probe_volume(generation)
                     if generation != RESTORE_GENERATION:
                         return
+                    command_time = datetime.now(timezone.utc)
                     try:
                         perform("radio_direct", {"station": station})
                         print(f"[HA Music] Starting {station}, attempt {play_attempt+1}", flush=True)
                     except (RuntimeError, HTTPError, URLError, ValueError) as exc:
                         print(f"[HA Music] Station start retry: {exc}", flush=True)
-                    time.sleep(8)
-                if not confirmed:
-                    states = state_snapshot()
-                    confirmed = any(states.get(e, {}).get("state") == "playing"
-                                    for e in RADIO_PLAYERS)
+                        time.sleep(3)
+                        continue
+                    for _ in range(8):
+                        if generation != RESTORE_GENERATION:
+                            return
+                        time.sleep(1)
+                        states = state_snapshot()
+                        if states.get(RADIO_SWITCH, {}).get("state") != "on":
+                            return
+                        for entity in RADIO_PLAYERS:
+                            player = states.get(entity, {})
+                            if player.get("state") != "playing":
+                                continue
+                            try:
+                                changed = datetime.fromisoformat(player.get("last_changed", "").replace("Z", "+00:00"))
+                                if changed > command_time:
+                                    confirmed = True
+                                    break
+                            except (ValueError, TypeError):
+                                pass
+                        if confirmed:
+                            break
+                    if confirmed:
+                        break
                 if not confirmed:
                     print("[HA Music] Playback unconfirmed; retrying Alexa readiness", flush=True)
                     time.sleep(4)
