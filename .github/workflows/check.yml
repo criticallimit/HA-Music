@@ -13,6 +13,6 @@ jobs:
           python-version: "3.12"
       - name: Check Python syntax and frontend contracts
         run: |
-          python -m py_compile ha_music/app.py ha_music/metadata.py
+          python -m py_compile ha_music/app.py ha_music/metadata.py ha_music/metadata_feed.py ha_music/logo_sources.py
           python tests/test_scaffold.py
           python tests/test_smoke.py
