@@ -180,12 +180,19 @@ for (const [id,name] of STATIONS) {
   stationButtons.set(id, button);
   $("station-list").appendChild(button);
 }
+function displayRadioReadiness(isReady) {
+  document.querySelector(".now").hidden = !isReady;
+  document.querySelector(".dashboard-right").hidden = !isReady;
+  $("radio-standby").hidden = isReady;
+}
 async function loadRadioState() {
   try {
     const data = await api("radio-state");
     const state = new Map(data.stations.map(s => [s.id,s]));
+    const radioReady = data.power === "on" && data.ready === "on";
+    displayRadioReadiness(radioReady);
 
-    for (const [key,button] of stationButtons) button.disabled = !state.get(key)?.available;
+    for (const [key,button] of stationButtons) button.disabled = !radioReady || !state.get(key)?.available;
     const label = data.power === "on" && data.ready !== "on" ? "Radio startet …" :
       data.power === "on" ? "Radio eingeschaltet" :
       data.power === "off" ? "Radio ausgeschaltet" : "Radio nicht verfügbar";
@@ -193,6 +200,7 @@ async function loadRadioState() {
     $("power-on").disabled = data.power === "on" || data.power === "unavailable";
     $("power-off").disabled = data.power === "off" || data.power === "unavailable";
   } catch(e) {
+    displayRadioReadiness(false);
     $("radio-state").textContent = "Radiozustand nicht verfügbar: " + e.message;
     for (const button of stationButtons.values()) button.disabled = true;
   }
