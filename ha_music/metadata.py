@@ -102,13 +102,51 @@ def parse_icy_title(value):
     return {"title": None, "artist": None, "show": value, "kind": "show"}
 
 
+def parse_1live_player(html):
+    """Use the player headline, not playlist search results or time labels."""
+    parser = Text()
+    parser.feed(html)
+    plain = re.sub(r"\\s+", " ", " ".join(parser.parts))
+    part = plain.split("Stream im 1LIVE-Player hören", 1)
+    if len(part) != 2:
+        return {"title": None, "artist": None, "show": None, "kind": "unavailable"}
+    section = part[1].split("Ausführliche Playlist", 1)[0]
+    # The headline appears after the stream links, before the recent timed list.
+    match = re.search(r"(?:mehr\\s+)?([^<>]{2,80}?)\\s+-\\s+([^<>]{2,100}?)(?=\\s+(?:Image:|\\d{1,2}[.:]\\d{2}\\s|Ausführliche Playlist|$))", section)
+    if not match:
+        return {"title": None, "artist": None, "show": None, "kind": "unavailable"}
+    artist, title = match.group(1).strip(), match.group(2).strip()
+    if not artist or artist.endswith("Uhr") or "Uhr:" in artist:
+        return {"title": None, "artist": None, "show": None, "kind": "unavailable"}
+    return {"title": title, "artist": artist, "show": None, "kind": "song"}
+
+
 def now_playing(station):
     result = {"station": NAMES.get(station, ""), "title": None, "artist": None,
               "show": None, "kind": "unavailable", "cover": None,
               "status": "unavailable", "source": None}
     if station not in URLS and station not in ICY_STREAMS:
         return result
-    if station in ICY_STREAMS:
+    # A short cache avoids flooding broadcaster sites from multiple clients.
+    with LOCK:
+        cached = CACHE.get(station)
+        if cached and time.monotonic() - cached[0] < 12:
+            return dict(cached[1])
+    if station in URLS:
+        try:
+            raw = fetch(URLS[station])
+            if station == "wdr2":
+                parsed = parse_wdr_live(raw)
+            elif station == "1live":
+                parsed = parse_1live_player(raw)
+            else:
+                parsed = parse_recent_playlist(station, raw)
+            if parsed["kind"] != "unavailable":
+                result.update(parsed)
+                result.update(status="available", source="official_player")
+        except Exception:
+            pass
+    if result["status"] != "available" and station in ICY_STREAMS:
         ensure_icy_worker(station)
         with LOCK:
             latest = ICY_LATEST.get(station)
@@ -117,20 +155,6 @@ def now_playing(station):
             if parsed["kind"] != "unavailable":
                 result.update(parsed)
                 result.update(status="available", source="icy")
-                return result
-    with LOCK:
-        cached = CACHE.get(station)
-        if cached and time.monotonic() - cached[0] < 20:
-            return dict(cached[1])
-    if station in URLS:
-        try:
-            raw = fetch(URLS[station])
-            parsed = parse_wdr_live(raw) if station == "wdr2" else parse_recent_playlist(station, raw)
-            result.update(parsed)
-            if parsed["kind"] != "unavailable":
-                result.update(status="available", source="web")
-        except Exception:
-            pass
     with LOCK:
         CACHE[station] = (time.monotonic(), dict(result))
     return result
