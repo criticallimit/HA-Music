@@ -25,6 +25,8 @@ ENTITY_RE = re.compile(r"^media_player\.[a-z0-9_]+$")
 VOLUME_FILE = Path(os.environ.get("VOLUME_FILE", "/data/volumes.json"))
 STATION_FILE = Path(os.environ.get("STATION_FILE", "/data/last_station.json"))
 SPEAKER_FILE = Path(os.environ.get("SPEAKER_FILE", "/data/speaker_levels.json"))
+VIEW_FILE = Path(os.environ.get("VIEW_FILE", "/data/selected_view.json"))
+STARTED_AT = None
 RESTORE_GENERATION = 0
 RADIO_MONITOR_STOP = threading.Event()
 RADIO_PLAYERS = ("media_player.wohnung", "media_player.wohnzimmer", "media_player.kueche", "media_player.bad")
@@ -224,7 +226,7 @@ def radio_start_sequence(generation):
 
 def radio_switch_monitor():
     """Track all changes to the HA switch, including external automations."""
-    global RESTORE_GENERATION
+    global RESTORE_GENERATION, STARTED_AT
     last_power = None
     while not RADIO_MONITOR_STOP.is_set():
         try:
@@ -235,11 +237,13 @@ def radio_switch_monitor():
                     RESTORE_GENERATION += 1
                     generation = RESTORE_GENERATION
                 if state == "on":
+                    STARTED_AT = time.monotonic()
                     # Clear stale readiness from a previous add-on process.
                     set_radio_ready(False)
                     threading.Thread(target=radio_start_sequence,
                                      args=(generation,), daemon=True).start()
                 else:
+                    STARTED_AT = None
                     MONITOR.select("")
                     # Mirror old off-delay, but cancel a pending start immediately.
                     time.sleep(10)
@@ -309,6 +313,30 @@ def save_selected_station(station):
         temporary.replace(STATION_FILE)
 
 
+def selected_view():
+    try:
+        value = json.loads(VIEW_FILE.read_text()).get("view")
+        return value if value in ("radio", "apple") else "radio"
+    except (OSError, ValueError, AttributeError):
+        return "radio"
+
+
+def save_selected_view(view):
+    if view not in ("radio", "apple"):
+        raise ValueError("Ungültige Ansicht")
+    with LOCK:
+        VIEW_FILE.parent.mkdir(parents=True, exist_ok=True)
+        temp = VIEW_FILE.with_suffix(".tmp")
+        temp.write_text(json.dumps({"view": view}))
+        temp.replace(VIEW_FILE)
+
+
+def startup_remaining():
+    if STARTED_AT is None:
+        return None
+    return max(0, 50 - int(time.monotonic() - STARTED_AT))
+
+
 def state_snapshot():
     states = ha_request("/states")
     return {s["entity_id"]:s for s in states if isinstance(s,dict) and isinstance(s.get("entity_id"),str)}
@@ -318,6 +346,8 @@ def radio_state():
     return {"power":states.get(RADIO_SWITCH,{}).get("state","unavailable"),
             "ready":states.get(RADIO_READY,{}).get("state","unavailable"),
             "last_station":last_selected_station(),
+            "selected_view":selected_view(),
+            "startup_remaining":startup_remaining(),
             "stations":[{"id":key, "name":item["name"],
                          "available":item["target"] in states and
                             states[item["target"]].get("state") not in ("unknown","unavailable")}
@@ -484,7 +514,7 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         path = unquote(urlsplit(self.path).path)
         action = path.rsplit("/", 1)[-1]
-        if "/api/" not in path or action not in ("volume", "radio_direct", "radio_power"):
+        if "/api/" not in path or action not in ("volume", "radio_direct", "radio_power", "selected_view"):
             return self.reply(404, {"error": "Not found"})
         try:
             size = int(self.headers.get("Content-Length", "0"))
@@ -493,7 +523,10 @@ class Handler(BaseHTTPRequestHandler):
             body = json.loads(self.rfile.read(size))
             if not isinstance(body, dict):
                 raise ValueError("Invalid body")
-            perform(action, body)
+            if action == "selected_view":
+                save_selected_view(body.get("view"))
+            else:
+                perform(action, body)
             if action == "radio_direct":
                 MONITOR.select(body["station"])
                 save_selected_station(body["station"])
