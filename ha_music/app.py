@@ -136,14 +136,35 @@ def capture_speaker_levels(states):
         save_speaker_levels(saved)
 
 
-def restore_speakers(generation):
-    """Restore room volumes after starting playback; verify reported HA volume.
+def verify_restored_volumes(generation, expected):
+    """Log HA confirmations asynchronously, without delaying the radio UI."""
+    for attempt in range(3):
+        if generation != RESTORE_GENERATION:
+            return
+        time.sleep(2)
+        try:
+            states = state_snapshot()
+        except (RuntimeError, HTTPError, URLError, ValueError) as exc:
+            print(f"[HA Music] Volume verification retry: {exc}", flush=True)
+            continue
+        for entity, level in list(expected.items()):
+            observed = (states.get(entity, {}).get("attributes") or {}).get("volume_level")
+            if isinstance(observed, (float, int)) and abs(observed - level) <= 0.011:
+                print(f"[HA Music] HA confirmed {entity}: {round(level*100)}%", flush=True)
+                expected.pop(entity)
+        if not expected:
+            return
+    for entity in expected:
+        print(f"[HA Music] WARNING: {entity} did not confirm restored volume; "
+              "Echo may not have applied the command", flush=True)
 
-    HA state acknowledgement is not proof of acoustic output from Alexa.
-    """
+
+def restore_speakers(generation):
+    """Send stored room levels, then verify without blocking readiness."""
     levels = speaker_levels()
     print(f"[HA Music] Restoring {len(levels)} stored speaker levels", flush=True)
     available = allowed_entities()
+    sent = {}
     for entity in sorted(e for e in levels if e != "media_player.wohnung"):
         if generation != RESTORE_GENERATION:
             return
@@ -153,30 +174,13 @@ def restore_speakers(generation):
         try:
             ha_request("/services/media_player/volume_set",
                        {"entity_id": entity, "volume_level": level})
+            sent[entity] = level
             print(f"[HA Music] Volume command sent to {entity}: {round(level*100)}%", flush=True)
         except (RuntimeError, HTTPError, URLError, ValueError) as exc:
             print(f"[HA Music] Restore failed for {entity}: {exc}", flush=True)
-            continue
-        # A successful HA service call merely accepts the request. Check the
-        # subsequent player state and report failures rather than invent success.
-        confirmed = False
-        for attempt in range(3):
-            if generation != RESTORE_GENERATION:
-                return
-            time.sleep(2)
-            try:
-                state = state_snapshot().get(entity, {})
-                observed = (state.get("attributes") or {}).get("volume_level")
-                if isinstance(observed, (float, int)) and abs(observed - level) <= 0.011:
-                    confirmed = True
-                    break
-            except (RuntimeError, HTTPError, URLError, ValueError) as exc:
-                print(f"[HA Music] Volume verification retry for {entity}: {exc}", flush=True)
-        if confirmed:
-            print(f"[HA Music] HA reports restored {entity}: {round(level*100)}%", flush=True)
-        else:
-            print(f"[HA Music] WARNING: No volume confirmation for {entity}; "
-                  "Echo may not have applied the command", flush=True)
+    if sent:
+        threading.Thread(target=verify_restored_volumes,
+                         args=(generation, sent), daemon=True).start()
 
 
 def set_radio_ready(enabled):
