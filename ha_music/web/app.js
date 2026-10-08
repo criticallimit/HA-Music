@@ -47,8 +47,9 @@ async function refresh() {
     status(ready ? "Geräteerkennung aktiv. Radio-Senderwahl zeigt derzeit Metadaten; direkter Multiroom-Start folgt." : "Home-Assistant-Verbindung nicht verfügbar.");
   } catch(e) { status(e.message); }
   try {
-    const {players,remembered,groups,diagnostics} = await api("players");
-    $("groups").textContent = groups.length ? "Mögliche Alexa-Gruppen: " + groups.map(p=>p.name).join(", ") + " (Mitgliedschaft nicht verifiziert)" : "Keine Alexa-Multiroom-Gruppe in den sichtbaren Media-Player-Zuständen erkannt.";
+    const {players,remembered,groups,excluded,diagnostics} = await api("players");
+    $("groups").textContent = groups.length ? "Gruppe: " + groups.map(p => p.name + " (" + p.state + ")").join(", ") + " · Die direkte Wiedergabe wird noch geprüft." : "Multiroom-Gruppe Wohnung derzeit nicht erkannt.";
+    $("excluded").textContent = excluded?.length ? "Weitere Alexa-Geräte (nicht als Raumlautsprecher): " + excluded.map(p => p.name).join(", ") : "";
     const wrap = $("players"); wrap.replaceChildren();
     if (!players.length) { const d = diagnostics || {};
       const show = key => (d[key]?.entities ?? 0) + " Entitäten, " + (d[key]?.media_players ?? 0) + " Media Player";
