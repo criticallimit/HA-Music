@@ -8,7 +8,7 @@ import json
 import os
 import re
 import threading
-from metadata import now_playing, probe_icy
+from metadata import now_playing, probe_icy, icy_diagnostics
 from metadata_feed import MONITOR
 
 WEB = (Path(__file__).parent / "web").resolve()
@@ -217,6 +217,8 @@ class Handler(BaseHTTPRequestHandler):
         if name == "status" and "/api/" in path:
             return self.reply(200, {"radio": "direct_playback_pending",
                                     "apple_music": "planned", "backend": "connected" if TOKEN else "unavailable"})
+        if name == "icy-diagnostics" and "/api/" in path:
+            return self.reply(200, icy_diagnostics())
         if name == "metadata-probe" and "/api/" in path:
             from urllib.parse import parse_qs
             station = parse_qs(urlsplit(self.path).query).get("station", [""])[0]
