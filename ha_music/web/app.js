@@ -316,6 +316,14 @@ function scheduleVolumeReconciliation(value) {
     await refreshPlayers();
   }, 15000);
 }
+function masterView(groups, players, saved) {
+  const group = groups.find(p => p.entity_id === "media_player.wohnung");
+  if (!group) return null;
+  const active = players.filter(p => p.state !== "unavailable" && p.state !== "unknown" &&
+    (saved?.[p.entity_id] ?? p.volume ?? 0) > 0);
+  const volume = active.length ? Math.max(...active.map(p => saved?.[p.entity_id] ?? p.volume ?? 0)) : 0;
+  return {...group, volume};
+}
 function volumeRow(p, remembered, master) {
   const row = document.createElement("div"); row.className = "player-row";
   const title = document.createElement("span"); title.textContent = (master ? "Master Volume" : p.name + " (" + p.state + ")");
@@ -330,14 +338,14 @@ function volumeRow(p, remembered, master) {
       mute.setAttribute("aria-label", Number(slider.value) === 0 ? "Ton einschalten" : "Stummschalten");
       slider.addEventListener("change", async () => {
         const volume = Number(slider.value)/100;
-        try { await api("volume",{entity_id:p.entity_id,volume}); if(volume>0)previous.set(p.entity_id,volume);label.textContent=slider.value+"%";mute.textContent=volume?"Stumm":"Ein";mute.classList.toggle("is-muted",volume===0);mute.setAttribute("aria-label",volume?"Stummschalten":"Ton einschalten"); if (master) scheduleVolumeReconciliation(volume); }
+        try { await api("volume",{entity_id:p.entity_id,volume}); if(volume>0)previous.set(p.entity_id,volume);label.textContent=slider.value+"%";mute.textContent=volume?"Stumm":"Ein";mute.classList.toggle("is-muted",volume===0);mute.setAttribute("aria-label",volume?"Stummschalten":"Ton einschalten"); if (master) refreshPlayers(); }
         catch(e){status(e.message);}
       });
       mute.addEventListener("click",async () => {
         const current = Number(slider.value)/100;
         const next = current > 0 ? 0 : (previous.get(p.entity_id) || remembered[p.entity_id] || 0.3);
         if(current>0) previous.set(p.entity_id,current);
-        try { await api("volume",{entity_id:p.entity_id,volume:next});slider.value=Math.round(next*100);label.textContent=slider.value+"%";mute.textContent=next?"Stumm":"Ein";mute.classList.toggle("is-muted",next===0);mute.setAttribute("aria-label",next?"Stummschalten":"Ton einschalten");if(master) scheduleVolumeReconciliation(next); }
+        try { await api("volume",{entity_id:p.entity_id,volume:next});slider.value=Math.round(next*100);label.textContent=slider.value+"%";mute.textContent=next?"Stumm":"Ein";mute.classList.toggle("is-muted",next===0);mute.setAttribute("aria-label",next?"Stummschalten":"Ton einschalten");if(master) refreshPlayers(); }
         catch(e){status(e.message);}
       });
 
@@ -351,10 +359,10 @@ async function refresh() {
     status(ready ? "Sender werden direkt über Home Assistant abgespielt, ohne externe Skripte." : "Home-Assistant-Verbindung nicht verfügbar.");
   } catch(e) { status(e.message); }
   try {
-    const {players,remembered,groups,excluded,diagnostics} = await api("players");
+    const {players,remembered,groups,excluded,diagnostics,saved_levels} = await api("players");
     await updateSong();
     $("groups").textContent = groups.length ? "Gruppe: " + groups.map(p => p.name).join(", ") + " · Alexa-Multiroom" : "Multiroom-Gruppe Wohnung derzeit nicht erkannt.";
-    const master = groups.find(p => p.entity_id === "media_player.wohnung");
+    const master = masterView(groups, players, saved_levels);
     $("master-volume").replaceChildren();
     if (master) $("master-volume").appendChild(volumeRow(master, remembered, true));
     else $("master-volume").textContent = "Master-Lautstärke nicht verfügbar";
@@ -369,8 +377,8 @@ async function refresh() {
 }
 async function refreshPlayers() {
   try {
-    const {players,groups,remembered} = await api("players");
-    const master = groups.find(p => p.entity_id === "media_player.wohnung");
+    const {players,groups,remembered,saved_levels} = await api("players");
+    const master = masterView(groups, players, saved_levels);
     $("master-volume").replaceChildren();
     if (master) $("master-volume").appendChild(volumeRow(master, remembered, true));
     else $("master-volume").textContent = "Master-Lautstärke nicht verfügbar";
