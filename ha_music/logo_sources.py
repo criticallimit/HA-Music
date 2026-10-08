@@ -9,7 +9,7 @@ import xml.etree.ElementTree as ET
 
 ASSETS = {
     "1live": "WDR_1LIVE_Logo_2016.svg",
-    "wdr2": "WDR_2_logo.svg",
+    "wdr2": "WDR_2_logo_2012.svg",
     "swr3": "SWR3_Logo.svg",
 }
 TARGET = Path(__file__).resolve().parent / "web"
