@@ -24,6 +24,10 @@ ICY_STOP = {}
 ICY_LAST_REQUEST = {}
 ICY_IDLE_LIMIT = 45
 ICY_MAX_AGE = 30
+ICY_OBSERVATIONS = {}
+ICY_ERRORS = {}
+ICY_DIAGNOSTIC_UNTIL = 0
+ICY_DIAGNOSTIC_LOCK = threading.Lock()
 
 
 class Text(HTMLParser):
@@ -211,11 +215,16 @@ def _icy_worker(station, stop):
                     idle = time.monotonic() - ICY_LAST_REQUEST.get(station, 0) > ICY_IDLE_LIMIT
                     if value:
                         ICY_LATEST[station] = (time.monotonic(), value)
+                        log = ICY_OBSERVATIONS.setdefault(station, [])
+                        if not log or log[-1]["text"] != value:
+                            log.append({"at": time.time(), "text": value})
+                            del log[:-120]
                 if stop.is_set() or idle:
                     return
                 retry = 2
-        except (OSError, ValueError, EOFError):
-            pass
+        except (OSError, ValueError, EOFError) as exc:
+            with LOCK:
+                ICY_ERRORS[station] = type(exc).__name__ + ": " + str(exc)[:120]
         if stop.wait(retry):
             break
         retry = min(retry * 2, 60)
@@ -266,3 +275,35 @@ def probe_icy(station):
                     "sample": value if value else None}
     except Exception as exc:
         return {"station": station, "supported": False, "reason": type(exc).__name__ + ": " + str(exc)[:120]}
+
+def _diagnostic_runner():
+    while time.monotonic() < ICY_DIAGNOSTIC_UNTIL:
+        for station in ("1live", "wdr2", "swr3"):
+            ensure_icy_worker(station)
+        time.sleep(10)
+
+
+def icy_diagnostics():
+    """Observe live metadata for 15 minutes, without changing playback."""
+    global ICY_DIAGNOSTIC_UNTIL
+    with ICY_DIAGNOSTIC_LOCK:
+        if time.monotonic() >= ICY_DIAGNOSTIC_UNTIL:
+            ICY_DIAGNOSTIC_UNTIL = time.monotonic() + 900
+            threading.Thread(target=_diagnostic_runner, daemon=True,
+                             name="icy-diagnostics").start()
+    with LOCK:
+        result = {}
+        for station in ("1live", "wdr2", "swr3"):
+            entries = list(ICY_OBSERVATIONS.get(station, []))
+            result[station] = {
+                "stream": ICY_STREAMS[station],
+                "changes": len(entries),
+                "last": entries[-1] if entries else None,
+                "samples": entries[-8:],
+                "last_error": ICY_ERRORS.get(station),
+                "worker_alive": bool(ICY_WORKERS.get(station) and ICY_WORKERS[station].is_alive()),
+            }
+    return {"running": time.monotonic() < ICY_DIAGNOSTIC_UNTIL,
+            "seconds_remaining": max(0, int(ICY_DIAGNOSTIC_UNTIL - time.monotonic())),
+            "stations": result,
+            "note": "Diagnose ohne Umstellung: Webseiten bleiben bevorzugt, ICY als Fallback."}
