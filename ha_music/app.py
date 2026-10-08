@@ -25,6 +25,8 @@ VOLUME_FILE = Path(os.environ.get("VOLUME_FILE", "/data/volumes.json"))
 STATION_FILE = Path(os.environ.get("STATION_FILE", "/data/last_station.json"))
 SPEAKER_FILE = Path(os.environ.get("SPEAKER_FILE", "/data/speaker_levels.json"))
 RESTORE_GENERATION = 0
+RADIO_MONITOR_STOP = threading.Event()
+RADIO_PLAYERS = ("media_player.wohnung", "media_player.wohnzimmer", "media_player.kueche", "media_player.bad")
 LOCK = threading.Lock()
 def integration_inventory():
     """Discover registered Alexa entities from both supported integration domains."""
@@ -128,44 +130,103 @@ def capture_speaker_levels(states):
 
 
 def restore_speakers(generation):
-    # Wait for the existing Alexa-ready helper; do not impose levels while booting.
-    for _ in range(60):
-        time.sleep(2)
+    """Restore only individual room volumes; leave the virtual master alone."""
+    levels = speaker_levels()
+    print(f"[HA Music] Restoring {len(levels)} stored speaker levels", flush=True)
+    available = allowed_entities()
+    for entity in sorted(e for e in levels if e != "media_player.wohnung"):
         if generation != RESTORE_GENERATION:
             return
+        if entity not in available:
+            continue
         try:
-            states = state_snapshot()
-            if states.get(RADIO_SWITCH, {}).get("state") != "on":
-                continue
-            if states.get(RADIO_READY, {}).get("state") != "on":
-                continue
-            # Allow the switch's startup automation to apply its initial 30% first.
-            time.sleep(4)
+            ha_request("/services/media_player/volume_set", {
+                "entity_id": entity, "volume_level": levels[entity]})
+            print(f"[HA Music] Restored {entity}: {round(levels[entity]*100)}%", flush=True)
+        except (RuntimeError, HTTPError, URLError, ValueError) as exc:
+            print(f"[HA Music] Restore failed for {entity}: {exc}", flush=True)
+
+
+def set_radio_ready(enabled):
+    ha_request("/services/input_boolean/" + ("turn_on" if enabled else "turn_off"),
+               {"entity_id": RADIO_READY})
+
+
+def radio_start_sequence(generation):
+    """Run once per actual switch-on edge, independently of dashboard sessions."""
+    try:
+        # Echo devices may be unavailable immediately after power is applied.
+        for attempt in range(60):
             if generation != RESTORE_GENERATION:
                 return
             states = state_snapshot()
             if states.get(RADIO_SWITCH, {}).get("state") != "on":
                 return
-            available = allowed_entities()
-            levels = speaker_levels()
-            print(f"[HA Music] Restoring {len(levels)} saved speaker levels", flush=True)
-            # Set group before individual rooms so saved room mute levels win.
-            targets = sorted(e for e in levels if e != "media_player.wohnung")
-            for entity in targets:
+            reachable = all(states.get(entity, {}).get("state") not in
+                            (None, "unknown", "unavailable") for entity in RADIO_PLAYERS)
+            if reachable:
+                # Force a fresh state update, as the old HA automation did.
+                ha_request("/services/homeassistant/update_entity",
+                           {"entity_id": list(RADIO_PLAYERS)})
+                time.sleep(5)
                 if generation != RESTORE_GENERATION:
                     return
-                if entity not in available or states.get(entity, {}).get("state") in ("unknown", "unavailable"):
-                    continue
-                try:
-                    ha_request("/services/media_player/volume_set", {
-                        "entity_id": entity, "volume_level": levels[entity]})
-                    print(f"[HA Music] Restored {entity}: {round(levels[entity] * 100)}%", flush=True)
-                except (RuntimeError, HTTPError, URLError, ValueError) as exc:
-                    print(f"[HA Music] Could not restore {entity}: {exc}", flush=True)
-            return
-        except (RuntimeError, HTTPError, URLError, ValueError):
-            continue
-    print("[HA Music] Speaker restore skipped: radio did not become ready", flush=True)
+                states = state_snapshot()
+                if states.get(RADIO_SWITCH, {}).get("state") != "on":
+                    return
+                if all(states.get(entity, {}).get("state") not in
+                       (None, "unknown", "unavailable") for entity in RADIO_PLAYERS):
+                    set_radio_ready(True)
+                    if generation != RESTORE_GENERATION:
+                        return
+                    restore_speakers(generation)
+                    # Do not interrupt music already started by an external controller.
+                    station = last_selected_station()
+                    if station and generation == RESTORE_GENERATION:
+                        playing = any(states.get(e, {}).get("state") == "playing"
+                                      for e in RADIO_PLAYERS)
+                        if not playing:
+                            try:
+                                perform("radio_direct", {"station": station})
+                                MONITOR.select(station)
+                                print(f"[HA Music] Resumed station {station}", flush=True)
+                            except (RuntimeError, HTTPError, URLError, ValueError) as exc:
+                                print(f"[HA Music] Station resume failed: {exc}", flush=True)
+                    print("[HA Music] Alexa initialization completed", flush=True)
+                    return
+            time.sleep(2)
+        print("[HA Music] Alexa initialization timed out; readiness stays off", flush=True)
+    except (RuntimeError, HTTPError, URLError, ValueError) as exc:
+        print(f"[HA Music] Initialization failed: {exc}", flush=True)
+
+
+def radio_switch_monitor():
+    """Track all changes to the HA switch, including external automations."""
+    global RESTORE_GENERATION
+    last_power = None
+    while not RADIO_MONITOR_STOP.is_set():
+        try:
+            state = state_snapshot().get(RADIO_SWITCH, {}).get("state")
+            if state in ("on", "off") and state != last_power:
+                last_power = state
+                with LOCK:
+                    RESTORE_GENERATION += 1
+                    generation = RESTORE_GENERATION
+                if state == "on":
+                    # Clear stale readiness from a previous add-on process.
+                    set_radio_ready(False)
+                    threading.Thread(target=radio_start_sequence,
+                                     args=(generation,), daemon=True).start()
+                else:
+                    MONITOR.select("")
+                    # Mirror old off-delay, but cancel a pending start immediately.
+                    time.sleep(10)
+                    if generation == RESTORE_GENERATION:
+                        set_radio_ready(False)
+                print(f"[HA Music] Radio switch detected: {state}", flush=True)
+        except (RuntimeError, HTTPError, URLError, ValueError) as exc:
+            print(f"[HA Music] Radio monitor retry: {exc}", flush=True)
+        RADIO_MONITOR_STOP.wait(3)
 
 
 def options():
@@ -278,22 +339,15 @@ def perform(action, body):
                 "media_content_id":preset["media_content_id"],
                 "media_content_type":preset["media_content_type"], "metadata":{}}})
     if action == "radio_power":
-        global RESTORE_GENERATION
         turn_on = body.get("on")
         if not isinstance(turn_on, bool):
             raise ValueError("Ungültiger Schaltzustand")
         states = state_snapshot()
-        if RADIO_SWITCH not in states or states[RADIO_SWITCH].get("state") in ("unavailable", "unknown"):
+        if states.get(RADIO_SWITCH, {}).get("state") in (None, "unavailable", "unknown"):
             raise ValueError("Radioschalter nicht verfügbar")
-        # Keep the last deliberately selected volume/mute settings across shutdown.
-        # Live Alexa state may already contain a startup default such as 30%.
-        response = ha_request("/services/switch/" + ("turn_on" if turn_on else "turn_off"), {"entity_id": RADIO_SWITCH})
-        with LOCK:
-            RESTORE_GENERATION += 1
-            generation = RESTORE_GENERATION
-        if turn_on:
-            threading.Thread(target=restore_speakers, args=(generation,), daemon=True).start()
-        return response
+        # The background monitor handles every switch transition exactly once.
+        return ha_request("/services/switch/" + ("turn_on" if turn_on else "turn_off"),
+                          {"entity_id": RADIO_SWITCH})
     if action == "volume":
         entity = body.get("entity_id", "")
         level = body.get("volume")
@@ -430,4 +484,5 @@ class Handler(BaseHTTPRequestHandler):
             return self.reply(502, {"error": str(exc)})
 
 if __name__ == "__main__":
+    threading.Thread(target=radio_switch_monitor, daemon=True).start()
     ThreadingHTTPServer(("0.0.0.0", PORT), Handler).serve_forever()
