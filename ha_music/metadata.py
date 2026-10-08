@@ -55,22 +55,22 @@ def _icy_blocks(station):
 
 
 def _icy_stream_metadata(stream):
-        value = stream.headers.get("icy-metaint", "")
-        if not value.isdigit() or not 0 < int(value) <= 131072:
-            raise ValueError("ICY-Metadatenintervall nicht verfügbar")
-        interval = int(value)
-        while True:
-            _read_exact(stream, interval)
-            length = _read_exact(stream, 1)[0] * 16
-            if length:
-                raw = _read_exact(stream, length).decode("utf-8", "replace")
-                match = re.search(r"StreamTitle='([^']*)'", raw)
-                if match and match.group(1).strip():
-                    yield match.group(1).strip()
-                else:
-                    yield None
+    value = stream.headers.get("icy-metaint", "")
+    if not value.isdigit() or not 0 < int(value) <= 131072:
+        raise ValueError("ICY-Metadatenintervall nicht verfügbar")
+    interval = int(value)
+    while True:
+        _read_exact(stream, interval)
+        length = _read_exact(stream, 1)[0] * 16
+        if length:
+            raw = _read_exact(stream, length).decode("utf-8", "replace")
+            match = re.search(r"StreamTitle='([^']*)'", raw)
+            if match and match.group(1).strip():
+                yield match.group(1).strip()
             else:
                 yield None
+        else:
+            yield None
 
 
 def _icy_worker(station):
