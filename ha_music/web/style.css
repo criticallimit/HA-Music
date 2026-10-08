@@ -3,5 +3,5 @@
 .art{overflow:hidden;position:relative}.art img:not([hidden]){position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
 
 /* Station artwork remains fixed; verified song titles scroll alongside it. */
-.now>div:last-child{min-width:0;flex:1}.now-ticker{overflow:hidden;white-space:nowrap;width:33.333%;max-width:100%;margin:8px 0;font-weight:500}.now-ticker span{display:inline-block;white-space:nowrap}.now-ticker.scrolling span{padding-left:100%;animation:ha-music-marquee 16s linear infinite}@keyframes ha-music-marquee{from{transform:translateX(0)}to{transform:translateX(-100%)}}@media(prefers-reduced-motion:reduce){.now-ticker.scrolling span{padding-left:0;animation:none;white-space:normal}}
+.now>div:last-child{min-width:0;flex:1}.now-ticker{overflow:hidden;white-space:nowrap;width:20%;max-width:100%;margin:8px 0;font-weight:500}.now-ticker span{display:inline-block;white-space:nowrap}.now-ticker.scrolling span{padding-left:100%;animation:ha-music-marquee 16s linear infinite}@keyframes ha-music-marquee{from{transform:translateX(0)}to{transform:translateX(-100%)}}@media(prefers-reduced-motion:reduce){.now-ticker.scrolling span{padding-left:0;animation:none;white-space:normal}}
 @media(max-width:520px){.now-ticker{width:100%}}
