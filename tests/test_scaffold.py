@@ -29,8 +29,11 @@ assert (root / "ha_music/metadata.py").exists()
 # Supervisor injects its token through the s6 container environment.
 assert 'CMD ["/usr/bin/with-contenv", "python3", "/app/app.py"]' in dockerfile
 
-# Playback outcome and technical capability must be rendered in distinct elements.
-assert 'id="test-result"' in html
-assert 'id="test-info"' in html
-assert 'testResult(' in js
-assert 'finally { await checkPlayback(); }' not in js
+# The current radio UI shows live metadata and the selected station.
+assert 'id="current-title"' in html
+assert 'id="now-ticker"' in html
+assert 'id="now-ticker-text"' in html
+assert 'async function updateSong()' in js
+assert 'id="metadata-probe"' not in html
+assert 'id="stream-test"' not in html
+assert 'stream_test' not in source
