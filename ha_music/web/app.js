@@ -17,15 +17,16 @@ async function api(path, data) {
 }
 // Logos are selected by station ID, never read from Alexa's delayed media state.
 const STATION_LOGOS = {
-  "1live": "https://commons.wikimedia.org/wiki/Special:FilePath/WDR_1LIVE_Logo_2016.svg",
-  "wdr2": "https://commons.wikimedia.org/wiki/Special:FilePath/WDR_2_logo.svg",
-  "swr3": "https://commons.wikimedia.org/wiki/Special:FilePath/SWR3_Logo.svg"
+  "1live": "1live.svg",
+  "wdr2": "wdr2.svg",
+  "swr3": "swr3.svg"
 };
 function updateStationLogo(station) {
   const cover = $("current-cover");
   const logo = STATION_LOGOS[station];
   if (logo) {
     if (cover.getAttribute("src") !== logo) cover.src = logo;
+    cover.alt = STATIONS.find(item => item[0] === station)?.[1] || station;
     cover.hidden = false;
   } else {
     cover.hidden = true;
