@@ -12,7 +12,7 @@ from zoneinfo import ZoneInfo
 URLS = {
     "wdr2": "https://www1.wdr.de/radio/player/streams/wdr2/index.html",
     "wdr4": "https://www1.wdr.de/radio/wdr4/musik/playlist/",
-    "1live": "https://www1.wdr.de/radio/1live/musik/playlist/",
+    "1live": "https://www1.wdr.de/radio/1live/on-air/playlist/einslive-playlist-100.html",
     "swr3": "https://www.swr3.de/playlisten/",
 }
 NAMES = {"wdr2":"WDR 2","wdr4":"WDR 4","1live":"1LIVE","swr3":"SWR3","80s80s":"80s80s","ndr2":"NDR 2","radiobob":"Radio BOB!"}
@@ -60,7 +60,9 @@ def parse_recent_playlist(station, html, now=None):
         # Playlist table: "08.10.2026, 17.09 Uhr <title> <artist>" lacks
         # unambiguous title/artist boundaries after HTML has been flattened.
         # Prefer the explicit "... mit ..." item in the station's player.
-        match = re.search(r"(\d{1,2})[.:](\d{2})\s+(.{2,75}?)\s+mit\s+(.{2,100}?)(?=\s+\d{1,2}[.:]\d{2}\s|Ausführliche Playlist|$)", plain, re.I)
+        player_section = plain.split("Stream im 1LIVE-Player hören", 1)[-1]
+        player_section = player_section.split("Ausführliche Playlist", 1)[0]
+        match = re.search(r"(\\d{1,2})[.:](\\d{2})\\s+(.{2,75}?)\\s+mit\\s+(.{2,100}?)(?=\\s+\\d{1,2}[.:]\\d{2}\\s|$)", player_section, re.I)
         if match:
             hour, minute = int(match[1]), int(match[2])
             song_time = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
