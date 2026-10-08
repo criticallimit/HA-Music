@@ -100,12 +100,27 @@ html.ha-dashboard-card,html.ha-dashboard-card body{
   color:var(--primary-text-color,#eef2f6);
 }
 html.ha-dashboard-card{
+  /* Use Home Assistant theme colors throughout the existing UI. */
+  --bg:var(--primary-background-color,#15171b);
   --surface:var(--ha-card-background,var(--card-background-color,#20252d));
   --border:var(--divider-color,#353d48);
   --text:var(--primary-text-color,#eef2f6);
   --muted:var(--secondary-text-color,#9caabb);
   --accent:var(--primary-color,#48a9ec);
 }
+html.ha-dashboard-card[data-ha-theme="light"]{color-scheme:light}
+html.ha-dashboard-card[data-ha-theme="dark"]{color-scheme:dark}
+html.ha-dashboard-card .shell{background:var(--bg)}
+html.ha-dashboard-card nav button:not(.active){color:var(--muted)}
+html.ha-dashboard-card .settings-toggle,
+html.ha-dashboard-card .dashboard-settings,
+html.ha-dashboard-card .dashboard-settings input{
+  background:var(--surface);color:var(--text);border-color:var(--border);
+}
+html.ha-dashboard-card .dashboard-settings input{background:var(--bg)}
+html.ha-dashboard-card .dashboard-settings button:hover,
+html.ha-dashboard-card nav button:hover:not(:disabled){background:var(--secondary-background-color,var(--surface))}
+
 html.ha-dashboard-card .master-volume,
 html.ha-dashboard-card .speaker-list .player-row,
 html.ha-dashboard-card .station,
