@@ -39,7 +39,10 @@ def now_playing(station):
         parser = Text(); parser.feed(fetch(URLS[station]))
         text = " ".join(parser.parts)
         text = re.sub(r"\s+", " ", text)
-        match = re.search(r"Jetzt läuft:\s*(.{2,130}?)\s+von\s+(.{2,100}?)(?=\s+(?:Playlist|Bildquelle|Jetzt|Die |[0-9]{2}[:.][0-9]{2})|$)", text, re.I)
+        # WDR2 live page provides a shorter and more reliable "Jetzt läuft" line.
+        match = re.search(
+            r"Jetzt läuft:\\s*(.{2,110}?)\\s+von\\s+(.{2,80}?)(?=\\s+(?:[0-2]?\\d[.:][0-5]\\d|Playlist|Live hören|Bildquelle|Jetzt|WDR 2|\\||$))",
+            text, re.I)
         if match:
             result["title"], result["artist"] = [x.strip() for x in match.groups()]
             result["status"] = "available"
