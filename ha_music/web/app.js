@@ -336,6 +336,9 @@ function volumeRow(p, remembered, master) {
       mute.textContent = Number(slider.value) === 0 ? "Ein" : "Stumm";
       mute.classList.toggle("is-muted", Number(slider.value) === 0);
       mute.setAttribute("aria-label", Number(slider.value) === 0 ? "Ton einschalten" : "Stummschalten");
+      slider.addEventListener("input", () => {
+        label.textContent = slider.value + "%";
+      });
       slider.addEventListener("change", async () => {
         const volume = Number(slider.value)/100;
         try { await api("volume",{entity_id:p.entity_id,volume}); if(volume>0)previous.set(p.entity_id,volume);label.textContent=slider.value+"%";mute.textContent=volume?"Stumm":"Ein";mute.classList.toggle("is-muted",volume===0);mute.setAttribute("aria-label",volume?"Stummschalten":"Ton einschalten"); if (master) refreshPlayers(); }
