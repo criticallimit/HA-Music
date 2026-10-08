@@ -171,7 +171,7 @@ function renderRadioMetadata(station, external) {
   }
 }
 async function updateSong() {
-  if (!radioReadyForViews || document.hidden || songRequestRunning) return;
+  if (songRequestRunning) return;
   songRequestRunning = true;
   const station = selectedStation;
   const epoch = stationEpoch;
@@ -208,12 +208,9 @@ async function updateSong() {
 }
 // One backend monitor polls radio metadata, all open clients receive changes.
 let radioEventsReady = false;
-let radioEventSource = null;
 function connectRadioEvents() {
   if (!window.EventSource) return;
-  if (radioEventSource || !radioReadyForViews || document.hidden) return;
   const source = new EventSource("api/events");
-  radioEventSource = source;
   source.onopen = () => { radioEventsReady = true; };
   source.onerror = () => { radioEventsReady = false; };
   source.onmessage = event => {
@@ -240,16 +237,8 @@ function connectRadioEvents() {
     } catch (_) { /* Ignore invalid event payloads. */ }
   };
 }
-function suspendRadioEvents() {
-  if (radioEventSource) radioEventSource.close();
-  radioEventSource = null;
-  radioEventsReady = false;
-}
-document.addEventListener("visibilitychange", () => {
-  if (document.hidden) suspendRadioEvents();
-  else if (radioReadyForViews) { connectRadioEvents(); refreshPlayers(); updateSong(); }
-});
- // The server provides live ICY changes over the event connection.
+connectRadioEvents();
+// The server provides live ICY changes over the event connection.
 
 // Alexa is the authoritative source for Amazon song and cover changes.
 setInterval(updateSong, 6000);
@@ -308,22 +297,14 @@ async function loadRadioState() {
     applyCardSetupVisibility(Boolean(data.dashboard_card_installed));
     if (isDashboardCard) reportDashboardCardLoaded();
     const radioReady = data.power === "on" && data.ready === "on";
-    const wasReady = radioReadyForViews;
     radioReadyForViews = radioReady;
-    if (!radioReady) suspendRadioEvents();
-    else if (!wasReady) { connectRadioEvents(); refreshPlayers(); updateSong(); }
     preferredView = data.selected_view === "apple" ? "apple" : "radio";
     $("radio-tab").disabled = !radioReady;
     $("apple-tab").disabled = !radioReady;
     show(radioReady ? preferredView : "radio");
     displayRadioReadiness(radioReady);
-    if (radioReady || data.power === "off" && countdownEndsAt === null) {
-      countdownEndsAt = null;
-    } else if (data.power === "on" && !radioReady && data.startup_remaining != null) {
-      countdownEndsAt = Date.now() + data.startup_remaining * 1000;
-    } else if (data.power === "on" && !radioReady && countdownEndsAt === null) {
-      countdownEndsAt = Date.now() + 50000;
-    }
+    countdownEndsAt = data.power === "on" && !radioReady && data.startup_remaining != null
+      ? Date.now() + data.startup_remaining * 1000 : null;
     // Restore the actual HA Music preset after a power cycle, not merely its artwork.
     const restored = data.last_station;
     if (radioReady && !selectedStation && state.has(restored)) {
@@ -345,7 +326,6 @@ async function loadRadioState() {
     $("power-off").disabled = data.power === "off" || data.power === "unavailable";
   } catch(e) {
     radioReadyForViews = false;
-    suspendRadioEvents();
     $("radio-tab").disabled = true;
     $("apple-tab").disabled = true;
     show("radio");
@@ -365,18 +345,11 @@ for (const [id,on] of [["power-on",true],["power-off",false]]) {
       $("radio-standby-text").textContent = "Radio ausgeschaltet";
     }
     try { await api("radio_power",{on}); status(on ? "Radio-Einschaltbefehl gesendet." : "Radio-Ausschaltbefehl gesendet."); }
-    catch(e){ countdownEndsAt = null; status(e.message); }
+    catch(e){countdownEndsAt = null; status(e.message);}
     finally{await loadRadioState();}
   });
 }
-let lastStandbyCheck = 0;
-setInterval(() => {
-  const now = Date.now();
-  if (radioReadyForViews || countdownEndsAt !== null || now - lastStandbyCheck >= 15000) {
-    lastStandbyCheck = now;
-    loadRadioState();
-  }
-}, 3000);
+setInterval(loadRadioState, 3000);
 let volumeReconcileGeneration = 0;
 function scheduleVolumeReconciliation(value) {
   const generation = ++volumeReconcileGeneration;
@@ -445,7 +418,6 @@ async function refresh() {
     status(ready ? "Sender werden direkt über Home Assistant abgespielt, ohne externe Skripte." : "Home-Assistant-Verbindung nicht verfügbar.");
   } catch(e) { status(e.message); }
   try {
-    if (!radioReadyForViews) return;
     const {players,remembered,groups,excluded,diagnostics,saved_levels} = await api("players");
     await updateSong();
     $("groups").textContent = groups.length ? "Gruppe: " + groups.map(p => p.name).join(", ") + " · Alexa-Multiroom" : "Multiroom-Gruppe Wohnung derzeit nicht erkannt.";
@@ -463,7 +435,6 @@ async function refresh() {
   } catch(e) { $("players").textContent = "Geräte konnten nicht geladen werden: "+e.message; }
 }
 async function refreshPlayers() {
-  if (!radioReadyForViews || document.hidden) return;
   try {
     const {players,groups,remembered,saved_levels} = await api("players");
     const master = masterView(groups, players, saved_levels);
@@ -476,4 +447,4 @@ async function refreshPlayers() {
   } catch (e) { status("Lautsprecherstatus nicht aktualisiert: " + e.message); }
 }
 refresh();
-setInterval(() => { if (radioReadyForViews && !document.hidden && !document.querySelector("input[type=range]:active")) refreshPlayers(); }, 30000);
+setInterval(() => { if (!document.querySelector("input[type=range]:active")) refreshPlayers(); }, 30000);
