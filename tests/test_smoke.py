@@ -12,15 +12,19 @@ with tempfile.TemporaryDirectory() as temp:
     import app
     states = [
         {"entity_id": "media_player.kueche", "state": "playing", "attributes": {"friendly_name": "Küche", "volume_level": 0.4}},
+        {"entity_id": "media_player.wohnung", "state": "idle", "attributes": {"friendly_name": "Wohnung", "volume_level": 0.3}},
+        {"entity_id": "media_player.fire_tv", "state": "idle", "attributes": {"friendly_name": "Dirks Fire TV", "volume_level": 0.0}},
         {"entity_id": "media_player.tv", "state": "playing", "attributes": {"friendly_name": "TV", "volume_level": 0.6}}
     ]
     def request(path, payload=None):
-        if path == "/template": return '{"alexa_devices":["media_player.kueche"],"alexa_media":[]}'
+        if path == "/template": return '{"alexa_devices":["media_player.kueche","media_player.wohnung","media_player.fire_tv"],"alexa_media":[]}'
         if path == "/states": return states
         return {}
     with patch.object(app, "ha_request", side_effect=request):
         assert [p["entity_id"] for p in app.players()] == ["media_player.kueche"]
         assert app.allowed_entities() == {"media_player.kueche"}
+        assert [x["name"] for x in app.classify_devices()["groups"]] == ["Wohnung"]
+        assert [x["name"] for x in app.classify_devices()["excluded"]] == ["Dirks Fire TV"]
         try:
             app.perform("radio", {"station": "wdr2"})
             raise AssertionError("Voice commands must not be enabled")
