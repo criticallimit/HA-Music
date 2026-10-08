@@ -103,3 +103,17 @@ with patch.object(metadata, "ensure_icy_worker"):
         assert metadata.now_playing("swr3")["show"] == "SWR3 Nachrichten"
 
 assert metadata.parse_icy_title('WDR 2 Hotline: 0800 5678 222')['show'] == 'WDR 2 Hotline: 0800 5678 222'
+
+# Official player headline is parsed without the preceding time/stream labels.
+sample = ("Stream im 1LIVE-Player hören Stream im eigenen Player starten "
+          "1LIVE (mp3, 128 kBit/s) mehr 1LIVE (für iOS) mehr "
+          "Ariana Grande - hate that i made you love me "
+          "Image: Moderatoren 17.33 Ariana Grande mit hate that i made you love me "
+          "Ausführliche Playlist")
+assert metadata.parse_1live_player(sample)["artist"] == "Ariana Grande"
+assert metadata.parse_1live_player(sample)["title"] == "hate that i made you love me"
+assert metadata.parse_1live_player("17.33 Uhr: Ariana Grande - Test")["kind"] == "unavailable"
+# Official WDR live-page data outranks a prior ICY text.
+with patch.object(metadata, "fetch", return_value=example_song):
+    with patch.object(metadata, "CACHE", {}):
+        assert metadata.now_playing("wdr2")["source"] == "official_player"
