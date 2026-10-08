@@ -139,6 +139,13 @@ def restore_speakers(generation):
                 continue
             if states.get(RADIO_READY, {}).get("state") != "on":
                 continue
+            # Allow the switch's startup automation to apply its initial 30% first.
+            time.sleep(4)
+            if generation != RESTORE_GENERATION:
+                return
+            states = state_snapshot()
+            if states.get(RADIO_SWITCH, {}).get("state") != "on":
+                return
             available = allowed_entities()
             levels = speaker_levels()
             # Set group before individual rooms so saved room mute levels win.
@@ -277,8 +284,11 @@ def perform(action, body):
         if RADIO_SWITCH not in states or states[RADIO_SWITCH].get("state") in ("unavailable", "unknown"):
             raise ValueError("Radioschalter nicht verfügbar")
         if not turn_on:
-            # Snapshot live speaker values before shutdown alters them.
-            capture_speaker_levels(states)
+            # Persist any readable speaker values; never block power-off on discovery failure.
+            try:
+                capture_speaker_levels(states)
+            except (RuntimeError, HTTPError, URLError, ValueError, OSError) as exc:
+                print(f"[HA Music] Speaker snapshot skipped: {exc}", flush=True)
         response = ha_request("/services/switch/" + ("turn_on" if turn_on else "turn_off"), {"entity_id": RADIO_SWITCH})
         with LOCK:
             RESTORE_GENERATION += 1
