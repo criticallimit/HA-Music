@@ -25,9 +25,9 @@ async function updateSong() {
     const artist = details?.artist;
     const isRadio = ["wdr2","1live","swr3"].includes(selectedStation);
     let external = null;
-    if (isRadio && (!artist || !title || (details?.image && !artist))) {
+    if (isRadio) {
       try { const item = await api("now-playing?station=" + encodeURIComponent(selectedStation));
-        if (item.status === "available" && item.title && item.artist) external = item;
+        if (item.status === "available") external = item;
       } catch (_) { /* Keep Alexa media attributes when station lookup fails. */ }
     }
     const stationName = selectedStation ? STATIONS.find(s => s[0] === selectedStation)?.[1] : null;
@@ -35,7 +35,7 @@ async function updateSong() {
     const hasSong = Boolean(external?.title && external?.artist);
     const alexaSong = !isRadio && title && artist;
     const songLine = hasSong ? external.artist + " – " + external.title :
-      alexaSong ? artist + " – " + title : "";
+      external?.show ? external.show : alexaSong ? artist + " – " + title : "";
     const ticker = $("now-ticker");
     const tickerText = $("now-ticker-text");
     if (songLine) {
@@ -47,7 +47,7 @@ async function updateSong() {
       ticker.classList.remove("scrolling");
       tickerText.textContent = "";
     }
-    $("current-artist").textContent = songLine ? "Jetzt läuft" : "Aktueller Musiktitel nicht verfügbar";
+    $("current-artist").textContent = hasSong ? "Jetzt läuft" : external?.show ? "Aktuelle Sendung" : songLine ? "Jetzt läuft" : "Aktuelle Programminformation nicht verfügbar";
     const cover = $("current-cover");
     // Keep Alexa's station logo in the radio panel, independently of track data.
     const picture = isRadio ? details?.image : (external?.cover || details?.image);
