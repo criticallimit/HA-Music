@@ -20,6 +20,8 @@ let selectedStation = "";
 let stationEpoch = 0;
 let songRequestEpoch = 0;
 let songRequestRunning = false;
+const lastStationMetadata = new Map();
+const METADATA_GRACE_MS = 90000;
 async function updateSong() {
   if (songRequestRunning) return;
   songRequestRunning = true;
@@ -43,6 +45,12 @@ async function updateSong() {
       } catch (_) { /* Keep Alexa media attributes when station lookup fails. */ }
     }
     if (stationEpoch !== epoch || songRequestEpoch !== requestEpoch || station !== selectedStation) return;
+    if (external && (external.title || external.show)) {
+      lastStationMetadata.set(station, {value:external, at:Date.now()});
+    } else if (isRadio) {
+      const prior = lastStationMetadata.get(station);
+      if (prior && Date.now() - prior.at < METADATA_GRACE_MS) external = prior.value;
+    }
     const stationName = station ? STATIONS.find(s => s[0] === station)?.[1] : null;
     $("current-title").textContent = stationName || title || "Kein Sender ausgewählt";
     const hasSong = Boolean(external?.title && external?.artist);
