@@ -121,3 +121,28 @@ nav .soon{font-weight:400;color:#8794a3}
   .now .now-description{height:94px;min-height:94px;max-height:94px}
   .now .now-ticker{height:58px;max-height:58px}
 }
+
+/* Balanced header, aligned card tops, compact power controls. */
+header{display:grid;grid-template-columns:minmax(0,1fr) auto minmax(0,1fr);align-items:center;gap:12px;min-height:62px;margin:0 0 14px}
+.header-spacer{grid-column:1}
+header nav{grid-column:2;justify-self:center}
+header .power-buttons{grid-column:3;justify-self:end;display:flex;align-items:center;gap:8px}
+header .power-buttons button{width:48px;height:48px;border-radius:14px;font-size:27px}
+.dashboard-right{gap:11px}
+.dashboard-right>#radio-state{display:none}
+.dashboard{align-items:start}
+.now{height:720px}
+@media(max-width:1199px) and (min-width:921px){.now{height:680px}}
+@media(max-width:920px){
+  .now{height:420px}
+  header{grid-template-columns:minmax(0,1fr) auto minmax(0,1fr)}
+  header .power-buttons button{width:44px;height:44px}
+}
+@media(max-width:550px){
+  header{display:grid;grid-template-columns:1fr auto;gap:10px;min-height:52px}
+  .header-spacer{display:none}
+  header nav{grid-column:1;justify-self:start}
+  header .power-buttons{grid-column:2;justify-self:end;gap:5px}
+  header .power-buttons button{width:40px;height:40px;font-size:24px}
+  .now{height:330px}
+}
