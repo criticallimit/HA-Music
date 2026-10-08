@@ -24,3 +24,6 @@ print("Scaffold validation passed")
 dockerfile = (root / "ha_music/Dockerfile").read_text()
 assert "metadata.py" in dockerfile
 assert (root / "ha_music/metadata.py").exists()
+
+# Supervisor injects its token through the s6 container environment.
+assert 'CMD ["/usr/bin/with-contenv", "python3", "/app/app.py"]' in dockerfile
