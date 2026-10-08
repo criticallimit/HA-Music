@@ -327,7 +327,7 @@ function masterView(groups, players, saved) {
 function volumeRow(p, remembered, master) {
   const row = document.createElement("div"); row.className = "player-row";
   const title = document.createElement("span"); title.textContent = (master ? "Master Volume" : p.name + " (" + p.state + ")");
-  const slider = document.createElement("input"); slider.type="range"; slider.min=0; slider.max=100; slider.step=5;
+  const slider = document.createElement("input"); slider.type="range"; slider.min=0; slider.max=100; slider.step=1;
       slider.value = Math.round((p.volume ?? 0) * 100);
       const label = document.createElement("span"); label.textContent=slider.value+"%";
       const mute = document.createElement("button"); mute.type="button"; mute.textContent="Stumm";
