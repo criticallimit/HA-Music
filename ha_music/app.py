@@ -359,6 +359,7 @@ def radio_state():
             "selected_view":selected_view(),
             "startup_remaining":startup_remaining(),
             "dashboard_card_installed":dashboard_card_installed(),
+            "show_dashboard_setup":options().get("show_dashboard_setup", False) is True,
             "stations":[{"id":key, "name":item["name"],
                          "available":item["target"] in states and
                             states[item["target"]].get("state") not in ("unknown","unavailable")}
