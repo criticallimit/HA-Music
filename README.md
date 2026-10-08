@@ -30,3 +30,9 @@ No tagged release has been created. The Ingress interface is a development previ
 Keep playback providers separate from station metadata. An Echo device in an Alexa group cannot be joined/removed from that group dynamically through Home Assistant; room toggles will represent muted/unmuted status, not group membership.
 
 Development on `main` only. Publish a release only after explicit approval.
+
+## Current development configuration
+
+Set `command_device_id` (Alexa Devices HA device ID), `alexa_group_name` (existing synchronized Alexa group) and `echo_entities` (comma-separated `media_player.*` entity IDs of Echo devices). Only the allowlisted entities are displayed in the room controls. Previous nonzero volume is stored in `/config/volumes.json` after a successful volume command. Rooms are muted (volume 0), not removed from their Alexa group.
+
+Current-song metadata is experimental and only enabled for selected WDR stations. It may be absent or delayed; unmatched album art is never guessed. The selected radio sender is currently kept only in browser memory. The Radio and Apple Music views are still development functionality, not a released product.
