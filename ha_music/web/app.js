@@ -36,23 +36,21 @@ for (const [id,name] of STATIONS) {
   button.textContent = name;
   button.className = "station";
   button.addEventListener("click", async () => {
-    button.disabled = true;
-    try { await api("radio",{station:id}); selectedStation=id; $("current-title").textContent = name; updateSong(); status("Wiedergabebefehl an Alexa gesendet"); }
-    catch(e) { status(e.message); }
-    finally { button.disabled = !ready; }
+    selectedStation=id; $("current-title").textContent = name;
+    updateSong(); status("Titelanzeige ausgewählt. Direkte Alexa-Gruppenwiedergabe ist noch nicht verfügbar.");
   });
   $("station-list").appendChild(button);
 }
 async function refresh() {
   try {
-    const config = await api("status"); ready = config.radio === "configured" && config.backend === "connected";
-    for (const b of $("station-list").children) b.disabled = !ready;
-    status(ready ? "Alexa konfiguriert. Sender auswählen." : "Für den Radiostart unter Add-on-Konfiguration command_device_id und alexa_group_name setzen.");
+    const config = await api("status"); ready = config.backend === "connected";
+    status(ready ? "Geräteerkennung aktiv. Radio-Senderwahl zeigt derzeit Metadaten; direkter Multiroom-Start folgt." : "Home-Assistant-Verbindung nicht verfügbar.");
   } catch(e) { status(e.message); }
   try {
-    const {players,remembered,configured} = await api("players");
+    const {players,remembered,groups} = await api("players");
+    $("groups").textContent = groups.length ? "Mögliche Alexa-Gruppen: " + groups.map(p=>p.name).join(", ") + " (Mitgliedschaft nicht verifiziert)" : "Keine Alexa-Multiroom-Gruppe in den sichtbaren Media-Player-Zuständen erkannt.";
     const wrap = $("players"); wrap.replaceChildren();
-    if (!players.length) { wrap.textContent = configured.length ? "Keine konfigurierten Echo-Player erreichbar." : "Echo-Player in der Add-on-Konfiguration unter echo_entities kommagetrennt eintragen."; return; }
+    if (!players.length) { wrap.textContent = "Keine eindeutig benannten Echo/Alexa-Media-Player erkannt. Die Zuordnung über die Geräte-Registrierung folgt."; return; }
     for (const p of players) {
       const row = document.createElement("div"); row.className = "player-row";
       const title = document.createElement("span"); title.textContent = p.name + " (" + p.state + ")";
