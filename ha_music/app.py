@@ -245,7 +245,7 @@ def radio_switch_monitor():
                                      args=(generation,), daemon=True).start()
                 else:
                     STARTED_AT = None
-                    MONITOR.stop()
+                    MONITOR.select("")
                     # Mirror old off-delay, but cancel a pending start immediately.
                     time.sleep(10)
                     if generation == RESTORE_GENERATION:
@@ -253,7 +253,7 @@ def radio_switch_monitor():
                 print(f"[HA Music] Radio switch detected: {state}", flush=True)
         except (RuntimeError, HTTPError, URLError, ValueError) as exc:
             print(f"[HA Music] Radio monitor retry: {exc}", flush=True)
-        RADIO_MONITOR_STOP.wait(10 if last_power == "off" else 3)
+        RADIO_MONITOR_STOP.wait(3)
 
 
 def options():
@@ -545,7 +545,7 @@ class Handler(BaseHTTPRequestHandler):
                 MONITOR.select(body["station"])
                 save_selected_station(body["station"])
             elif action == "radio_power" and not body["on"]:
-                MONITOR.stop()
+                MONITOR.select("")
             return self.reply(200, {"ok": True})
         except (ValueError, TypeError, json.JSONDecodeError) as exc:
             return self.reply(400, {"error": str(exc)})
