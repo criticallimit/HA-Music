@@ -317,8 +317,13 @@ async function loadRadioState() {
     $("apple-tab").disabled = !radioReady;
     show(radioReady ? preferredView : "radio");
     displayRadioReadiness(radioReady);
-    countdownEndsAt = data.power === "on" && !radioReady && data.startup_remaining != null
-      ? Date.now() + data.startup_remaining * 1000 : null;
+    if (radioReady || data.power === "off" && countdownEndsAt === null) {
+      countdownEndsAt = null;
+    } else if (data.power === "on" && !radioReady && data.startup_remaining != null) {
+      countdownEndsAt = Date.now() + data.startup_remaining * 1000;
+    } else if (data.power === "on" && !radioReady && countdownEndsAt === null) {
+      countdownEndsAt = Date.now() + 50000;
+    }
     // Restore the actual HA Music preset after a power cycle, not merely its artwork.
     const restored = data.last_station;
     if (radioReady && !selectedStation && state.has(restored)) {
@@ -352,8 +357,15 @@ async function loadRadioState() {
 for (const [id,on] of [["power-on",true],["power-off",false]]) {
   $(id).addEventListener("click", async () => {
     $(id).disabled = true;
+    if (on) {
+      countdownEndsAt = Date.now() + 50000;
+      $("radio-standby-text").textContent = "Radio startet … 50 s";
+    } else {
+      countdownEndsAt = null;
+      $("radio-standby-text").textContent = "Radio ausgeschaltet";
+    }
     try { await api("radio_power",{on}); status(on ? "Radio-Einschaltbefehl gesendet." : "Radio-Ausschaltbefehl gesendet."); }
-    catch(e){status(e.message);}
+    catch(e){ countdownEndsAt = null; status(e.message); }
     finally{await loadRadioState();}
   });
 }
