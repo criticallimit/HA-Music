@@ -8,7 +8,7 @@ import threading
 import time
 
 URLS = {
-    "wdr2": "https://www1.wdr.de/radio/wdr2",
+    "wdr2": "https://www1.wdr.de/radio/player/streams/wdr2/index.html",
     "wdr4": "https://www1.wdr.de/radio/wdr4/musik/playlist/",
     "1live": "https://www1.wdr.de/radio/1live/musik/playlist/",
 }
@@ -26,35 +26,44 @@ def fetch(url):
     with urlopen(Request(url, headers={"User-Agent":"HA-Music/0.0.1"}), timeout=7) as response:
         return response.read(300000).decode("utf-8", "replace")
 
+def parse_wdr_live(text):
+    """Extract only the short live player header, not playlist search results."""
+    parser = Text()
+    parser.feed(text)
+    plain = re.sub(r"\s+", " ", " ".join(parser.parts)).strip()
+    result = {"title": None, "artist": None, "show": None, "kind": "unavailable"}
+    # Restrict the song to the heading preceding the programme's time slot.
+    segment = plain.split("Jetzt läuft:", 1)
+    if len(segment) == 2:
+        header = re.split(r"\b\d{1,2}[.:]\d{2}\s*[-–]\s*\d{1,2}[.:]\d{2}\s*Uhr\b", segment[1], maxsplit=1)[0]
+        matched = re.search(r"^\s*(.{2,100}?)\s+von\s+(.{2,75}?)\s*$", header, re.I)
+        if matched:
+            result["title"], result["artist"] = [s.strip() for s in matched.groups()]
+            result["kind"] = "song"
+    programme = re.search(r"\b\d{1,2}[.:]\d{2}\s*[-–]\s*\d{1,2}[.:]\d{2}\s*Uhr\s+(.{3,100}?)(?=\s+(?:mit\s|Mail ins Studio|Playlist|Bildquelle|Image\b|#)|$)", plain, re.I)
+    if programme:
+        result["show"] = programme.group(1).strip()
+        if result["kind"] != "song":
+            result["kind"] = "show"
+    return result
+
 def now_playing(station):
     result = {"station": NAMES.get(station, ""), "title": None, "artist": None,
-              "cover": None, "status": "unavailable"}
+              "show": None, "kind": "unavailable", "cover": None, "status": "unavailable"}
     if station not in URLS:
         return result
     with LOCK:
         cached = CACHE.get(station)
-        if cached and time.monotonic() - cached[0] < 60:
+        if cached and time.monotonic() - cached[0] < 30:
             return dict(cached[1])
     try:
-        parser = Text(); parser.feed(fetch(URLS[station]))
-        text = " ".join(parser.parts)
-        text = re.sub(r"\s+", " ", text)
-        # WDR2 live page provides a shorter and more reliable "Jetzt läuft" line.
-        match = re.search(
-            r"Jetzt läuft:\\s*(.{2,110}?)\\s+von\\s+(.{2,80}?)(?=\\s+(?:[0-2]?\\d[.:][0-5]\\d|Playlist|Live hören|Bildquelle|Jetzt|WDR 2|\\||$))",
-            text, re.I)
-        if match:
-            result["title"], result["artist"] = [x.strip() for x in match.groups()]
+        raw = fetch(URLS[station])
+        parsed = parse_wdr_live(raw)
+        result.update(parsed)
+        if parsed["kind"] != "unavailable":
             result["status"] = "available"
-            query = quote(result["title"] + " " + result["artist"])
-            try:
-                data = json.loads(fetch("https://itunes.apple.com/search?entity=song&limit=3&term=" + query))
-                for song in data.get("results", []):
-                    if song.get("trackName", "").casefold() == result["title"].casefold() and song.get("artistName", "").casefold() == result["artist"].casefold():
-                        result["cover"] = song.get("artworkUrl100"); break
-            except Exception:
-                pass
     except Exception:
         pass
-    with LOCK: CACHE[station] = (time.monotonic(), dict(result))
+    with LOCK:
+        CACHE[station] = (time.monotonic(), dict(result))
     return result
