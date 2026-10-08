@@ -21,29 +21,37 @@ ENTITY_RE = re.compile(r"^media_player\.[a-z0-9_]+$")
 
 VOLUME_FILE = Path(os.environ.get("VOLUME_FILE", "/config/volumes.json"))
 LOCK = threading.Lock()
+def integration_player_ids():
+    """Read actual entity-registry integration ownership via HA's template API."""
+    response = ha_request("/template", {
+        "template": "{{ integration_entities('alexa_devices') | select('match', '^media_player\\.') | list | to_json }}"
+    })
+    if not isinstance(response, str):
+        raise ValueError("Unerwartete Antwort der Home-Assistant-Template-API")
+    ids = json.loads(response)
+    if not isinstance(ids, list):
+        raise ValueError("Ungültige Alexa-Geräteliste")
+    return {entity for entity in ids if isinstance(entity, str) and ENTITY_RE.fullmatch(entity)}
+
 def detected_devices():
-    """Conservative discovery from state metadata. Never control arbitrary players."""
+    ids = integration_player_ids()
     states = ha_request("/states")
     found = []
     for state in states:
-        entity = state.get("entity_id", "")
-        if not isinstance(entity, str) or not ENTITY_RE.fullmatch(entity):
+        entity = state.get("entity_id")
+        if entity not in ids:
             continue
         attributes = state.get("attributes") or {}
         name = str(attributes.get("friendly_name") or entity)
-        label = (name + " " + entity).lower()
-        # A state alone does not expose the owning integration; filter conservatively.
-        if not any(word in label for word in ("echo", "alexa")):
-            continue
         found.append({"entity_id": entity, "name": name,
                       "state": state.get("state", "unknown"),
                       "volume": attributes.get("volume_level"),
                       "features": attributes.get("supported_features", 0),
-                      "possible_group": any(word in label for word in ("gruppe", "group", "überall", "everywhere", "multiroom"))})
-    return sorted(found, key=lambda x: x["name"].casefold())
+                      "possible_group": False})
+    return sorted(found, key=lambda item: item["name"].casefold())
 
 def allowed_entities():
-    return {p["entity_id"] for p in detected_devices() if not p["possible_group"]}
+    return {p["entity_id"] for p in detected_devices()}
 
 def remembered():
     try:
@@ -76,7 +84,11 @@ def ha_request(path, payload=None):
     with urlopen(req, timeout=12) as response:
         raw = response.read()
         # Some Home Assistant service responses are empty on success.
-        return json.loads(raw) if raw.strip() else {}
+        if not raw.strip():
+            return {}
+        if path == "/template":
+            return raw.decode("utf-8")
+        return json.loads(raw)
 
 def players():
     return [p for p in detected_devices() if not p["possible_group"]]
@@ -119,7 +131,7 @@ class Handler(BaseHTTPRequestHandler):
             return self.reply(200, now_playing(station))
         if name == "players" and "/api/" in path:
             try:
-                return self.reply(200, {"players": players(), "groups": [p for p in detected_devices() if p["possible_group"]], "remembered": remembered(), "discovery": "state_name_heuristic"})
+                return self.reply(200, {"players": players(), "groups": [p for p in detected_devices() if p["possible_group"]], "remembered": remembered(), "discovery": "integration_registry"})
             except (RuntimeError, HTTPError, URLError, ValueError) as exc:
                 return self.reply(503, {"error": str(exc)})
         name = name or "index.html"
