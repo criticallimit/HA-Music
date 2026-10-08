@@ -36,3 +36,7 @@ Development on `main` only. Publish a release only after explicit approval.
 Set `command_device_id` (Alexa Devices HA device ID), `alexa_group_name` (existing synchronized Alexa group) and `echo_entities` (comma-separated `media_player.*` entity IDs of Echo devices). Only the allowlisted entities are displayed in the room controls. Previous nonzero volume is stored in `/config/volumes.json` after a successful volume command. Rooms are muted (volume 0), not removed from their Alexa group.
 
 Current-song metadata is experimental and only enabled for selected WDR stations. It may be absent or delayed; unmatched album art is never guessed. The selected radio sender is currently kept only in browser memory. The Radio and Apple Music views are still development functionality, not a released product.
+
+## Automatic Echo discovery (development)
+
+HA Music now discovers likely Alexa/Echo media players from Home Assistant entity state names. No manual entity allowlist and no Alexa text/voice command is required. The discovery is **heuristic**, not a verified integration/device-registry classification; nonstandard entity names may be missed. Possible multiroom-group entities are shown separately, but group membership and direct synchronized playback remain unverified. Station selection updates metadata only and does not start audio. This conservative limitation prevents unexpected Alexa commands.
