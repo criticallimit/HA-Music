@@ -1,11 +1,8 @@
 name: Check
 on:
-  push:
-    branches: [main]
-    paths:
-      - "ha_music/**"
-      - ".github/workflows/check.yml"
   workflow_dispatch:
+  release:
+    types: [published]
 jobs:
   validate:
     runs-on: ubuntu-latest
