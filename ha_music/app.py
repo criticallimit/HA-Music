@@ -233,7 +233,7 @@ def enter_standby(generation):
     global LAST_POWER
     if generation != RESTORE_GENERATION or LAST_POWER != "off":
         return
-    MONITOR.select("")
+    MONITOR.stop()
     STANDBY.set()
     print("[HA Music] Standby active: outgoing requests disabled", flush=True)
 
@@ -585,9 +585,11 @@ class Handler(BaseHTTPRequestHandler):
             elif action == "radio_power" and body.get("on") is True and STANDBY.is_set():
                 # A local HA Music click is the only permitted wake-up.
                 STANDBY.clear()
+                MONITOR.resume()
                 try:
                     perform(action, body)
                 except Exception:
+                    MONITOR.stop()
                     STANDBY.set()
                     raise
             else:
