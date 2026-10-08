@@ -24,7 +24,7 @@ LOCK = threading.Lock()
 def integration_player_ids():
     """Read actual entity-registry integration ownership via HA's template API."""
     response = ha_request("/template", {
-        "template": "{{ integration_entities('alexa_devices') | select('match', '^media_player\\.') | list | to_json }}"
+        "template": "{{ integration_entities('alexa_devices') | to_json }}"
     })
     if not isinstance(response, str):
         raise ValueError("Unerwartete Antwort der Home-Assistant-Template-API")
