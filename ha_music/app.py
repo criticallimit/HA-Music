@@ -205,11 +205,9 @@ def radio_start_sequence(generation):
         print("[HA Music] Startup volume set to 1%; waiting 2 seconds", flush=True)
         if not wait_for_start(generation, 2):
             return
-        # The ready helper is now a boot-sequence marker, not an audio-detection signal.
-        set_radio_ready(True)
-        if generation != RESTORE_GENERATION:
-            return
-        print("[HA Music] Alexa boot sequence completed; starting radio", flush=True)
+        # Keep the start screen visible until station command and saved
+        # speaker levels have actually been sent.
+        print("[HA Music] Echo boot completed; starting radio", flush=True)
         station = last_selected_station()
         if station:
             try:
@@ -223,7 +221,11 @@ def radio_start_sequence(generation):
         if generation != RESTORE_GENERATION:
             return
         restore_speakers(generation)
+        if generation != RESTORE_GENERATION:
+            return
         print("[HA Music] Saved speaker levels restored", flush=True)
+        set_radio_ready(True)
+        print("[HA Music] Radio interface released after startup commands", flush=True)
     except (RuntimeError, HTTPError, URLError, ValueError) as exc:
         print(f"[HA Music] Startup sequence failed: {exc}", flush=True)
 
