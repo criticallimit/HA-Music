@@ -1,4 +1,23 @@
 "use strict";
+// Dashboard card inherits theme variables from Home Assistant, as in TV Guide.
+if (window.parent !== window) {
+  const applyTheme = (data) => {
+    if (!data || data.type !== "ha-music-theme" || !data.vars) return;
+    for (const [name, value] of Object.entries(data.vars)) {
+      if (name.startsWith("--") && typeof value === "string")
+        document.documentElement.style.setProperty(name, value);
+    }
+    document.documentElement.dataset.haTheme = data.darkMode ? "dark" : "light";
+    document.documentElement.classList.add("ha-dashboard-card");
+    window.parent.postMessage({type:"ha-music-theme-ready"}, window.location.origin);
+  };
+  window.addEventListener("message", (event) => {
+    if (event.origin !== window.location.origin || event.source !== window.parent) return;
+    applyTheme(event.data);
+  });
+  window.parent.postMessage({type:"ha-music-theme-request"}, window.location.origin);
+}
+
 const $ = id => document.getElementById(id);
 function show(page) {
   const radio = page === "radio";
