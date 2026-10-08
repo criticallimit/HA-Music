@@ -13,7 +13,12 @@ init: false
 ingress: true
 ingress_port: 8099
 panel_icon: mdi:music-circle
+homeassistant_api: true
 map:
   - addon_config:rw
-options: {}
-schema: {}
+options:
+  command_device_id: ""
+  alexa_group_name: ""
+schema:
+  command_device_id: str?
+  alexa_group_name: str?
