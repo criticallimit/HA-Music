@@ -5,4 +5,4 @@ RUN apk add --no-cache python3
 WORKDIR /app
 COPY app.py metadata.py /app/
 COPY web /app/web
-CMD ["python3", "/app/app.py"]
+CMD ["/usr/bin/with-contenv", "python3", "/app/app.py"]
