@@ -1,13 +1,19 @@
-<!doctype html><html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>HA Music</title><link rel="stylesheet" href="style.css"></head><body><main class="shell">
-<header><span class="symbol" aria-hidden="true">♫</span><div><h1>HA Music</h1><p>Radio und Multiroom</p></div></header>
-<nav aria-label="Musikquelle"><button id="radio-tab" class="active" type="button">Radio</button><button id="apple-tab" type="button">Apple Music <span class="soon">In Vorbereitung</span></button></nav>
-<section id="radio-page">
-<article class="now"><div class="art" aria-label="Albumcover"><img id="current-cover" alt="Albumcover" hidden>♫</div><div><small>Internetradio</small><h2 id="current-title">Noch kein Sender ausgewählt</h2><div id="current-artist">Aktueller Musiktitel nicht verfügbar</div><div id="now-ticker" class="now-ticker" aria-label="Aktueller Musiktitel" hidden><span id="now-ticker-text"></span></div><small id="playback-state">Prüfe Wiedergabe …</small><p>Senderlogo und aktuelle Titelinformationen, soweit vom Sender verfügbar.</p></div></article>
-<div class="test-control"><button type="button" id="power-on">Radio ein</button><button type="button" id="power-off">Radio aus</button><span id="radio-state" role="status">Prüfe Radiozustand …</span></div><h3>Radiosender</h3><div id="station-list" class="stations"></div>
+<!doctype html>
+<html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>HA Music</title><link rel="stylesheet" href="style.css"></head>
+<body><main class="shell">
+<header><h1>HA Music</h1><nav aria-label="Musikquelle"><button id="radio-tab" class="active" type="button">Radio</button><button id="apple-tab" type="button">Apple Music <span class="soon">In Vorbereitung</span></button></nav></header>
+<section id="radio-page" class="dashboard">
+<article class="now" aria-label="Aktuelle Wiedergabe"><div class="art"><img id="current-cover" alt="Senderlogo oder Albumcover" hidden><span class="art-placeholder" aria-hidden="true">♫</span></div><div class="now-overlay"><div class="now-head"><small>Internetradio</small><h2 id="current-title">Noch kein Sender ausgewählt</h2></div><div class="now-description"><div id="current-artist">Aktuelle Programminformation nicht verfügbar</div><div id="now-ticker" class="now-ticker" hidden><span id="now-ticker-text"></span></div><small id="playback-state">Prüfe Wiedergabe …</small></div></div></article>
+<div class="dashboard-right">
+<div class="powerbar"><span id="radio-state" role="status">Prüfe Radiozustand …</span><div class="power-buttons"><button type="button" id="power-on" aria-label="Radio einschalten" title="Radio einschalten">⏻</button><button type="button" id="power-off" aria-label="Radio ausschalten" title="Radio ausschalten">⏻</button></div></div>
+<div id="master-volume" class="players master-volume">Lade Master-Lautstärke …</div>
+<div id="groups" class="sr-info">Prüfe Wohnung …</div>
+<div id="players" class="players speaker-list">Lade Geräte …</div>
+<div id="station-list" class="stations" aria-label="Senderauswahl"></div>
 <div id="message" class="notice" role="status">Lade Verbindungsstatus …</div>
-<h3>Multiroom-Gruppe</h3><div id="groups" class="notice">Prüfe Wohnung …</div><div id="master-volume" class="players notice">Lade Master-Lautstärke …</div><h3>Lautsprecher</h3><div id="excluded" class="hint"></div><div id="players" class="players notice">Lade Geräte …</div>
-<p class="hint">Einzelne Echo Dots können hier vorerst über Lautstärke 0 stummgeschaltet werden. Die Multiroom-Gruppenzugehörigkeit bleibt unverändert.</p>
+<div id="excluded" class="sr-info"></div>
+</div>
 </section>
 <section id="apple-page" hidden><article class="notice"><h2>Apple Music</h2><p>In Vorbereitung. Später sind Alben, Playlists und Familienprofile vorgesehen.</p></article></section>
-<footer>HA Music · Entwicklungsstand auf main · Kein Release</footer>
+<footer>HA Music</footer>
 </main><script src="app.js"></script></body></html>
