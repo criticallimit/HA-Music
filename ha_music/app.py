@@ -56,8 +56,22 @@ def detected_devices():
                       "possible_group": False})
     return sorted(found, key=lambda item: item["name"].casefold())
 
+def classify_devices():
+    """Separate user-confirmed Wohnung group and non-room endpoint types."""
+    group, rooms, excluded = [], [], []
+    for player in detected_devices():
+        name = player["name"].strip().casefold()
+        entity = player["entity_id"].casefold()
+        if name == "wohnung" or entity == "media_player.wohnung":
+            group.append(player)
+        elif "fire tv" in name or name == "this device" or "fire_tv" in entity:
+            excluded.append(player)
+        else:
+            rooms.append(player)
+    return {"groups": group, "players": rooms, "excluded": excluded}
+
 def allowed_entities():
-    return {p["entity_id"] for p in detected_devices()}
+    return {p["entity_id"] for p in classify_devices()["players"]}
 
 def remembered():
     try:
@@ -97,7 +111,7 @@ def ha_request(path, payload=None):
         return json.loads(raw)
 
 def players():
-    return [p for p in detected_devices() if not p["possible_group"]]
+    return classify_devices()["players"]
 
 def perform(action, body):
     if action == "volume":
@@ -138,7 +152,8 @@ class Handler(BaseHTTPRequestHandler):
         if name == "players" and "/api/" in path:
             try:
                 inventory = integration_inventory()
-                return self.reply(200, {"players": players(), "groups": [],
+                classified = classify_devices()
+                return self.reply(200, {"players": classified["players"], "groups": classified["groups"], "excluded": classified["excluded"],
                     "remembered": remembered(), "discovery": "integration_registry",
                     "diagnostics": {domain: {"entities": len(values),
                         "media_players": sum(v.startswith("media_player.") for v in values)}
