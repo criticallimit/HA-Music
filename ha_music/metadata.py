@@ -101,3 +101,40 @@ def now_playing(station):
     with LOCK:
         CACHE[station] = (time.monotonic(), dict(result))
     return result
+
+# Probe official WDR MP3 streams for optional ICY metadata.
+# Never download more than one metadata interval or start background streams.
+ICY_STREAMS = {
+    "1live": "https://wdr-1live-live.icecastssl.wdr.de/wdr/1live/live/mp3/128/stream.mp3",
+    "wdr2": "https://wdr-wdr2-rheinruhr.icecastssl.wdr.de/wdr/wdr2/rheinruhr/mp3/128/stream.mp3",
+}
+
+def probe_icy(station):
+    if station not in ICY_STREAMS:
+        return {"station": station, "supported": False, "reason": "Kein bestätigter offizieller MP3-Stream konfiguriert"}
+    try:
+        req = Request(ICY_STREAMS[station], headers={"User-Agent": "HA-Music/0.0.3", "Icy-MetaData": "1"})
+        with urlopen(req, timeout=6) as stream:
+            raw_interval = stream.headers.get("icy-metaint")
+            if not raw_interval or not raw_interval.isdigit():
+                return {"station": station, "supported": False, "reason": "Stream liefert kein icy-metaint"}
+            interval = int(raw_interval)
+            if not 0 < interval <= 131072:
+                return {"station": station, "supported": False, "reason": "Ungültiges oder zu großes Metadatenintervall"}
+            remaining = interval
+            while remaining:
+                chunk = stream.read(min(8192, remaining))
+                if not chunk:
+                    return {"station": station, "supported": False, "reason": "Stream vor Metadatenblock beendet"}
+                remaining -= len(chunk)
+            length_byte = stream.read(1)
+            if not length_byte:
+                return {"station": station, "supported": False, "reason": "Kein ICY-Metadatenblock"}
+            block = stream.read(length_byte[0] * 16).decode("utf-8", "replace")
+            match = re.search(r"StreamTitle='([^']*)'", block)
+            value = match.group(1).strip() if match else ""
+            return {"station": station, "supported": bool(value),
+                    "reason": "ICY-StreamTitle empfangen" if value else "ICY vorhanden, kein Titel im ersten Block",
+                    "sample": value[:160] if value else None}
+    except Exception as exc:
+        return {"station": station, "supported": False, "reason": type(exc).__name__ + ": " + str(exc)[:120]}
