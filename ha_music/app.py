@@ -249,7 +249,40 @@ def radio_start_sequence(generation):
                         if confirmed:
                             break
                     if confirmed:
-                        break
+                        # A state transition alone is too early: wait for media data
+                        # updated after this play command. Broadcaster metadata is
+                        # deliberately not used; it doesn't prove Echo responsiveness.
+                        print("[HA Music] Playing detected; waiting for fresh Echo media info", flush=True)
+                        media_confirmed = False
+                        for _ in range(30):
+                            if generation != RESTORE_GENERATION:
+                                return
+                            time.sleep(1)
+                            states = state_snapshot()
+                            if states.get(RADIO_SWITCH, {}).get("state") != "on":
+                                return
+                            for entity in RADIO_PLAYERS:
+                                player = states.get(entity, {})
+                                if player.get("state") != "playing":
+                                    continue
+                                attrs = player.get("attributes") or {}
+                                has_media = any(isinstance(attrs.get(key), str) and attrs[key].strip()
+                                                for key in ("media_title", "media_content_id", "media_artist"))
+                                try:
+                                    updated = datetime.fromisoformat(
+                                        player.get("last_updated", "").replace("Z", "+00:00"))
+                                except (ValueError, TypeError):
+                                    continue
+                                if has_media and updated > command_time:
+                                    media_confirmed = True
+                                    break
+                            if media_confirmed:
+                                break
+                        if media_confirmed:
+                            print("[HA Music] Fresh Echo playback metadata confirmed", flush=True)
+                            break
+                        confirmed = False
+                        print("[HA Music] No fresh Echo media info; retrying playback", flush=True)
                 if not confirmed:
                     print("[HA Music] Playback unconfirmed; retrying Alexa readiness", flush=True)
                     time.sleep(4)
