@@ -15,7 +15,7 @@ with tempfile.TemporaryDirectory() as temp:
         {"entity_id": "media_player.tv", "state": "playing", "attributes": {"friendly_name": "TV", "volume_level": 0.6}}
     ]
     def request(path, payload=None):
-        if path == "/template": return '["media_player.kueche"]'
+        if path == "/template": return '{"alexa_devices":["media_player.kueche"],"alexa_media":[]}'
         if path == "/states": return states
         return {}
     with patch.object(app, "ha_request", side_effect=request):
