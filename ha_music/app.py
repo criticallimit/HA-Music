@@ -9,6 +9,7 @@ import os
 import re
 import threading
 from metadata import now_playing, probe_icy
+from metadata_feed import MONITOR
 
 WEB = (Path(__file__).parent / "web").resolve()
 PORT = int(os.environ.get("PORT", "8099"))
@@ -222,6 +223,26 @@ class Handler(BaseHTTPRequestHandler):
             if station not in ("wdr2", "1live", "swr3"):
                 return self.reply(400, {"error": "Sender nicht unterstützt"})
             return self.reply(200, probe_icy(station))
+        if name == "events" and "/api/" in path:
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+            self.send_header("Cache-Control", "no-cache, no-transform")
+            self.send_header("X-Accel-Buffering", "no")
+            self.end_headers()
+            seq = -1
+            try:
+                while True:
+                    next_seq, station, payload = MONITOR.await_change(seq, timeout=15)
+                    if next_seq == seq:
+                        self.wfile.write(b": keepalive\\n\\n")
+                    else:
+                        message = json.dumps({"station": station, "metadata": payload}, ensure_ascii=False)
+                        self.wfile.write(("data: " + message + "\\n\\n").encode("utf-8"))
+                        seq = next_seq
+                    self.wfile.flush()
+            except (BrokenPipeError, ConnectionResetError, OSError):
+                pass
+            return
         if name == "now-playing" and "/api/" in path:
             from urllib.parse import parse_qs
             station = parse_qs(urlsplit(self.path).query).get("station", [""])[0]
@@ -272,6 +293,10 @@ class Handler(BaseHTTPRequestHandler):
             if not isinstance(body, dict):
                 raise ValueError("Invalid body")
             perform(action, body)
+            if action == "radio_direct":
+                MONITOR.select(body["station"])
+            elif action == "radio_power" and not body["on"]:
+                MONITOR.select("")
             return self.reply(200, {"ok": True})
         except (ValueError, TypeError, json.JSONDecodeError) as exc:
             return self.reply(400, {"error": str(exc)})
