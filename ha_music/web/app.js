@@ -27,15 +27,19 @@ async function updateSong() {
   const epoch = stationEpoch;
   const requestEpoch = ++songRequestEpoch;
   try {
-    const info = await api("playback-status");
+    const infoPromise = api("playback-status");
+    const externalPromise = ["wdr2","1live","swr3"].includes(station)
+      ? api("now-playing?station=" + encodeURIComponent(station)).catch(() => null)
+      : Promise.resolve(null);
+    const info = await infoPromise;
     const details = info.details;
     const title = details?.title;
     const artist = details?.artist;
     const isRadio = ["wdr2","1live","swr3"].includes(station);
     let external = null;
     if (isRadio) {
-      try { const item = await api("now-playing?station=" + encodeURIComponent(station));
-        if (item.status === "available" && item.station === (station === "wdr2" ? "WDR 2" : station === "1live" ? "1LIVE" : "SWR3")) external = item;
+      try { const item = await externalPromise;
+        if (item && item.status === "available" && item.station === (station === "wdr2" ? "WDR 2" : station === "1live" ? "1LIVE" : "SWR3")) external = item;
       } catch (_) { /* Keep Alexa media attributes when station lookup fails. */ }
     }
     if (stationEpoch !== epoch || songRequestEpoch !== requestEpoch || station !== selectedStation) return;
@@ -58,7 +62,7 @@ async function updateSong() {
         void ticker.offsetWidth;
       }
       ticker.hidden = false;
-      ticker.classList.toggle("scrolling", songLine.length > 36);
+      ticker.classList.toggle("scrolling", isRadio || songLine.length > 36);
     } else {
       ticker.hidden = true;
       ticker.classList.remove("scrolling");
