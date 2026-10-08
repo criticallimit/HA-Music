@@ -124,8 +124,42 @@ async function updateSong() {
     if (stationEpoch === epoch) $("playback-state").textContent = "Wiedergabestatus nicht verfügbar: " + e.message;
   } finally { songRequestRunning = false; }
 }
-setInterval(updateRadioMetadata, 5000);
-setInterval(updateSong, 30000);
+// One backend monitor polls radio metadata, all open clients receive changes.
+let radioEventsReady = false;
+function connectRadioEvents() {
+  if (!window.EventSource) return;
+  const source = new EventSource("api/events");
+  source.onopen = () => { radioEventsReady = true; };
+  source.onerror = () => { radioEventsReady = false; };
+  source.onmessage = event => {
+    try {
+      const update = JSON.parse(event.data);
+      if (!selectedStation && STATION_LOGOS[update.station]) {
+        selectedStation = update.station;
+        stationEpoch++;
+        setActiveStation(selectedStation);
+        updateStationLogo(selectedStation);
+        $("current-title").textContent = STATIONS.find(s => s[0] === selectedStation)?.[1] || selectedStation;
+      }
+      if (update.station !== selectedStation) return;
+      const item = update.metadata;
+      if (item?.status === "available" && (item.title || item.show)) {
+        lastStationMetadata.set(selectedStation, {value:item, at:Date.now()});
+        renderRadioMetadata(selectedStation, item);
+      } else {
+        const prior = lastStationMetadata.get(selectedStation);
+        if (prior && Date.now() - prior.at < METADATA_GRACE_MS)
+          renderRadioMetadata(selectedStation, prior.value);
+        else renderRadioMetadata(selectedStation, null);
+      }
+    } catch (_) { /* Ignore invalid event payloads. */ }
+  };
+}
+connectRadioEvents();
+// HTTP fallback if SSE is interrupted; avoid parallel normal polling.
+setInterval(() => { if (!radioEventsReady) updateRadioMetadata(); }, 15000);
+// Alexa is the authoritative source for Amazon song and cover changes.
+setInterval(updateSong, 6000);
 const previous = new Map();
 function status(text) { $("message").textContent = text; }
 const stationButtons = new Map();
