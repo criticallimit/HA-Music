@@ -19,6 +19,8 @@ map:
 options:
   command_device_id: ""
   alexa_group_name: ""
+  echo_entities: ""
 schema:
   command_device_id: str?
   alexa_group_name: str?
+  echo_entities: str?
