@@ -319,9 +319,8 @@ function scheduleVolumeReconciliation(value) {
 function masterView(groups, players, saved) {
   const group = groups.find(p => p.entity_id === "media_player.wohnung");
   if (!group) return null;
-  const active = players.filter(p => p.state !== "unavailable" && p.state !== "unknown" &&
-    (saved?.[p.entity_id] ?? p.volume ?? 0) > 0);
-  const volume = active.length ? Math.max(...active.map(p => saved?.[p.entity_id] ?? p.volume ?? 0)) : 0;
+  // The master setting is independent; individual room changes must not move it.
+  const volume = saved?.["media_player.wohnung"] ?? group.volume ?? 0;
   return {...group, volume};
 }
 function volumeRow(p, remembered, master) {
