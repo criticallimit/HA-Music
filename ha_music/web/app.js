@@ -357,7 +357,14 @@ for (const [id,on] of [["power-on",true],["power-off",false]]) {
     finally{await loadRadioState();}
   });
 }
-setInterval(loadRadioState, 3000);
+let lastStandbyCheck = 0;
+setInterval(() => {
+  const now = Date.now();
+  if (radioReadyForViews || countdownEndsAt !== null || now - lastStandbyCheck >= 15000) {
+    lastStandbyCheck = now;
+    loadRadioState();
+  }
+}, 3000);
 let volumeReconcileGeneration = 0;
 function scheduleVolumeReconciliation(value) {
   const generation = ++volumeReconcileGeneration;
