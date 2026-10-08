@@ -18,15 +18,33 @@ TOKEN = os.environ.get("SUPERVISOR_TOKEN", "") or os.environ.get("HASSIO_TOKEN",
 STATIONS = {"wdr2": "WDR 2", "1live": "1LIVE", "wdr4": "WDR 4",
             "80s80s": "80s80s", "ndr2": "NDR 2", "radiobob": "Radio BOB!"}
 ENTITY_RE = re.compile(r"^media_player\.[a-z0-9_]+$")
-DEVICE_RE = re.compile(r"^[a-f0-9]{32}$")
 
 VOLUME_FILE = Path(os.environ.get("VOLUME_FILE", "/config/volumes.json"))
 LOCK = threading.Lock()
+def detected_devices():
+    """Conservative discovery from state metadata. Never control arbitrary players."""
+    states = ha_request("/states")
+    found = []
+    for state in states:
+        entity = state.get("entity_id", "")
+        if not isinstance(entity, str) or not ENTITY_RE.fullmatch(entity):
+            continue
+        attributes = state.get("attributes") or {}
+        name = str(attributes.get("friendly_name") or entity)
+        label = (name + " " + entity).lower()
+        # A state alone does not expose the owning integration; filter conservatively.
+        if not any(word in label for word in ("echo", "alexa")):
+            continue
+        found.append({"entity_id": entity, "name": name,
+                      "state": state.get("state", "unknown"),
+                      "volume": attributes.get("volume_level"),
+                      "features": attributes.get("supported_features", 0),
+                      "possible_group": any(word in label for word in ("gruppe", "group", "überall", "everywhere", "multiroom"))})
+    return sorted(found, key=lambda x: x["name"].casefold())
+
 def allowed_entities():
-    raw = options().get("echo_entities", "")
-    if not isinstance(raw, str):
-        return set()
-    return {x.strip() for x in raw.split(",") if ENTITY_RE.fullmatch(x.strip())}
+    return {p["entity_id"] for p in detected_devices() if not p["possible_group"]}
+
 def remembered():
     try:
         obj = json.loads(VOLUME_FILE.read_text())
@@ -61,28 +79,9 @@ def ha_request(path, payload=None):
         return json.loads(raw) if raw.strip() else {}
 
 def players():
-    states = ha_request("/states")
-    return [{"entity_id": state["entity_id"],
-             "name": state.get("attributes", {}).get("friendly_name", state["entity_id"]),
-             "state": state.get("state", "unknown"),
-             "volume": state.get("attributes", {}).get("volume_level"),
-             "features": state.get("attributes", {}).get("supported_features", 0)}
-            for state in states if state.get("entity_id") in allowed_entities()]
+    return [p for p in detected_devices() if not p["possible_group"]]
 
 def perform(action, body):
-    if action == "radio":
-        station = STATIONS.get(body.get("station"))
-        config = options()
-        device = config.get("command_device_id", "")
-        group = config.get("alexa_group_name", "")
-        if isinstance(group, str): group = group.strip()
-        if not station or not isinstance(device, str) or not DEVICE_RE.fullmatch(device) or not isinstance(group, str) or not group:
-            raise ValueError("Sender oder Alexa-Gruppe/Geräte-ID nicht konfiguriert")
-        if len(group) > 80 or re.search(r"[\r\n]", group):
-            raise ValueError("Ungültiger Gruppenname")
-        command = f"Spiele {station} auf {group}"
-        return ha_request("/services/alexa_devices/send_text_command",
-                          {"device_id": device, "text_command": command})
     if action == "volume":
         entity = body.get("entity_id", "")
         level = body.get("volume")
@@ -112,8 +111,7 @@ class Handler(BaseHTTPRequestHandler):
         path = unquote(urlsplit(self.path).path)
         name = path.rsplit("/", 1)[-1]
         if name == "status" and "/api/" in path:
-            config = options()
-            return self.reply(200, {"radio": "configured" if config.get("alexa_group_name") and config.get("command_device_id") else "setup_required",
+            return self.reply(200, {"radio": "direct_playback_pending",
                                     "apple_music": "planned", "backend": "connected" if TOKEN else "unavailable"})
         if name == "now-playing" and "/api/" in path:
             from urllib.parse import parse_qs
@@ -121,7 +119,7 @@ class Handler(BaseHTTPRequestHandler):
             return self.reply(200, now_playing(station))
         if name == "players" and "/api/" in path:
             try:
-                return self.reply(200, {"players": players(), "remembered": remembered(), "configured": sorted(allowed_entities())})
+                return self.reply(200, {"players": players(), "groups": [p for p in detected_devices() if p["possible_group"]], "remembered": remembered(), "discovery": "state_name_heuristic"})
             except (RuntimeError, HTTPError, URLError, ValueError) as exc:
                 return self.reply(503, {"error": str(exc)})
         name = name or "index.html"
@@ -139,7 +137,7 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         path = unquote(urlsplit(self.path).path)
         action = path.rsplit("/", 1)[-1]
-        if "/api/" not in path or action not in ("radio", "volume"):
+        if "/api/" not in path or action != "volume":
             return self.reply(404, {"error": "Not found"})
         try:
             size = int(self.headers.get("Content-Length", "0"))
