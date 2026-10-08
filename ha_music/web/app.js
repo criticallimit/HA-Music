@@ -45,6 +45,23 @@ if (new URLSearchParams(window.location.search).get("ha_music_card") === "1" && 
 }
 
 const $ = id => document.getElementById(id);
+const isDashboardCard = new URLSearchParams(window.location.search).get("ha_music_card") === "1";
+const forceCardSetup = new URLSearchParams(window.location.search).get("setup") === "1";
+let dashboardCardReported = false;
+function applyCardSetupVisibility(installed) {
+  $("settings-open").hidden = !forceCardSetup && (isDashboardCard || installed);
+}
+async function reportDashboardCardLoaded() {
+  if (!isDashboardCard || dashboardCardReported) return;
+  try {
+    await api("dashboard_card_installed", {});
+    dashboardCardReported = true;
+    applyCardSetupVisibility(true);
+  } catch (err) {
+    console.warn("[HA Music] Could not record dashboard card installation", err);
+  }
+}
+
 let radioReadyForViews = false;
 let preferredView = "radio";
 let countdownEndsAt = null;
@@ -276,6 +293,8 @@ async function loadRadioState() {
   try {
     const data = await api("radio-state");
     const state = new Map(data.stations.map(s => [s.id,s]));
+    applyCardSetupVisibility(Boolean(data.dashboard_card_installed));
+    if (isDashboardCard) reportDashboardCardLoaded();
     const radioReady = data.power === "on" && data.ready === "on";
     radioReadyForViews = radioReady;
     preferredView = data.selected_view === "apple" ? "apple" : "radio";
