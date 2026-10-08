@@ -14,7 +14,7 @@ WEB = (Path(__file__).parent / "web").resolve()
 PORT = int(os.environ.get("PORT", "8099"))
 OPTIONS = Path(os.environ.get("OPTIONS_FILE", "/data/options.json"))
 HA_API = os.environ.get("HA_API", "http://supervisor/core/api").rstrip("/")
-TOKEN = os.environ.get("SUPERVISOR_TOKEN", "")
+TOKEN = os.environ.get("SUPERVISOR_TOKEN", "") or os.environ.get("HASSIO_TOKEN", "")
 STATIONS = {"wdr2": "WDR 2", "1live": "1LIVE", "wdr4": "WDR 4",
             "80s80s": "80s80s", "ndr2": "NDR 2", "radiobob": "Radio BOB!"}
 ENTITY_RE = re.compile(r"^media_player\.[a-z0-9_]+$")
