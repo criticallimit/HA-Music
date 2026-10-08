@@ -7,6 +7,8 @@ from urllib.error import HTTPError, URLError
 import json
 import os
 import re
+import threading
+from metadata import now_playing
 
 WEB = (Path(__file__).parent / "web").resolve()
 PORT = int(os.environ.get("PORT", "8099"))
@@ -18,6 +20,24 @@ STATIONS = {"wdr2": "WDR 2", "1live": "1LIVE", "wdr4": "WDR 4",
 ENTITY_RE = re.compile(r"^media_player\.[a-z0-9_]+$")
 DEVICE_RE = re.compile(r"^[a-f0-9]{32}$")
 
+VOLUME_FILE = Path(os.environ.get("VOLUME_FILE", "/config/volumes.json"))
+LOCK = threading.Lock()
+def allowed_entities():
+    raw = options().get("echo_entities", "")
+    return {x.strip() for x in raw.split(",") if ENTITY_RE.fullmatch(x.strip())}
+def remembered():
+    try:
+        obj = json.loads(VOLUME_FILE.read_text())
+        return obj if isinstance(obj, dict) else {}
+    except (OSError, ValueError): return {}
+def save_remembered(entity, level):
+    with LOCK:
+        obj = remembered()
+        obj[entity] = level
+        VOLUME_FILE.parent.mkdir(parents=True, exist_ok=True)
+        temporary = VOLUME_FILE.with_suffix(".tmp")
+        temporary.write_text(json.dumps(obj))
+        temporary.replace(VOLUME_FILE)
 def options():
     try:
         return json.loads(OPTIONS.read_text())
@@ -42,7 +62,7 @@ def players():
              "state": state.get("state", "unknown"),
              "volume": state.get("attributes", {}).get("volume_level"),
              "features": state.get("attributes", {}).get("supported_features", 0)}
-            for state in states if ENTITY_RE.fullmatch(state.get("entity_id", ""))]
+            for state in states if state.get("entity_id") in allowed_entities()]
 
 def perform(action, body):
     if action == "radio":
@@ -65,7 +85,9 @@ def perform(action, body):
         found = next((x for x in players() if x["entity_id"] == entity), None)
         if not found:
             raise ValueError("Media Player nicht gefunden")
-        return ha_request("/services/media_player/volume_set", {"entity_id": entity, "volume_level": level})
+        result = ha_request("/services/media_player/volume_set", {"entity_id": entity, "volume_level": level})
+        if level > 0: save_remembered(entity, level)
+        return result
     raise ValueError("Unbekannte Aktion")
 
 class Handler(BaseHTTPRequestHandler):
@@ -85,9 +107,13 @@ class Handler(BaseHTTPRequestHandler):
             config = options()
             return self.reply(200, {"radio": "configured" if config.get("alexa_group_name") and config.get("command_device_id") else "setup_required",
                                     "apple_music": "planned", "backend": "connected" if TOKEN else "unavailable"})
+        if name == "now-playing" and "/api/" in path:
+            from urllib.parse import parse_qs
+            station = parse_qs(urlsplit(self.path).query).get("station", [""])[0]
+            return self.reply(200, now_playing(station))
         if name == "players" and "/api/" in path:
             try:
-                return self.reply(200, {"players": players()})
+                return self.reply(200, {"players": players(), "remembered": remembered(), "configured": sorted(allowed_entities())})
             except (RuntimeError, HTTPError, URLError, ValueError) as exc:
                 return self.reply(503, {"error": str(exc)})
         name = name or "index.html"
