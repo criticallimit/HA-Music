@@ -87,3 +87,9 @@ nav button.active{background:#275276;border-color:#4d8bb8;color:#fff}
 .power-buttons #power-on:not(:disabled):hover{background:#213b30}
 .power-buttons #power-off:not(:disabled):hover{background:#3b262b}
 @media(max-width:550px){.power-buttons .power-icon{font-size:26px}}
+
+/* Standby replaces all playback and volume controls until Alexa reports ready. */
+.radio-standby{grid-column:1/-1;min-height:min(720px,65vh);display:flex;align-items:center;justify-content:center;color:#8496a9}
+.radio-standby svg{width:clamp(76px,11vw,132px);height:auto;opacity:.76}
+@media(max-width:920px){.radio-standby{min-height:420px}}
+@media(max-width:550px){.radio-standby{min-height:320px}}
