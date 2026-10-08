@@ -19,3 +19,8 @@ assert "echo_entities" in config
 assert "save_remembered" in source
 assert "allowed_entities" in source
 print("Scaffold validation passed")
+
+# The container must ship every local Python module imported by the entrypoint.
+dockerfile = (root / "ha_music/Dockerfile").read_text()
+assert "metadata.py" in dockerfile
+assert (root / "ha_music/metadata.py").exists()
