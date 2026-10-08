@@ -92,7 +92,7 @@ def parse_icy_title(value):
         if artist.strip() and title.strip():
             return {"title": title.strip(), "artist": artist.strip(),
                     "show": None, "kind": "song"}
-    return {"title": None, "artist": None, "show": value[:160], "kind": "show"}
+    return {"title": None, "artist": None, "show": value, "kind": "show"}
 
 
 def now_playing(station):
@@ -103,7 +103,7 @@ def now_playing(station):
         return result
     with LOCK:
         cached = CACHE.get(station)
-        if cached and time.monotonic() - cached[0] < 20:
+        if cached and time.monotonic() - cached[0] < (5 if station in ICY_STREAMS else 20):
             return dict(cached[1])
     if station in ICY_STREAMS:
         icy = probe_icy(station)
@@ -161,6 +161,6 @@ def probe_icy(station):
             value = match.group(1).strip() if match else ""
             return {"station": station, "supported": bool(value),
                     "reason": "ICY-StreamTitle empfangen" if value else "ICY vorhanden, kein Titel im ersten Block",
-                    "sample": value[:160] if value else None}
+                    "sample": value if value else None}
     except Exception as exc:
         return {"station": station, "supported": False, "reason": type(exc).__name__ + ": " + str(exc)[:120]}
