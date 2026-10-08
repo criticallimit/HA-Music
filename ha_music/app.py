@@ -24,6 +24,8 @@ VOLUME_FILE = Path(os.environ.get("VOLUME_FILE", "/config/volumes.json"))
 LOCK = threading.Lock()
 def allowed_entities():
     raw = options().get("echo_entities", "")
+    if not isinstance(raw, str):
+        return set()
     return {x.strip() for x in raw.split(",") if ENTITY_RE.fullmatch(x.strip())}
 def remembered():
     try:
@@ -40,7 +42,8 @@ def save_remembered(entity, level):
         temporary.replace(VOLUME_FILE)
 def options():
     try:
-        return json.loads(OPTIONS.read_text())
+        data = json.loads(OPTIONS.read_text())
+        return data if isinstance(data, dict) else {}
     except (OSError, ValueError):
         return {}
 
@@ -53,7 +56,9 @@ def ha_request(path, payload=None):
         "Content-Type": "application/json",
     }, method="POST" if payload is not None else "GET")
     with urlopen(req, timeout=12) as response:
-        return json.load(response)
+        raw = response.read()
+        # Some Home Assistant service responses are empty on success.
+        return json.loads(raw) if raw.strip() else {}
 
 def players():
     states = ha_request("/states")
@@ -69,8 +74,9 @@ def perform(action, body):
         station = STATIONS.get(body.get("station"))
         config = options()
         device = config.get("command_device_id", "")
-        group = config.get("alexa_group_name", "").strip()
-        if not station or not DEVICE_RE.fullmatch(device) or not group:
+        group = config.get("alexa_group_name", "")
+        if isinstance(group, str): group = group.strip()
+        if not station or not isinstance(device, str) or not DEVICE_RE.fullmatch(device) or not isinstance(group, str) or not group:
             raise ValueError("Sender oder Alexa-Gruppe/Geräte-ID nicht konfiguriert")
         if len(group) > 80 or re.search(r"[\r\n]", group):
             raise ValueError("Ungültiger Gruppenname")
@@ -80,8 +86,10 @@ def perform(action, body):
     if action == "volume":
         entity = body.get("entity_id", "")
         level = body.get("volume")
-        if not ENTITY_RE.fullmatch(entity) or type(level) not in (int, float) or not 0 <= level <= 1:
+        if not isinstance(entity, str) or not ENTITY_RE.fullmatch(entity) or type(level) not in (int, float) or not 0 <= level <= 1:
             raise ValueError("Ungültige Lautstärke oder Entity")
+        if entity not in allowed_entities():
+            raise ValueError("Media Player nicht freigegeben")
         found = next((x for x in players() if x["entity_id"] == entity), None)
         if not found:
             raise ValueError("Media Player nicht gefunden")
@@ -142,7 +150,7 @@ class Handler(BaseHTTPRequestHandler):
                 raise ValueError("Invalid body")
             perform(action, body)
             return self.reply(200, {"ok": True})
-        except (ValueError, TypeError) as exc:
+        except (ValueError, TypeError, json.JSONDecodeError) as exc:
             return self.reply(400, {"error": str(exc)})
         except (RuntimeError, HTTPError, URLError) as exc:
             return self.reply(502, {"error": str(exc)})
