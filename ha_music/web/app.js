@@ -45,14 +45,32 @@ if (new URLSearchParams(window.location.search).get("ha_music_card") === "1" && 
 }
 
 const $ = id => document.getElementById(id);
+let radioReadyForViews = false;
+let preferredView = "radio";
+let countdownEndsAt = null;
 function show(page) {
   const radio = page === "radio";
-  $("radio-page").hidden = !radio; $("apple-page").hidden = radio;
+  $("radio-page").hidden = !radio;
+  $("apple-page").hidden = radio;
   $("radio-tab").classList.toggle("active", radio);
   $("apple-tab").classList.toggle("active", !radio);
 }
-$("radio-tab").addEventListener("click", () => show("radio"));
-$("apple-tab").addEventListener("click", () => show("apple"));
+async function selectView(page) {
+  if (!radioReadyForViews) return;
+  try {
+    await api("selected_view", {view:page});
+    preferredView = page;
+    show(page);
+  } catch (e) { status("Ansicht konnte nicht gespeichert werden: " + e.message); }
+}
+$("radio-tab").addEventListener("click", () => selectView("radio"));
+$("apple-tab").addEventListener("click", () => selectView("apple"));
+function renderCountdown() {
+  if (radioReadyForViews || countdownEndsAt === null) return;
+  const seconds = Math.max(0, Math.ceil((countdownEndsAt - Date.now()) / 1000));
+  $("radio-standby-text").textContent = "Radio startet … " + seconds + " s";
+}
+setInterval(renderCountdown, 1000);
 // Lovelace dashboard setup is independent of radio power/readiness.
 const settingsDialog = $("dashboard-settings");
 $("settings-open").addEventListener("click", () => settingsDialog.showModal());
@@ -259,7 +277,14 @@ async function loadRadioState() {
     const data = await api("radio-state");
     const state = new Map(data.stations.map(s => [s.id,s]));
     const radioReady = data.power === "on" && data.ready === "on";
+    radioReadyForViews = radioReady;
+    preferredView = data.selected_view === "apple" ? "apple" : "radio";
+    $("radio-tab").disabled = !radioReady;
+    $("apple-tab").disabled = !radioReady;
+    show(radioReady ? preferredView : "radio");
     displayRadioReadiness(radioReady);
+    countdownEndsAt = data.power === "on" && !radioReady && data.startup_remaining != null
+      ? Date.now() + data.startup_remaining * 1000 : null;
     // Restore the actual HA Music preset after a power cycle, not merely its artwork.
     const restored = data.last_station;
     if (radioReady && !selectedStation && state.has(restored)) {
@@ -276,9 +301,14 @@ async function loadRadioState() {
       data.power === "on" ? "Radio eingeschaltet" :
       data.power === "off" ? "Radio ausgeschaltet" : "Radio nicht verfügbar";
     $("radio-standby-text").textContent = label;
+    renderCountdown();
     $("power-on").disabled = data.power === "on" || data.power === "unavailable";
     $("power-off").disabled = data.power === "off" || data.power === "unavailable";
   } catch(e) {
+    radioReadyForViews = false;
+    $("radio-tab").disabled = true;
+    $("apple-tab").disabled = true;
+    show("radio");
     displayRadioReadiness(false);
     $("radio-standby-text").textContent = "Radio nicht verfügbar";
     for (const button of stationButtons.values()) button.disabled = true;
@@ -292,7 +322,7 @@ for (const [id,on] of [["power-on",true],["power-off",false]]) {
     finally{await loadRadioState();}
   });
 }
-setInterval(loadRadioState, 20000);
+setInterval(loadRadioState, 3000);
 let volumeReconcileGeneration = 0;
 function scheduleVolumeReconciliation(value) {
   const generation = ++volumeReconcileGeneration;
