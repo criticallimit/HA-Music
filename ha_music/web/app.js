@@ -22,74 +22,76 @@ let songRequestEpoch = 0;
 let songRequestRunning = false;
 const lastStationMetadata = new Map();
 const METADATA_GRACE_MS = 90000;
+let metadataInFlight = false;
+function renderRadioMetadata(station, external) {
+  if (station !== selectedStation) return;
+  const line = external?.title && external?.artist
+    ? external.artist + " – " + external.title : (external?.show || "");
+  const ticker = $("now-ticker");
+  const text = $("now-ticker-text");
+  if (line) {
+    if (text.textContent !== line) text.textContent = line;
+    text.title = line;
+    ticker.hidden = false;
+    $("current-artist").textContent = external?.title && external?.artist ? "Jetzt läuft" : "Aktueller Radiotext";
+  } else {
+    ticker.hidden = true;
+    text.textContent = "";
+    $("current-artist").textContent = "Aktuelle Programminformation nicht verfügbar";
+  }
+}
+async function updateRadioMetadata() {
+  const station = selectedStation;
+  if (!["wdr2","1live","swr3"].includes(station) || metadataInFlight) return;
+  metadataInFlight = true;
+  const epoch = stationEpoch;
+  try {
+    const item = await api("now-playing?station=" + encodeURIComponent(station));
+    if (stationEpoch !== epoch || station !== selectedStation) return;
+    if (item?.status === "available" && (item.title || item.show)) {
+      lastStationMetadata.set(station, {value:item, at:Date.now()});
+      renderRadioMetadata(station, item);
+    } else {
+      const prior = lastStationMetadata.get(station);
+      if (prior && Date.now() - prior.at < METADATA_GRACE_MS)
+        renderRadioMetadata(station, prior.value);
+      else renderRadioMetadata(station, null);
+    }
+  } catch (_) {
+    const prior = lastStationMetadata.get(station);
+    if (stationEpoch === epoch && (!prior || Date.now() - prior.at >= METADATA_GRACE_MS))
+      renderRadioMetadata(station, null);
+  } finally { metadataInFlight = false; }
+}
 async function updateSong() {
   if (songRequestRunning) return;
   songRequestRunning = true;
   const station = selectedStation;
   const epoch = stationEpoch;
-  const requestEpoch = ++songRequestEpoch;
   try {
-    const infoPromise = api("playback-status");
-    const externalPromise = ["wdr2","1live","swr3"].includes(station)
-      ? api("now-playing?station=" + encodeURIComponent(station)).catch(() => null)
-      : Promise.resolve(null);
-    const info = await infoPromise;
+    const info = await api("playback-status");
+    if (stationEpoch !== epoch || station !== selectedStation) return;
     const details = info.details;
-    const title = details?.title;
-    const artist = details?.artist;
     const isRadio = ["wdr2","1live","swr3"].includes(station);
-    let external = null;
-    if (isRadio) {
-      try { const item = await externalPromise;
-        if (item && item.status === "available" && item.station === (station === "wdr2" ? "WDR 2" : station === "1live" ? "1LIVE" : "SWR3")) external = item;
-      } catch (_) { /* Keep Alexa media attributes when station lookup fails. */ }
+    $("current-title").textContent = STATIONS.find(s => s[0] === station)?.[1] || details?.title || "Kein Sender ausgewählt";
+    if (!isRadio) {
+      const line = details?.artist && details?.title ? details.artist + " – " + details.title : "";
+      $("now-ticker-text").textContent = line;
+      $("now-ticker").hidden = !line;
+      $("current-artist").textContent = line ? "Jetzt läuft" : "Aktuelle Programminformation nicht verfügbar";
     }
-    if (stationEpoch !== epoch || songRequestEpoch !== requestEpoch || station !== selectedStation) return;
-    if (external && (external.title || external.show)) {
-      lastStationMetadata.set(station, {value:external, at:Date.now()});
-    } else if (isRadio) {
-      const prior = lastStationMetadata.get(station);
-      if (prior && Date.now() - prior.at < METADATA_GRACE_MS) external = prior.value;
-    }
-    const stationName = station ? STATIONS.find(s => s[0] === station)?.[1] : null;
-    $("current-title").textContent = stationName || title || "Kein Sender ausgewählt";
-    const hasSong = Boolean(external?.title && external?.artist);
-    const alexaSong = !isRadio && title && artist;
-    const cleanAlexaShow = isRadio && details?.album &&
-      !/^(ARD|WDR\s*2(?:\s+Rhein und Ruhr)?|1LIVE|SWR3)$/i.test(details.album.trim())
-      ? details.album.trim() : "";
-    const songLine = hasSong ? external.artist + " – " + external.title :
-      external?.show ? external.show : cleanAlexaShow ||
-      (alexaSong ? artist + " – " + title : "");
-    const ticker = $("now-ticker");
-    const tickerText = $("now-ticker-text");
-    if (songLine) {
-      if (tickerText.textContent !== songLine) {
-        tickerText.textContent = songLine;
-        ticker.classList.remove("scrolling");
-        void ticker.offsetWidth;
-      }
-      ticker.hidden = false;
-      ticker.classList.toggle("scrolling", isRadio || songLine.length > 36);
-    } else {
-      ticker.hidden = true;
-      ticker.classList.remove("scrolling");
-      tickerText.textContent = "";
-    }
-    $("current-artist").textContent = hasSong ? "Jetzt läuft" : (external?.show || cleanAlexaShow) ? "Aktuelle Sendung" : songLine ? "Jetzt läuft" : "Aktuelle Programminformation nicht verfügbar";
+    const image = details?.image;
     const cover = $("current-cover");
-    // Keep Alexa's station logo in the radio panel, independently of track data.
-    const picture = isRadio ? details?.image : (external?.cover || details?.image);
-    if (picture && (picture.startsWith("/") || picture.startsWith("https://"))) {
-      cover.src = picture; cover.hidden = false;
+    if (image && (image.startsWith("/") || image.startsWith("https://"))) {
+      cover.src = image; cover.hidden = false;
     } else { cover.hidden = true; cover.removeAttribute("src"); }
-    $("playback-state").textContent = info.playing ? "Wiedergabe aktiv" :
-      "Alexa meldet derzeit keine aktive Wiedergabe" ;
-  } catch(e) { if (stationEpoch === epoch && songRequestEpoch === requestEpoch) $("playback-state").textContent = "Wiedergabestatus nicht verfügbar: " + e.message; }
-  finally { songRequestRunning = false; }
+    $("playback-state").textContent = info.playing ? "Wiedergabe aktiv" : "Alexa meldet derzeit keine aktive Wiedergabe";
+  } catch(e) {
+    if (stationEpoch === epoch) $("playback-state").textContent = "Wiedergabestatus nicht verfügbar: " + e.message;
+  } finally { songRequestRunning = false; }
 }
-setInterval(() => { if (["wdr2","1live","swr3"].includes(selectedStation)) updateSong(); }, 5000);
-setInterval(() => { if (!["wdr2","1live","swr3"].includes(selectedStation)) updateSong(); }, 30000);
+setInterval(updateRadioMetadata, 5000);
+setInterval(updateSong, 30000);
 const previous = new Map();
 function status(text) { $("message").textContent = text; }
 const stationButtons = new Map();
@@ -112,7 +114,8 @@ for (const [id,name] of STATIONS) {
       $("now-ticker").hidden = true;
       $("now-ticker-text").textContent = "";
       setTimeout(updateSong, 2500);
-      if (["wdr2","1live","swr3"].includes(id)) setTimeout(updateSong, 10000);
+      updateRadioMetadata();
+      if (["wdr2","1live","swr3"].includes(id)) setTimeout(updateRadioMetadata, 3000);
       status(name + " direkt über den Alexa-Media-Player angefordert. Bitte Wiedergabe prüfen.");
     } catch(e) { status("Direkte Wiedergabe fehlgeschlagen: " + e.message); }
     finally { await loadRadioState(); }
