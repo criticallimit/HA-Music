@@ -82,3 +82,7 @@ assert metadata.parse_recent_playlist("swr3", swr, now)["artist"] == "Test Band"
 assert metadata.parse_recent_playlist("swr3", swr, now + timedelta(minutes=15))["kind"] == "unavailable"
 
 assert "einslive-playlist-100.html" in metadata.URLS["1live"]
+
+# Stream probing is constrained to an explicit allowlist.
+assert metadata.probe_icy('swr3')['supported'] is False
+assert set(metadata.ICY_STREAMS) == {'1live','wdr2'}
