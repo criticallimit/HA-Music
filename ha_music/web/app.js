@@ -46,10 +46,10 @@ if (new URLSearchParams(window.location.search).get("ha_music_card") === "1" && 
 
 const $ = id => document.getElementById(id);
 const isDashboardCard = new URLSearchParams(window.location.search).get("ha_music_card") === "1";
-const forceCardSetup = new URLSearchParams(window.location.search).get("setup") === "1";
+let showDashboardSetup = false;
 let dashboardCardReported = false;
 function applyCardSetupVisibility(installed) {
-  $("settings-open").hidden = !forceCardSetup && (isDashboardCard || installed);
+  $("settings-open").hidden = !showDashboardSetup && (isDashboardCard || installed);
 }
 async function reportDashboardCardLoaded() {
   if (!isDashboardCard || dashboardCardReported) return;
@@ -293,6 +293,7 @@ async function loadRadioState() {
   try {
     const data = await api("radio-state");
     const state = new Map(data.stations.map(s => [s.id,s]));
+    showDashboardSetup = data.show_dashboard_setup === true;
     applyCardSetupVisibility(Boolean(data.dashboard_card_installed));
     if (isDashboardCard) reportDashboardCardLoaded();
     const radioReady = data.power === "on" && data.ready === "on";
