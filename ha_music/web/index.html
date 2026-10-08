@@ -1,7 +1,7 @@
 <!doctype html>
 <html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>HA Music</title><link rel="stylesheet" href="style.css"></head>
 <body><main class="shell">
-<header><span id="radio-state" class="header-radio-state" role="status">Prüfe Radiozustand …</span><nav aria-label="Musikquelle"><button id="radio-tab" class="active" type="button">Radio</button><button id="apple-tab" type="button">Apple Music</button></nav><div class="power-buttons"><button type="button" id="power-on" aria-label="Radio einschalten" title="Radio einschalten"><span class="power-icon" aria-hidden="true">I</span></button><button type="button" id="power-off" aria-label="Radio ausschalten" title="Radio ausschalten"><span class="power-icon" aria-hidden="true">O</span></button></div></header>
+<header><span id="radio-state" class="header-radio-state" role="status">Prüfe Radiozustand …</span><nav aria-label="Musikquelle"><button id="radio-tab" class="active" type="button">Radio</button><button id="apple-tab" type="button">Apple Music</button></nav><div class="header-actions"><button id="settings-open" class="settings-toggle" type="button" aria-label="Dashboard-Karte konfigurieren" title="Dashboard-Karte konfigurieren">⚙</button><div class="power-buttons"><button type="button" id="power-on" aria-label="Radio einschalten" title="Radio einschalten"><span class="power-icon" aria-hidden="true">I</span></button><button type="button" id="power-off" aria-label="Radio ausschalten" title="Radio ausschalten"><span class="power-icon" aria-hidden="true">O</span></button></div></div></header>
 <section id="radio-page" class="dashboard">
 <div id="radio-standby" class="radio-standby" aria-label="Radio nicht bereit">
   <svg viewBox="0 0 96 96" width="120" height="120" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"><path d="M17 31 77 12"/><rect x="13" y="32" width="70" height="47" rx="10"/><circle cx="34" cy="57" r="12"/><path d="M60 51h12M60 59h12M60 67h12"/></svg>
@@ -17,5 +17,16 @@
 </div>
 </section>
 <section id="apple-page" hidden><article class="notice"><h2>Apple Music</h2><p>In Vorbereitung. Später sind Alben, Playlists und Familienprofile vorgesehen.</p></article></section>
-
+<dialog id="dashboard-settings" class="dashboard-settings" aria-labelledby="dashboard-settings-title">
+  <div class="settings-heading"><h2 id="dashboard-settings-title">Dashboard-Karte einrichten</h2><button type="button" id="settings-close" aria-label="Schließen">×</button></div>
+  <p>HA Music stellt die Lovelace-Kartendateien beim Start automatisch unter <code>/local/</code> bereit. Die Ressource muss in Home Assistant einmal registriert werden.</p>
+  <label for="resource-url">Ressourcen-URL</label>
+  <div class="resource-line"><input id="resource-url" readonly value="/local/ha-music-card-loader.js"><button type="button" id="copy-resource">Kopieren</button></div>
+  <p>Ressourcentyp: <strong>JavaScript-Modul</strong></p>
+  <div class="settings-actions"><button type="button" id="open-resources">Ressourcen öffnen ↗</button></div>
+  <p class="settings-note">Unter Einstellungen → Dashboards → Menü (⋮) → Ressourcen die URL hinzufügen, falls sie noch nicht eingetragen ist. Danach Dashboard bearbeiten und die Karte <strong>HA Music</strong> auswählen.</p>
+  <label for="card-yaml">Alternativ als manuelle Karte</label>
+  <div class="resource-line"><input id="card-yaml" readonly value="type: custom:ha-music-card"><button type="button" id="copy-card-yaml">Kopieren</button></div>
+  <p id="settings-feedback" role="status"></p>
+</dialog>
 </main><script src="app.js"></script></body></html>
