@@ -17,6 +17,15 @@ async function api(path, data) {
 }
 let ready = false;
 let selectedStation = "";
+$("metadata-probe").addEventListener("click", async () => {
+  if (!selectedStation) { $("metadata-result").textContent = "Zuerst einen Radiosender auswählen."; return; }
+  $("metadata-probe").disabled = true;
+  $("metadata-result").textContent = "Prüfung läuft …";
+  try { const result = await api("metadata-probe?station=" + encodeURIComponent(selectedStation));
+    $("metadata-result").textContent = result.reason + (result.sample ? " · " + result.sample : "");
+  } catch(e) { $("metadata-result").textContent = "Metadatenprüfung fehlgeschlagen: " + e.message; }
+  finally { $("metadata-probe").disabled = false; }
+});
 async function updateSong() {
   try {
     const info = await api("playback-status");
