@@ -8,7 +8,7 @@ import json
 import os
 import re
 import threading
-from metadata import now_playing
+from metadata import now_playing, probe_icy
 
 WEB = (Path(__file__).parent / "web").resolve()
 PORT = int(os.environ.get("PORT", "8099"))
@@ -216,6 +216,12 @@ class Handler(BaseHTTPRequestHandler):
         if name == "status" and "/api/" in path:
             return self.reply(200, {"radio": "direct_playback_pending",
                                     "apple_music": "planned", "backend": "connected" if TOKEN else "unavailable"})
+        if name == "metadata-probe" and "/api/" in path:
+            from urllib.parse import parse_qs
+            station = parse_qs(urlsplit(self.path).query).get("station", [""])[0]
+            if station not in ("wdr2", "1live", "swr3"):
+                return self.reply(400, {"error": "Sender nicht unterstützt"})
+            return self.reply(200, probe_icy(station))
         if name == "now-playing" and "/api/" in path:
             from urllib.parse import parse_qs
             station = parse_qs(urlsplit(self.path).query).get("station", [""])[0]
