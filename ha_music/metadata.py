@@ -81,23 +81,49 @@ def parse_recent_playlist(station, html, now=None):
                 pass
     return {"title":None, "artist":None, "show":None, "kind":"unavailable"}
 
+def parse_icy_title(value):
+    """Return a current song only when the stream explicitly identifies one."""
+    value = (value or "").strip()
+    if not value:
+        return {"title": None, "artist": None, "show": None, "kind": "unavailable"}
+    # Broadcasters often send programme text rather than a track during speech.
+    if " - " in value:
+        artist, title = value.split(" - ", 1)
+        if artist.strip() and title.strip():
+            return {"title": title.strip(), "artist": artist.strip(),
+                    "show": None, "kind": "song"}
+    return {"title": None, "artist": None, "show": value[:160], "kind": "show"}
+
+
 def now_playing(station):
     result = {"station": NAMES.get(station, ""), "title": None, "artist": None,
-              "show": None, "kind": "unavailable", "cover": None, "status": "unavailable"}
-    if station not in URLS:
+              "show": None, "kind": "unavailable", "cover": None,
+              "status": "unavailable", "source": None}
+    if station not in URLS and station not in ICY_STREAMS:
         return result
     with LOCK:
         cached = CACHE.get(station)
-        if cached and time.monotonic() - cached[0] < 30:
+        if cached and time.monotonic() - cached[0] < 20:
             return dict(cached[1])
-    try:
-        raw = fetch(URLS[station])
-        parsed = parse_wdr_live(raw) if station == "wdr2" else parse_recent_playlist(station, raw)
-        result.update(parsed)
-        if parsed["kind"] != "unavailable":
-            result["status"] = "available"
-    except Exception:
-        pass
+    if station in ICY_STREAMS:
+        icy = probe_icy(station)
+        if icy["supported"] and icy.get("sample"):
+            parsed = parse_icy_title(icy["sample"])
+            if parsed["kind"] != "unavailable":
+                result.update(parsed)
+                result.update(status="available", source="icy")
+                with LOCK:
+                    CACHE[station] = (time.monotonic(), dict(result))
+                return result
+    if station in URLS:
+        try:
+            raw = fetch(URLS[station])
+            parsed = parse_wdr_live(raw) if station == "wdr2" else parse_recent_playlist(station, raw)
+            result.update(parsed)
+            if parsed["kind"] != "unavailable":
+                result.update(status="available", source="web")
+        except Exception:
+            pass
     with LOCK:
         CACHE[station] = (time.monotonic(), dict(result))
     return result
