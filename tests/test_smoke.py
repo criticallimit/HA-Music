@@ -53,3 +53,9 @@ with patch.object(app, "classify_devices", return_value={"groups":[{"name":"Wohn
         app.perform("test_wdr2", {})
         assert request.call_args.args[0] == "/services/media_player/play_media"
         assert request.call_args.args[1]["entity_id"] == "media_player.wohnung"
+
+with patch.object(app, "classify_devices", return_value={"groups":[{"name":"Wohnung","entity_id":"media_player.wohnung","state":"idle","features":512}],"players":[],"excluded":[]}):
+    with patch.object(app, "ha_request", return_value={}) as mocked:
+        app.perform("test_tunein_wdr2", {})
+        assert mocked.call_args.args[1]["media_content_type"] == "TUNEIN"
+        assert mocked.call_args.args[1]["media_content_id"] == "WDR 2"
