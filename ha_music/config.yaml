@@ -1,5 +1,5 @@
 name: HA Music
-version: "0.0.5"
+version: "0.0.6"
 slug: ha_music
 description: Radio dashboard for Alexa with future Apple Music support
 url: https://github.com/criticallimit/HA-Music
