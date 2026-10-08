@@ -75,7 +75,8 @@ class HAMusicCard extends HTMLElement {
   constructor() {
     super();
     this.attachShadow({mode:"open"});
-    this._config = {height: 1000};
+    this._config = {height: null};
+    this._measuredHeight = null;
     this._hass = null;
     this._started = false;
     this._startGeneration = 0;
@@ -96,6 +97,12 @@ class HAMusicCard extends HTMLElement {
       ) {
         if (event.data?.type === "ha-music-theme-request") this._sendThemeToIframe(true);
         else if (event.data?.type === "ha-music-theme-ready") this._iframe.style.opacity = "1";
+        else if (event.data?.type === "ha-music-content-height") {
+          const height = Number(event.data.height);
+          if (!Number.isFinite(height) || height < 1 || height > 10000) return;
+          this._measuredHeight = Math.ceil(height);
+          if (!this._config.height && this._iframe) this._iframe.style.height = this._measuredHeight + "px";
+        }
       }
     };
   }
@@ -195,7 +202,7 @@ class HAMusicCard extends HTMLElement {
   }
 
   static getStubConfig() {
-    return {height:1000};
+    return {};
   }
 
   getGridOptions() {
@@ -208,7 +215,8 @@ class HAMusicCard extends HTMLElement {
   setConfig(config) {
     this._config = {
       ...config,
-      height:Math.max(500, Math.min(2200, Number(config?.height || 1000))),
+      height:config?.height == null || config.height === "" ? null :
+        Math.max(200, Math.min(5000, Number(config.height) || 1000)),
       theme:String(config?.theme || "").trim()
     };
     this._applyConfiguredTheme();
@@ -290,10 +298,11 @@ class HAMusicCard extends HTMLElement {
     this._sessionTimer = null;
     this._started = false;
     this._iframe = null;
+    this._measuredHeight = null;
   }
 
   getCardSize() {
-    return Math.max(10, Math.ceil(this._config.height / 50));
+    return Math.max(1, Math.ceil((this._config.height || this._measuredHeight || 320) / 50));
   }
 
   _renderShell(message = this._t("HA Music wird geladen …")) {
@@ -312,7 +321,7 @@ class HAMusicCard extends HTMLElement {
     }
     const iframe = this._iframe;
     if (iframe && iframe.isConnected) {
-      iframe.style.height = this._config.height + "px";
+      iframe.style.height = (this._config.height || this._measuredHeight || 320) + "px";
       return;
     }
 
@@ -495,7 +504,7 @@ class HAMusicCard extends HTMLElement {
       iframeUrl.searchParams.set("ha_music_version", addon.version);
       iframeUrl.searchParams.set("ha_music_theme", this._config.theme || "__dashboard__");
       iframe.src = iframeUrl.toString();
-      iframe.style.height = this._config.height + "px";
+      iframe.style.height = (this._config.height || this._measuredHeight || 320) + "px";
       iframe.style.background = "transparent";
       iframe.style.opacity = "0";
       iframe.style.transition = "opacity 80ms linear";
