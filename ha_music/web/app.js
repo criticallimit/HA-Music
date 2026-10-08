@@ -34,7 +34,7 @@ async function updateSong() {
     $("current-artist").textContent = [external?.artist || artist, external ? "" : details?.album].filter(Boolean).join(" · ") ||
       (info.playing ? "Wiedergabe aktiv · Titelinformationen nicht verfügbar" : "Keine bestätigte Wiedergabe");
     const cover = $("current-cover");
-    const picture = external?.cover || details?.image;
+    const picture = external ? (external.cover || null) : (isRadio ? null : details?.image);
     if (picture && (picture.startsWith("/") || picture.startsWith("https://"))) {
       cover.src = picture; cover.hidden = false;
     } else { cover.hidden = true; cover.removeAttribute("src"); }
