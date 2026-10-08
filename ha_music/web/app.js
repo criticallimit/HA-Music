@@ -16,6 +16,19 @@ async function api(path, data) {
   return body;
 }
 let ready = false;
+let selectedStation = "";
+async function updateSong() {
+  if (!selectedStation) return;
+  try {
+    const info = await api("now-playing?station=" + encodeURIComponent(selectedStation));
+    $("current-title").textContent = info.title || info.station || "Titel nicht verfügbar";
+    $("current-artist").textContent = info.artist || "Keine aktuellen Metadaten";
+    const cover = $("current-cover");
+    cover.hidden = !info.cover;
+    if (info.cover) cover.src = info.cover;
+  } catch { $("current-artist").textContent = "Metadaten derzeit nicht verfügbar"; }
+}
+setInterval(updateSong, 60000);
 const previous = new Map();
 function status(text) { $("message").textContent = text; }
 for (const [id,name] of STATIONS) {
@@ -24,7 +37,7 @@ for (const [id,name] of STATIONS) {
   button.className = "station";
   button.addEventListener("click", async () => {
     button.disabled = true;
-    try { await api("radio",{station:id}); $("current-title").textContent = name; status("Wiedergabebefehl an Alexa gesendet"); }
+    try { await api("radio",{station:id}); selectedStation=id; $("current-title").textContent = name; updateSong(); status("Wiedergabebefehl an Alexa gesendet"); }
     catch(e) { status(e.message); }
     finally { button.disabled = !ready; }
   });
@@ -37,9 +50,9 @@ async function refresh() {
     status(ready ? "Alexa konfiguriert. Sender auswählen." : "Für den Radiostart unter Add-on-Konfiguration command_device_id und alexa_group_name setzen.");
   } catch(e) { status(e.message); }
   try {
-    const {players} = await api("players");
+    const {players,remembered,configured} = await api("players");
     const wrap = $("players"); wrap.replaceChildren();
-    if (!players.length) { wrap.textContent = "Keine Media-Player-Entitäten gefunden."; return; }
+    if (!players.length) { wrap.textContent = configured.length ? "Keine konfigurierten Echo-Player erreichbar." : "Echo-Player in der Add-on-Konfiguration unter echo_entities kommagetrennt eintragen."; return; }
     for (const p of players) {
       const row = document.createElement("div"); row.className = "player-row";
       const title = document.createElement("span"); title.textContent = p.name + " (" + p.state + ")";
@@ -56,7 +69,7 @@ async function refresh() {
       });
       mute.addEventListener("click",async () => {
         const current = Number(slider.value)/100;
-        const next = current > 0 ? 0 : (previous.get(p.entity_id) || 0.3);
+        const next = current > 0 ? 0 : (previous.get(p.entity_id) || remembered[p.entity_id] || 0.3);
         if(current>0) previous.set(p.entity_id,current);
         try { await api("volume",{entity_id:p.entity_id,volume:next});slider.value=Math.round(next*100);label.textContent=slider.value+"%";mute.textContent=next?"Stumm":"Ein"; }
         catch(e){status(e.message);}
