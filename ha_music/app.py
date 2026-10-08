@@ -8,7 +8,7 @@ import json
 import os
 import re
 import threading
-from metadata import now_playing, probe_icy, icy_diagnostics
+from metadata import now_playing
 from metadata_feed import MONITOR
 
 WEB = (Path(__file__).parent / "web").resolve()
@@ -217,14 +217,6 @@ class Handler(BaseHTTPRequestHandler):
         if name == "status" and "/api/" in path:
             return self.reply(200, {"radio": "direct_playback_pending",
                                     "apple_music": "planned", "backend": "connected" if TOKEN else "unavailable"})
-        if name == "icy-diagnostics" and "/api/" in path:
-            return self.reply(200, icy_diagnostics())
-        if name == "metadata-probe" and "/api/" in path:
-            from urllib.parse import parse_qs
-            station = parse_qs(urlsplit(self.path).query).get("station", [""])[0]
-            if station not in ("wdr2", "1live", "swr3"):
-                return self.reply(400, {"error": "Sender nicht unterstützt"})
-            return self.reply(200, probe_icy(station))
         if name == "events" and "/api/" in path:
             self.send_response(200)
             self.send_header("Content-Type", "text/event-stream; charset=utf-8")
@@ -245,10 +237,6 @@ class Handler(BaseHTTPRequestHandler):
             except (BrokenPipeError, ConnectionResetError, OSError):
                 pass
             return
-        if name == "now-playing" and "/api/" in path:
-            from urllib.parse import parse_qs
-            station = parse_qs(urlsplit(self.path).query).get("station", [""])[0]
-            return self.reply(200, now_playing(station))
         if name == "radio-state" and "/api/" in path:
             try:
                 return self.reply(200, radio_state())
