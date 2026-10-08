@@ -132,13 +132,16 @@ def playback_capability():
 
 RADIO_SWITCH = "switch.alexa_alle"
 RADIO_READY = "input_boolean.alexa_hochgefahren"
-# Only WDR2 has a known provider phrase from the user's working configuration.
+# Initial provider phrases copied exactly from the user's existing radio scripts.
 DIRECT_STATIONS = {
-    "wdr2": {"name":"WDR 2", "target":"media_player.wohnzimmer",
-             "media_content_type":"custom",
-             "media_content_id":"spiele wdr zwei aus der ARD Audiothek auf Wohnung"},
+    "1live": {"name": "1LIVE", "target": "media_player.wohnzimmer", "media_content_type": "custom", "media_content_id": "spiele eins live aus der ARD Audiothek auf Wohnung"},
+    "wdr2": {"name": "WDR 2", "target": "media_player.wohnzimmer", "media_content_type": "custom", "media_content_id": "spiele wdr zwei aus der ARD Audiothek auf Wohnung"},
+    "swr3": {"name": "SWR3", "target": "media_player.wohnzimmer", "media_content_type": "custom", "media_content_id": "spiele swr3 aus der ard audiothek auf Wohnung"},
+    "sommerhits": {"name": "Sommerhits", "target": "media_player.wohnzimmer", "media_content_type": "custom", "media_content_id": "spiele amazon Sommerhits auf Wohnung"},
+    "charts": {"name": "Charts", "target": "media_player.wohnzimmer", "media_content_type": "AMAZON_MUSIC", "media_content_id": "spiele  die charts auf Wohnung"},
+    "80s": {"name": "80er", "target": "media_player.wohnzimmer", "media_content_type": "AMAZON_MUSIC", "media_content_id": "spiele best of achtziger auf Wohnung"},
+    "90s": {"name": "90er", "target": "media_player.wohnzimmer", "media_content_type": "AMAZON_MUSIC", "media_content_id": "spiele hits der neunziger auf Wohnung"},
 }
-UNVERIFIED_STATIONS = ["1LIVE", "SWR3", "Sommerhits", "Charts", "80er", "90er"]
 
 def state_snapshot():
     states = ha_request("/states")
@@ -146,12 +149,13 @@ def state_snapshot():
 
 def radio_state():
     states = state_snapshot()
-    target = DIRECT_STATIONS["wdr2"]["target"]
-    available = target in states and states[target].get("state") not in ("unavailable","unknown")
     return {"power":states.get(RADIO_SWITCH,{}).get("state","unavailable"),
             "ready":states.get(RADIO_READY,{}).get("state","unavailable"),
-            "stations":[{"id":"wdr2","name":"WDR 2","available":available}],
-            "unverified":UNVERIFIED_STATIONS}
+            "stations":[{"id":key, "name":item["name"],
+                         "available":item["target"] in states and
+                            states[item["target"]].get("state") not in ("unknown","unavailable")}
+                        for key,item in DIRECT_STATIONS.items()]}
+
 
 def perform(action, body):
     if action == "radio_direct":
