@@ -8,7 +8,7 @@ function show(page) {
 }
 $("radio-tab").addEventListener("click", () => show("radio"));
 $("apple-tab").addEventListener("click", () => show("apple"));
-const STATIONS = [["wdr2","WDR 2"]];
+const STATIONS = [["1live","1LIVE"],["wdr2","WDR 2"],["swr3","SWR3"],["sommerhits","Sommerhits"],["charts","Charts"],["80s","80er"],["90s","90er"]];
 async function api(path, data) {
   const response = await fetch("api/" + path, data ? {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(data)} : {});
   const body = await response.json();
@@ -88,7 +88,7 @@ for (const [id,name] of STATIONS) {
       selectedStation = id;
       $("current-title").textContent = name;
       if (["wdr2","1live"].includes(id)) updateSong();
-      status("WDR 2 direkt über den Media Player angefordert. Bitte die tatsächliche Wiedergabe prüfen.");
+      status(name + " direkt über den Alexa-Media-Player angefordert. Bitte Wiedergabe prüfen.");
     } catch(e) { status("Direkte Wiedergabe fehlgeschlagen: " + e.message); }
     finally { await loadRadioState(); }
   });
@@ -99,7 +99,7 @@ async function loadRadioState() {
   try {
     const data = await api("radio-state");
     const state = new Map(data.stations.map(s => [s.id,s]));
-    $("unverified-stations").textContent = "Weitere Sender erst nach bestätigter Anbieteranbindung: " + (data.unverified || []).join(", ");
+
     for (const [key,button] of stationButtons) button.disabled = !state.get(key)?.available;
     const label = data.power === "on" && data.ready !== "on" ? "Radio startet …" :
       data.power === "on" ? "Radio eingeschaltet" :
@@ -125,7 +125,7 @@ async function refresh() {
   try {
     const config = await api("status"); ready = config.backend === "connected";
     await loadRadioState();
-    status(ready ? "Radiosender verwenden deine vorhandenen Home-Assistant-Skripte." : "Home-Assistant-Verbindung nicht verfügbar.");
+    status(ready ? "Sender werden direkt über Home Assistant abgespielt, ohne externe Skripte." : "Home-Assistant-Verbindung nicht verfügbar.");
   } catch(e) { status(e.message); }
   try {
     const {players,remembered,groups,excluded,diagnostics} = await api("players");
