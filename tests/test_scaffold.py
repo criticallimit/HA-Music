@@ -15,9 +15,10 @@ for expected in ("radio-page", "apple-page", "radio-tab", "apple-tab"):
 assert "ingress: true" in config
 assert "ingress_port: 8099" in config
 assert "now-playing" in js
-assert "echo_entities" in config
+assert "echo_entities" not in config
 assert "save_remembered" in source
-assert "allowed_entities" in source
+assert "detected_devices" in source
+assert "send_text_command" not in source
 print("Scaffold validation passed")
 
 # The container must ship every local Python module imported by the entrypoint.
