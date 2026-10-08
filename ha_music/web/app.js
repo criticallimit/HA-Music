@@ -27,6 +27,30 @@ function show(page) {
 }
 $("radio-tab").addEventListener("click", () => show("radio"));
 $("apple-tab").addEventListener("click", () => show("apple"));
+// Lovelace dashboard setup is independent of radio power/readiness.
+const settingsDialog = $("dashboard-settings");
+$("settings-open").addEventListener("click", () => settingsDialog.showModal());
+$("settings-close").addEventListener("click", () => settingsDialog.close());
+settingsDialog.addEventListener("click", (event) => {
+  if (event.target === settingsDialog) settingsDialog.close();
+});
+async function copySettingsText(value) {
+  try {
+    await navigator.clipboard.writeText(value);
+    $("settings-feedback").textContent = "In Zwischenablage kopiert.";
+  } catch (_) {
+    $("settings-feedback").textContent = "Bitte den Text im Feld markieren und kopieren.";
+  }
+}
+$("copy-resource").addEventListener("click", () => copySettingsText($("resource-url").value));
+$("copy-card-yaml").addEventListener("click", () => copySettingsText($("card-yaml").value));
+$("open-resources").addEventListener("click", () => {
+  const url = new URL("/config/lovelace/resources", window.location.origin);
+  const tab = window.open(url.href, "_blank", "noopener,noreferrer");
+  if (!tab) {
+    $("settings-feedback").textContent = "Home Assistant hat den neuen Tab blockiert. Einstellungen → Dashboards → Ressourcen öffnen.";
+  }
+});
 const STATIONS = [["1live","1LIVE"],["wdr2","WDR 2"],["swr3","SWR3"],["sommerhits","Sommerhits"],["charts","Charts"],["80s","80er"],["90s","90er"]];
 async function api(path, data) {
   const response = await fetch("api/" + path, data ? {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(data)} : {});
