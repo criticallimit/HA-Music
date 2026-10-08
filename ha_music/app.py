@@ -130,42 +130,43 @@ def playback_capability():
             "reason": "play_media verfügbar; Streamunterstützung nicht bestätigt" if supported
                       else "Gruppe unterstützt play_media nicht"}
 
-RADIO_SCRIPTS = {
-    "1live": ("1LIVE", "script.radio_1live_uberall"),
-    "wdr2": ("WDR 2", "script.radio_wdr2_uberall"),
-    "swr3": ("SWR3", "script.radio_swr3_uberall"),
-    "sommerhits": ("Sommerhits", "script.radio_sommerhits"),
-    "charts": ("Charts", "script.radio_spotify_top_100_uberall_duplizieren"),
-    "80s": ("80er", "script.1690801421597"),
-    "90s": ("90er", "script.1690800965371"),
-}
 RADIO_SWITCH = "switch.alexa_alle"
 RADIO_READY = "input_boolean.alexa_hochgefahren"
+# Only WDR2 has a known provider phrase from the user's working configuration.
+DIRECT_STATIONS = {
+    "wdr2": {"name":"WDR 2", "target":"media_player.wohnzimmer",
+             "media_content_type":"custom",
+             "media_content_id":"spiele wdr zwei aus der ARD Audiothek auf Wohnung"},
+}
+UNVERIFIED_STATIONS = ["1LIVE", "SWR3", "Sommerhits", "Charts", "80er", "90er"]
 
 def state_snapshot():
     states = ha_request("/states")
-    return {state["entity_id"]: state for state in states if isinstance(state, dict) and isinstance(state.get("entity_id"), str)}
+    return {s["entity_id"]:s for s in states if isinstance(s,dict) and isinstance(s.get("entity_id"),str)}
 
 def radio_state():
     states = state_snapshot()
-    return {
-        "power": states.get(RADIO_SWITCH, {}).get("state", "unavailable"),
-        "ready": states.get(RADIO_READY, {}).get("state", "unavailable"),
-        "stations": [{"id": key, "name": name, "available": entity in states and
-                      states[entity].get("state") not in ("unavailable", "unknown")}
-                     for key, (name, entity) in RADIO_SCRIPTS.items()],
-    }
+    target = DIRECT_STATIONS["wdr2"]["target"]
+    available = target in states and states[target].get("state") not in ("unavailable","unknown")
+    return {"power":states.get(RADIO_SWITCH,{}).get("state","unavailable"),
+            "ready":states.get(RADIO_READY,{}).get("state","unavailable"),
+            "stations":[{"id":"wdr2","name":"WDR 2","available":available}],
+            "unverified":UNVERIFIED_STATIONS}
 
 def perform(action, body):
-    if action == "radio_script":
+    if action == "radio_direct":
         key = body.get("station")
-        if not isinstance(key, str) or key not in RADIO_SCRIPTS:
-            raise ValueError("Unbekannter Sender")
+        if not isinstance(key,str) or key not in DIRECT_STATIONS:
+            raise ValueError("Sender noch nicht für die direkte Wiedergabe bestätigt")
+        preset = DIRECT_STATIONS[key]
         states = state_snapshot()
-        entity = RADIO_SCRIPTS[key][1]
-        if entity not in states or states[entity].get("state") in ("unavailable", "unknown"):
-            raise ValueError("Radioskript in Home Assistant nicht verfügbar")
-        return ha_request("/services/script/turn_on", {"entity_id": entity})
+        target = preset["target"]
+        if target not in states or states[target].get("state") in ("unknown","unavailable"):
+            raise ValueError("Alexa-Zielgerät nicht verfügbar")
+        return ha_request("/services/media_player/play_media", {
+            "entity_id":target, "media": {
+                "media_content_id":preset["media_content_id"],
+                "media_content_type":preset["media_content_type"], "metadata":{}}})
     if action == "radio_power":
         turn_on = body.get("on")
         if not isinstance(turn_on, bool):
@@ -254,7 +255,7 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         path = unquote(urlsplit(self.path).path)
         action = path.rsplit("/", 1)[-1]
-        if "/api/" not in path or action not in ("volume", "test_wdr2", "test_tunein_wdr2", "radio_script", "radio_power"):
+        if "/api/" not in path or action not in ("volume", "test_wdr2", "test_tunein_wdr2", "radio_direct", "radio_power"):
             return self.reply(404, {"error": "Not found"})
         try:
             size = int(self.headers.get("Content-Length", "0"))
