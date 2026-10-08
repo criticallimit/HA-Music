@@ -17,29 +17,38 @@ async function api(path, data) {
 }
 let ready = false;
 let selectedStation = "";
+let stationEpoch = 0;
+let songRequestEpoch = 0;
 $("metadata-probe").addEventListener("click", async () => {
   if (!selectedStation) { $("metadata-result").textContent = "Zuerst einen Radiosender auswählen."; return; }
+  const station = selectedStation;
+  const epoch = stationEpoch;
   $("metadata-probe").disabled = true;
   $("metadata-result").textContent = "Prüfung läuft …";
-  try { const result = await api("metadata-probe?station=" + encodeURIComponent(selectedStation));
-    $("metadata-result").textContent = result.reason + (result.sample ? " · " + result.sample : "");
-  } catch(e) { $("metadata-result").textContent = "Metadatenprüfung fehlgeschlagen: " + e.message; }
+  try { const result = await api("metadata-probe?station=" + encodeURIComponent(station));
+    if (epoch === stationEpoch && selectedStation === station && result.station === station)
+      $("metadata-result").textContent = result.reason + (result.sample ? " · " + result.sample : "");
+  } catch(e) { if (epoch === stationEpoch) $("metadata-result").textContent = "Metadatenprüfung fehlgeschlagen: " + e.message; }
   finally { $("metadata-probe").disabled = false; }
 });
 async function updateSong() {
+  const station = selectedStation;
+  const epoch = stationEpoch;
+  const requestEpoch = ++songRequestEpoch;
   try {
     const info = await api("playback-status");
     const details = info.details;
     const title = details?.title;
     const artist = details?.artist;
-    const isRadio = ["wdr2","1live","swr3"].includes(selectedStation);
+    const isRadio = ["wdr2","1live","swr3"].includes(station);
     let external = null;
     if (isRadio) {
-      try { const item = await api("now-playing?station=" + encodeURIComponent(selectedStation));
-        if (item.status === "available") external = item;
+      try { const item = await api("now-playing?station=" + encodeURIComponent(station));
+        if (item.status === "available" && item.station === (station === "wdr2" ? "WDR 2" : station === "1live" ? "1LIVE" : "SWR3")) external = item;
       } catch (_) { /* Keep Alexa media attributes when station lookup fails. */ }
     }
-    const stationName = selectedStation ? STATIONS.find(s => s[0] === selectedStation)?.[1] : null;
+    if (stationEpoch !== epoch || songRequestEpoch !== requestEpoch || station !== selectedStation) return;
+    const stationName = station ? STATIONS.find(s => s[0] === station)?.[1] : null;
     $("current-title").textContent = stationName || title || "Kein Sender ausgewählt";
     const hasSong = Boolean(external?.title && external?.artist);
     const alexaSong = !isRadio && title && artist;
@@ -69,7 +78,7 @@ async function updateSong() {
     } else { cover.hidden = true; cover.removeAttribute("src"); }
     $("playback-state").textContent = info.playing ? "Wiedergabe aktiv" :
       "Alexa meldet derzeit keine aktive Wiedergabe" ;
-  } catch(e) { $("playback-state").textContent = "Wiedergabestatus nicht verfügbar: " + e.message; }
+  } catch(e) { if (stationEpoch === epoch && songRequestEpoch === requestEpoch) $("playback-state").textContent = "Wiedergabestatus nicht verfügbar: " + e.message; }
 }
 setInterval(updateSong, 30000);
 const previous = new Map();
@@ -85,6 +94,12 @@ for (const [id,name] of STATIONS) {
     try {
       await api("radio_direct", {station:id});
       selectedStation = id;
+      stationEpoch++;
+      songRequestEpoch++;
+      $("metadata-result").textContent = "Metadaten für " + name + " werden neu geladen.";
+      $("current-artist").textContent = "Aktuelle Programminformation wird geladen …";
+      $("current-cover").hidden = true;
+      $("current-cover").removeAttribute("src");
       $("current-title").textContent = name;
       $("now-ticker").hidden = true;
       $("now-ticker-text").textContent = "";
