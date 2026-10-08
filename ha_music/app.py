@@ -30,6 +30,9 @@ CARD_INSTALLED_FILE = Path("/data/dashboard_card_installed")
 STARTED_AT = None
 RESTORE_GENERATION = 0
 RADIO_MONITOR_STOP = threading.Event()
+STANDBY = threading.Event()
+STANDBY_UNTIL = 0.0
+LAST_POWER = "off"
 RADIO_PLAYERS = ("media_player.wohnung", "media_player.wohnzimmer", "media_player.kueche", "media_player.bad")
 LOCK = threading.Lock()
 def integration_inventory():
@@ -225,35 +228,61 @@ def radio_start_sequence(generation):
         print(f"[HA Music] Startup sequence failed: {exc}", flush=True)
 
 
+def enter_standby(generation):
+    """Gracefully stop all outgoing traffic 10 seconds after switch-off."""
+    global LAST_POWER
+    if generation != RESTORE_GENERATION or LAST_POWER != "off":
+        return
+    MONITOR.select("")
+    STANDBY.set()
+    print("[HA Music] Standby active: outgoing requests disabled", flush=True)
+
+
 def radio_switch_monitor():
-    """Track all changes to the HA switch, including external automations."""
-    global RESTORE_GENERATION, STARTED_AT
+    """Only poll switch while active; no external wake-up in strict standby."""
+    global RESTORE_GENERATION, STARTED_AT, LAST_POWER, STANDBY_UNTIL
     last_power = None
     while not RADIO_MONITOR_STOP.is_set():
+        if STANDBY.is_set():
+            RADIO_MONITOR_STOP.wait(1)
+            continue
         try:
             state = state_snapshot().get(RADIO_SWITCH, {}).get("state")
             if state in ("on", "off") and state != last_power:
                 last_power = state
+                LAST_POWER = state
                 with LOCK:
                     RESTORE_GENERATION += 1
                     generation = RESTORE_GENERATION
                 if state == "on":
+                    STANDBY_UNTIL = 0
                     STARTED_AT = time.monotonic()
-                    # Clear stale readiness from a previous add-on process.
                     set_radio_ready(False)
                     threading.Thread(target=radio_start_sequence,
                                      args=(generation,), daemon=True).start()
                 else:
                     STARTED_AT = None
+                    STANDBY_UNTIL = time.monotonic() + 10
                     MONITOR.select("")
-                    # Mirror old off-delay, but cancel a pending start immediately.
-                    time.sleep(10)
-                    if generation == RESTORE_GENERATION:
+                    # Clear HA ready state after the old ten-second grace period.
+                    def finish_off():
+                        if not wait_for_off(generation, 10):
+                            return
                         set_radio_ready(False)
+                        enter_standby(generation)
+                    threading.Thread(target=finish_off, daemon=True).start()
                 print(f"[HA Music] Radio switch detected: {state}", flush=True)
         except (RuntimeError, HTTPError, URLError, ValueError) as exc:
             print(f"[HA Music] Radio monitor retry: {exc}", flush=True)
         RADIO_MONITOR_STOP.wait(3)
+
+
+def wait_for_off(generation, seconds):
+    for _ in range(seconds):
+        if generation != RESTORE_GENERATION or LAST_POWER != "off":
+            return False
+        time.sleep(1)
+    return generation == RESTORE_GENERATION and LAST_POWER == "off"
 
 
 def options():
@@ -264,6 +293,8 @@ def options():
         return {}
 
 def ha_request(path, payload=None):
+    if STANDBY.is_set():
+        raise RuntimeError("HA Music standby: outbound network disabled")
     if not TOKEN:
         raise RuntimeError("Home Assistant API token unavailable")
     data = json.dumps(payload).encode() if payload is not None else None
@@ -352,6 +383,12 @@ def state_snapshot():
     return {s["entity_id"]:s for s in states if isinstance(s,dict) and isinstance(s.get("entity_id"),str)}
 
 def radio_state():
+    if STANDBY.is_set():
+        return {"power":"off", "ready":"off", "standby":True, "last_station":last_selected_station(),
+                "selected_view":selected_view(), "startup_remaining":None,
+                "dashboard_card_installed":dashboard_card_installed(),
+                "show_dashboard_setup":options().get("show_dashboard_setup", False) is True,
+                "stations":[{"id":key,"name":item["name"],"available":False} for key,item in DIRECT_STATIONS.items()]}
     states = state_snapshot()
     return {"power":states.get(RADIO_SWITCH,{}).get("state","unavailable"),
             "ready":states.get(RADIO_READY,{}).get("state","unavailable"),
@@ -470,6 +507,8 @@ class Handler(BaseHTTPRequestHandler):
             return self.reply(200, {"radio": "direct_playback_pending",
                                     "apple_music": "planned", "backend": "connected" if TOKEN else "unavailable"})
         if name == "events" and "/api/" in path:
+            if STANDBY.is_set():
+                return self.reply(503, {"error":"Standby"})
             self.send_response(200)
             self.send_header("Content-Type", "text/event-stream; charset=utf-8")
             self.send_header("Cache-Control", "no-cache, no-transform")
@@ -495,11 +534,15 @@ class Handler(BaseHTTPRequestHandler):
             except (RuntimeError, HTTPError, URLError, ValueError) as exc:
                 return self.reply(503, {"error": str(exc)})
         if name == "playback-status" and "/api/" in path:
+            if STANDBY.is_set():
+                return self.reply(503, {"error":"Standby"})
             try:
                 return self.reply(200, playback_status())
             except (RuntimeError, HTTPError, URLError, ValueError) as exc:
                 return self.reply(503, {"error": str(exc)})
         if name == "players" and "/api/" in path:
+            if STANDBY.is_set():
+                return self.reply(503, {"error":"Standby"})
             try:
                 inventory = integration_inventory()
                 classified = classify_devices()
@@ -539,7 +582,17 @@ class Handler(BaseHTTPRequestHandler):
                 mark_dashboard_card_installed()
             elif action == "selected_view":
                 save_selected_view(body.get("view"))
+            elif action == "radio_power" and body.get("on") is True and STANDBY.is_set():
+                # A local HA Music click is the only permitted wake-up.
+                STANDBY.clear()
+                try:
+                    perform(action, body)
+                except Exception:
+                    STANDBY.set()
+                    raise
             else:
+                if STANDBY.is_set():
+                    raise ValueError("Radio ist im Standby; zuerst einschalten")
                 perform(action, body)
             if action == "radio_direct":
                 MONITOR.select(body["station"])
