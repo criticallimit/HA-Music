@@ -31,18 +31,6 @@ let selectedStation = "";
 let stationEpoch = 0;
 let songRequestEpoch = 0;
 let songRequestRunning = false;
-$("metadata-probe").addEventListener("click", async () => {
-  if (!selectedStation) { $("metadata-result").textContent = "Zuerst einen Radiosender auswählen."; return; }
-  const station = selectedStation;
-  const epoch = stationEpoch;
-  $("metadata-probe").disabled = true;
-  $("metadata-result").textContent = "Prüfung läuft …";
-  try { const result = await api("metadata-probe?station=" + encodeURIComponent(station));
-    if (epoch === stationEpoch && selectedStation === station && result.station === station)
-      $("metadata-result").textContent = result.reason + (result.sample ? " · " + result.sample : "");
-  } catch(e) { if (epoch === stationEpoch) $("metadata-result").textContent = "Metadatenprüfung fehlgeschlagen: " + e.message; }
-  finally { $("metadata-probe").disabled = false; }
-});
 async function updateSong() {
   if (songRequestRunning) return;
   songRequestRunning = true;
@@ -116,7 +104,6 @@ for (const [id,name] of STATIONS) {
       selectedStation = id;
       stationEpoch++;
       songRequestEpoch++;
-      $("metadata-result").textContent = "Metadaten für " + name + " werden neu geladen.";
       $("current-artist").textContent = "Aktuelle Programminformation wird geladen …";
       $("current-cover").hidden = true;
       $("current-cover").removeAttribute("src");
