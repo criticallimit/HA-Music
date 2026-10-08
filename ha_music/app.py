@@ -8,7 +8,7 @@ import json
 import os
 import re
 import threading
-from metadata import now_playing, probe_icy, ICY_STREAMS
+from metadata import now_playing, probe_icy
 
 WEB = (Path(__file__).parent / "web").resolve()
 PORT = int(os.environ.get("PORT", "8099"))
@@ -164,19 +164,6 @@ def playback_status():
 
 
 def perform(action, body):
-    if action == "stream_test":
-        # Diagnostic only: do not change the regular seven radio presets.
-        station = body.get("station")
-        if station != "wdr2":
-            raise ValueError("Der direkte Streamtest ist zunächst nur für WDR 2 freigegeben")
-        target = "media_player.wohnzimmer"
-        states = state_snapshot()
-        if target not in states or states[target].get("state") in ("unknown", "unavailable"):
-            raise ValueError("Wohnzimmer ist derzeit nicht verfügbar")
-        return ha_request("/services/media_player/play_media", {
-            "entity_id": target, "media": {
-                "media_content_id": ICY_STREAMS[station],
-                "media_content_type": "music", "metadata": {}}})
     if action == "radio_direct":
         key = body.get("station")
         if not isinstance(key,str) or key not in DIRECT_STATIONS:
@@ -275,7 +262,7 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         path = unquote(urlsplit(self.path).path)
         action = path.rsplit("/", 1)[-1]
-        if "/api/" not in path or action not in ("volume", "radio_direct", "radio_power", "stream_test"):
+        if "/api/" not in path or action not in ("volume", "radio_direct", "radio_power"):
             return self.reply(404, {"error": "Not found"})
         try:
             size = int(self.headers.get("Content-Length", "0"))
