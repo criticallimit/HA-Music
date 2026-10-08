@@ -16,6 +16,8 @@ ICY_WORKERS = {}
 ICY_LAST_REQUEST = {}
 ICY_IDLE_LIMIT = 45
 ICY_MAX_AGE = 30
+ICY_STOP = threading.Event()
+ICY_CONNECTIONS = {}
 
 def parse_icy_title(value):
     value = (value or "").strip()
@@ -43,6 +45,19 @@ def _icy_blocks(station):
     req = Request(ICY_STREAMS[station], headers={
         "User-Agent": "HA-Music/0.0.3", "Icy-MetaData": "1"})
     with urlopen(req, timeout=8) as stream:
+        with LOCK:
+            if ICY_STOP.is_set():
+                return
+            ICY_CONNECTIONS[station] = stream
+        try:
+            yield from _icy_stream_blocks(stream)
+        finally:
+            with LOCK:
+                if ICY_CONNECTIONS.get(station) is stream:
+                    ICY_CONNECTIONS.pop(station, None)
+
+
+def _icy_stream_blocks(stream):
         value = stream.headers.get("icy-metaint", "")
         if not value.isdigit() or not 0 < int(value) <= 131072:
             raise ValueError("ICY-Metadatenintervall nicht verfügbar")
@@ -63,7 +78,7 @@ def _icy_blocks(station):
 
 def _icy_worker(station):
     retry = 2
-    while True:
+    while not ICY_STOP.is_set():
         with LOCK:
             if time.monotonic() - ICY_LAST_REQUEST.get(station, 0) > ICY_IDLE_LIMIT:
                 return
@@ -78,10 +93,29 @@ def _icy_worker(station):
                 retry = 2
         except (OSError, ValueError, EOFError):
             pass
-        time.sleep(retry)
+        if ICY_STOP.wait(retry):
+            return
         retry = min(retry * 2, 30)
 
+def stop_icy_workers():
+    ICY_STOP.set()
+    with LOCK:
+        ICY_LAST_REQUEST.clear()
+        streams = list(ICY_CONNECTIONS.values())
+    for stream in streams:
+        try:
+            stream.close()
+        except (OSError, ValueError):
+            pass
+
+
+def resume_icy_workers():
+    ICY_STOP.clear()
+
+
 def ensure_icy_worker(station):
+    if ICY_STOP.is_set():
+        return
     if station not in ICY_STREAMS:
         return
     with LOCK:
@@ -97,7 +131,7 @@ def now_playing(station):
     result = {"station": NAMES.get(station, ""), "title": None, "artist": None,
               "show": None, "kind": "unavailable", "cover": None,
               "status": "unavailable", "source": None}
-    if station not in ICY_STREAMS:
+    if station not in ICY_STREAMS or ICY_STOP.is_set():
         return result
     ensure_icy_worker(station)
     with LOCK:
