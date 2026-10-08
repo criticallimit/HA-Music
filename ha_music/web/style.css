@@ -93,3 +93,31 @@ nav button.active{background:#275276;border-color:#4d8bb8;color:#fff}
 .radio-standby svg{width:clamp(76px,11vw,132px);height:auto;opacity:.76}
 @media(max-width:920px){.radio-standby{min-height:420px}}
 @media(max-width:550px){.radio-standby{min-height:320px}}
+
+/* Dashboard-hosted ingress: use the active HA theme while preserving contrast. */
+html.ha-dashboard-card,html.ha-dashboard-card body{
+  background:var(--primary-background-color,#15171b);
+  color:var(--primary-text-color,#eef2f6);
+}
+html.ha-dashboard-card{
+  --surface:var(--ha-card-background,var(--card-background-color,#20252d));
+  --border:var(--divider-color,#353d48);
+  --text:var(--primary-text-color,#eef2f6);
+  --muted:var(--secondary-text-color,#9caabb);
+  --accent:var(--primary-color,#48a9ec);
+}
+html.ha-dashboard-card .master-volume,
+html.ha-dashboard-card .speaker-list .player-row,
+html.ha-dashboard-card .station,
+html.ha-dashboard-card nav,
+html.ha-dashboard-card .power-buttons button{
+  background:var(--surface);border-color:var(--border);
+  color:var(--text);
+}
+html.ha-dashboard-card .station.active,html.ha-dashboard-card nav button.active{
+  background:var(--accent);color:var(--text);
+  border-color:var(--accent);
+}
+html.ha-dashboard-card .header-radio-state,
+html.ha-dashboard-card .player-row>span:first-child,
+html.ha-dashboard-card .player-row>span:nth-of-type(2){color:var(--muted)}
