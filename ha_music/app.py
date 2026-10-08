@@ -71,7 +71,8 @@ def classify_devices():
     return {"groups": group, "players": rooms, "excluded": excluded}
 
 def allowed_entities():
-    return {p["entity_id"] for p in classify_devices()["players"]}
+    classified = classify_devices()
+    return {p["entity_id"] for p in classified["players"] + classified["groups"]}
 
 def remembered():
     try:
@@ -113,23 +114,6 @@ def ha_request(path, payload=None):
 def players():
     return classify_devices()["players"]
 
-WDR2_STREAM = "https://wdr-wdr2-rheinruhr.icecastssl.wdr.de/wdr/wdr2/rheinruhr/mp3/128/stream.mp3"
-PLAY_MEDIA_FEATURE = 512
-
-def wohnung_group():
-    return next((group for group in classify_devices()["groups"]
-                 if group["name"].strip().casefold() == "wohnung"), None)
-
-def playback_capability():
-    group = wohnung_group()
-    if not group:
-        return {"available": False, "reason": "Gruppe Wohnung nicht gefunden"}
-    supported = bool((group.get("features") or 0) & PLAY_MEDIA_FEATURE)
-    return {"available": supported, "entity_id": group["entity_id"],
-            "state": group["state"], "features": group["features"],
-            "reason": "play_media verfügbar; Streamunterstützung nicht bestätigt" if supported
-                      else "Gruppe unterstützt play_media nicht"}
-
 RADIO_SWITCH = "switch.alexa_alle"
 RADIO_READY = "input_boolean.alexa_hochgefahren"
 # Initial provider phrases copied exactly from the user's existing radio scripts.
@@ -157,6 +141,28 @@ def radio_state():
                         for key,item in DIRECT_STATIONS.items()]}
 
 
+def playback_status():
+    states = state_snapshot()
+    candidates = ("media_player.wohnzimmer", "media_player.wohnung",
+                  "media_player.kueche", "media_player.bad")
+    observed = []
+    for entity in candidates:
+        state = states.get(entity)
+        if not state:
+            continue
+        attrs = state.get("attributes") or {}
+        observed.append({"entity_id": entity, "state": state.get("state","unknown"),
+                         "title": attrs.get("media_title"),
+                         "artist": attrs.get("media_artist"),
+                         "album": attrs.get("media_album_name"),
+                         "image": attrs.get("entity_picture") or attrs.get("media_image_url"),
+                         "content_type": attrs.get("media_content_type")})
+    active = next((p for p in observed if p["state"] == "playing"), None)
+    details = next((p for p in observed if p["title"] or p["artist"]), None)
+    return {"playing": active is not None, "players": observed,
+            "details": active if active and (active["title"] or active["artist"]) else details}
+
+
 def perform(action, body):
     if action == "radio_direct":
         key = body.get("station")
@@ -179,15 +185,6 @@ def perform(action, body):
         if RADIO_SWITCH not in states or states[RADIO_SWITCH].get("state") in ("unavailable", "unknown"):
             raise ValueError("Radioschalter nicht verfügbar")
         return ha_request("/services/switch/" + ("turn_on" if turn_on else "turn_off"), {"entity_id": RADIO_SWITCH})
-    if action in ("test_wdr2", "test_tunein_wdr2"):
-        capability = playback_capability()
-        if not capability["available"]:
-            raise ValueError(capability["reason"])
-        return ha_request("/services/media_player/play_media", {
-            "entity_id": capability["entity_id"],
-            "media_content_type": "TUNEIN" if action == "test_tunein_wdr2" else "music",
-            "media_content_id": "WDR 2" if action == "test_tunein_wdr2" else WDR2_STREAM,
-        })
     if action == "volume":
         entity = body.get("entity_id", "")
         level = body.get("volume")
@@ -196,7 +193,7 @@ def perform(action, body):
         if entity not in allowed_entities():
             raise ValueError("Media Player nicht freigegeben")
         found = next((x for x in players() if x["entity_id"] == entity), None)
-        if not found:
+        if not found and not any(x["entity_id"] == entity for x in classify_devices()["groups"]):
             raise ValueError("Media Player nicht gefunden")
         result = ha_request("/services/media_player/volume_set", {"entity_id": entity, "volume_level": level})
         if level > 0: save_remembered(entity, level)
@@ -228,9 +225,9 @@ class Handler(BaseHTTPRequestHandler):
                 return self.reply(200, radio_state())
             except (RuntimeError, HTTPError, URLError, ValueError) as exc:
                 return self.reply(503, {"error": str(exc)})
-        if name == "playback-check" and "/api/" in path:
+        if name == "playback-status" and "/api/" in path:
             try:
-                return self.reply(200, playback_capability())
+                return self.reply(200, playback_status())
             except (RuntimeError, HTTPError, URLError, ValueError) as exc:
                 return self.reply(503, {"error": str(exc)})
         if name == "players" and "/api/" in path:
@@ -259,7 +256,7 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         path = unquote(urlsplit(self.path).path)
         action = path.rsplit("/", 1)[-1]
-        if "/api/" not in path or action not in ("volume", "test_wdr2", "test_tunein_wdr2", "radio_direct", "radio_power"):
+        if "/api/" not in path or action not in ("volume", "radio_direct", "radio_power"):
             return self.reply(404, {"error": "Not found"})
         try:
             size = int(self.headers.get("Content-Length", "0"))
