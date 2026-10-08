@@ -53,3 +53,30 @@ footer{font-size:11px;color:#717781;margin-top:12px}
 .now.radio-selected .art img:not([hidden]){width:100%;height:100%;object-fit:contain;object-position:center;padding:clamp(22px,5%,46px)}
 .now:not(.radio-selected) .art img:not([hidden]){padding:0;object-fit:contain}
 .now.radio-selected .art-placeholder{display:none}
+
+/* Alignment and playback artwork corrections */
+.now{border-radius:24px}
+.now:not(.radio-selected) .art{background:#17191d}
+.now:not(.radio-selected) .art img:not([hidden]){object-fit:cover;object-position:center;width:100%;height:100%;padding:0}
+.now.radio-selected .art{background:#fff}
+.now.radio-selected .art img:not([hidden]){object-fit:contain;width:100%;height:100%;padding:3%;background:#fff}
+.now.radio-selected .now-overlay{background:linear-gradient(to bottom,transparent,rgba(35,35,38,.46) 44%,rgba(32,32,34,.6));padding-bottom:16px}
+.now-overlay{bottom:0;border-radius:0 0 24px 24px}
+.now-description{height:auto;max-height:100px}
+#playback-state{display:none!important}
+.power-buttons button{border:1px solid #363941;box-shadow:0 3px 10px rgba(0,0,0,.35);transition:background .15s ease}
+.power-buttons button:not(:disabled):hover{background:#2b323a}
+.player-row{grid-template-columns:36px minmax(0,1fr) 47px;column-gap:12px;row-gap:9px}
+.player-row>span:first-child{grid-column:1/-1;grid-row:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.player-row button{grid-column:1;grid-row:2;position:static;justify-self:center;width:34px;height:34px;border-radius:9px;background:#242c35;padding:0;font-size:0;display:flex;align-items:center;justify-content:center;color:#b3d0df;border:1px solid #3d4853}
+.player-row button::after{content:"🔊";font-size:19px;line-height:1}
+.player-row button.is-muted::after{content:"🔇"}
+.player-row button:not(:disabled):hover{background:#364a5a}
+.player-row input{grid-column:2;grid-row:2;padding:0;margin:0;width:100%;min-width:0;height:24px;accent-color:#18a3df}
+.player-row>span:nth-of-type(2){grid-column:3;grid-row:2;min-width:0;text-align:right}
+.station{border-radius:20px;transition:background .15s,border-color .15s}
+.station:not(:disabled):hover{background:#293540}
+.station-icon{font-size:38px;color:#598cbb}
+.station.active{background:linear-gradient(145deg,#213b51,#246182);border-color:#4ebdfb}
+.station.active .station-icon{color:#ffb923}
+@media(max-width:920px){.speaker-list .player-row{grid-template-columns:32px minmax(0,1fr) 42px;column-gap:7px}}
