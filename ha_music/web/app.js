@@ -17,21 +17,32 @@ async function api(path, data) {
 }
 let ready = false;
 let selectedStation = "";
+let testRunning = false;
+function testResult(message, error = false) {
+  const element = $("test-result");
+  element.textContent = message;
+  element.dataset.status = error ? "error" : "info";
+}
 $("test-wdr2").addEventListener("click", async () => {
-  const button = $("test-wdr2");
   if (!confirm("WDR 2 jetzt auf der Alexa-Gruppe Wohnung starten? Eine laufende Wiedergabe kann unterbrochen werden.")) return;
+  testRunning = true;
+  const button = $("test-wdr2");
   button.disabled = true;
+  testResult("WDR-2-Test läuft …");
   try {
     await api("test_wdr2", {});
-    $("test-info").textContent = "Testbefehl gesendet. Bitte prüfen, ob alle Gruppenlautsprecher synchron Radio spielen.";
+    testResult("Home Assistant hat den Wiedergabebefehl ohne API-Fehler angenommen. Ob auf Wohnung tatsächlich Audio abgespielt wird, ist damit noch nicht bestätigt.");
   } catch(e) {
-    $("test-info").textContent = "Test fehlgeschlagen: " + e.message;
-  } finally { await checkPlayback(); }
+    testResult("Wiedergabetest fehlgeschlagen: " + e.message, true);
+  } finally {
+    testRunning = false;
+    await checkPlayback();
+  }
 });
 async function checkPlayback() {
   try {
     const result = await api("playback-check");
-    $("test-wdr2").disabled = !result.available;
+    $("test-wdr2").disabled = testRunning || !result.available;
     $("test-info").textContent = result.reason + (result.entity_id ? " (" + result.entity_id + ")" : "");
   } catch (e) {
     $("test-wdr2").disabled = true;
