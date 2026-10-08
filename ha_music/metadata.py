@@ -8,7 +8,7 @@ import threading
 import time
 
 URLS = {
-    "wdr2": "https://www1.wdr.de/radio/wdr2/musik/playlist/titelsuche-playlist-wdrzwei-100.html",
+    "wdr2": "https://www1.wdr.de/radio/wdr2",
     "wdr4": "https://www1.wdr.de/radio/wdr4/musik/playlist/",
     "1live": "https://www1.wdr.de/radio/1live/musik/playlist/",
 }
