@@ -275,13 +275,11 @@ async function loadRadioState() {
     const label = data.power === "on" && data.ready !== "on" ? "Radio startet …" :
       data.power === "on" ? "Radio eingeschaltet" :
       data.power === "off" ? "Radio ausgeschaltet" : "Radio nicht verfügbar";
-    $("radio-state").textContent = label;
     $("radio-standby-text").textContent = label;
     $("power-on").disabled = data.power === "on" || data.power === "unavailable";
     $("power-off").disabled = data.power === "off" || data.power === "unavailable";
   } catch(e) {
     displayRadioReadiness(false);
-    $("radio-state").textContent = "Radiozustand nicht verfügbar: " + e.message;
     $("radio-standby-text").textContent = "Radio nicht verfügbar";
     for (const button of stationButtons.values()) button.disabled = true;
   }
