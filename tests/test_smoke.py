@@ -84,19 +84,22 @@ assert metadata.parse_recent_playlist("swr3", swr, now + timedelta(minutes=15))[
 assert "einslive-playlist-100.html" in metadata.URLS["1live"]
 
 # Stream probing is constrained to an explicit allowlist.
-assert metadata.probe_icy('swr3')['supported'] is False
-assert set(metadata.ICY_STREAMS) == {'1live','wdr2'}
+assert set(metadata.ICY_STREAMS) == {'1live','wdr2','swr3'}
+assert metadata.ICY_STREAMS['swr3'].startswith('https://liveradio.swr.de/')
 
 # ICY text is split into artist/title only when a separator is provided.
 assert metadata.parse_icy_title("Sabrina Carpenter - Espresso") == {
     "title":"Espresso", "artist":"Sabrina Carpenter", "show":None, "kind":"song"}
 assert metadata.parse_icy_title("WDR 2 Der Vormittag")["kind"] == "show"
-# Station-scoped cache keeps ICY data from bleeding into another station.
-with patch.object(metadata, "probe_icy", side_effect=lambda station: {
-    "station":station, "supported":True,
-    "sample":"Artist A - Song A" if station == "wdr2" else "Artist B - Song B"}):
-    with patch.object(metadata, "CACHE", {}):
+# Persistent per-station metadata must not leak across programmes.
+with patch.object(metadata, "ensure_icy_worker"):
+    with patch.object(metadata, "ICY_LATEST", {
+        "wdr2": (metadata.time.monotonic(), "Artist A - Song A"),
+        "1live": (metadata.time.monotonic(), "Artist B - Song B"),
+        "swr3": (metadata.time.monotonic(), "SWR3 Nachrichten"),
+    }):
         assert metadata.now_playing("wdr2")["title"] == "Song A"
         assert metadata.now_playing("1live")["title"] == "Song B"
+        assert metadata.now_playing("swr3")["show"] == "SWR3 Nachrichten"
 
 assert metadata.parse_icy_title('WDR 2 Hotline: 0800 5678 222')['show'] == 'WDR 2 Hotline: 0800 5678 222'
