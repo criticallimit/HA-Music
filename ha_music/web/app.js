@@ -50,7 +50,7 @@ async function refresh() {
     const {players,remembered,groups} = await api("players");
     $("groups").textContent = groups.length ? "Mögliche Alexa-Gruppen: " + groups.map(p=>p.name).join(", ") + " (Mitgliedschaft nicht verifiziert)" : "Keine Alexa-Multiroom-Gruppe in den sichtbaren Media-Player-Zuständen erkannt.";
     const wrap = $("players"); wrap.replaceChildren();
-    if (!players.length) { wrap.textContent = "Keine eindeutig benannten Echo/Alexa-Media-Player erkannt. Die Zuordnung über die Geräte-Registrierung folgt."; return; }
+    if (!players.length) { wrap.textContent = "Die Alexa-Devices-Integration stellt derzeit keine Media-Player-Entitäten bereit. Bitte in Home Assistant prüfen, ob sie aktiviert sind."; return; }
     for (const p of players) {
       const row = document.createElement("div"); row.className = "player-row";
       const title = document.createElement("span"); title.textContent = p.name + " (" + p.state + ")";
