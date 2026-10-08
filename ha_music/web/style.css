@@ -78,3 +78,9 @@ nav button.active{background:#275276;border-color:#4d8bb8;color:#fff}
  .stations{grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
  .station{min-height:90px}
 }
+
+/* Visible labels distinguish the two power actions without relying on color. */
+.power-buttons button{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px}
+.power-buttons .power-icon{display:block;font-size:25px;line-height:1}
+.power-buttons .power-label{display:block;font-size:10px;line-height:1.2;font-weight:650;letter-spacing:.02em;color:#d2dae4}
+@media(max-width:550px){.power-buttons .power-icon{font-size:21px}.power-buttons .power-label{font-size:9px}}
