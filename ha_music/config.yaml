@@ -18,5 +18,7 @@ hassio_api: true
 map:
   - type: homeassistant_config
     read_only: false
-options: {}
-schema: {}
+options:
+  show_dashboard_setup: false
+schema:
+  show_dashboard_setup: bool
