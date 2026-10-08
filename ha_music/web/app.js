@@ -20,6 +20,8 @@ let selectedStation = "";
 let stationEpoch = 0;
 let songRequestEpoch = 0;
 let songRequestRunning = false;
+let awaitingStationLogo = false;
+let logoRetryUntil = 0;
 const lastStationMetadata = new Map();
 const METADATA_GRACE_MS = 90000;
 const metadataInFlight = new Set();
@@ -83,8 +85,13 @@ async function updateSong() {
     const image = details?.image;
     const cover = $("current-cover");
     if (image && (image.startsWith("/") || image.startsWith("https://"))) {
-      cover.src = image; cover.hidden = false;
-    } else { cover.hidden = true; cover.removeAttribute("src"); }
+      if (cover.getAttribute("src") !== image) cover.src = image;
+      cover.hidden = false;
+      awaitingStationLogo = false;
+    } else if (awaitingStationLogo) {
+      cover.hidden = true;
+      cover.removeAttribute("src");
+    }
     $("playback-state").textContent = info.playing ? "Wiedergabe aktiv" : "Alexa meldet derzeit keine aktive Wiedergabe";
   } catch(e) {
     if (stationEpoch === epoch) $("playback-state").textContent = "Wiedergabestatus nicht verfügbar: " + e.message;
@@ -92,6 +99,10 @@ async function updateSong() {
 }
 setInterval(updateRadioMetadata, 5000);
 setInterval(updateSong, 30000);
+// Recheck Alexa artwork promptly after a station change, then return to normal polling.
+setInterval(() => {
+  if (awaitingStationLogo && Date.now() < logoRetryUntil) updateSong();
+}, 3000);
 const previous = new Map();
 function status(text) { $("message").textContent = text; }
 const stationButtons = new Map();
@@ -107,12 +118,15 @@ for (const [id,name] of STATIONS) {
       selectedStation = id;
       stationEpoch++;
       songRequestEpoch++;
+      awaitingStationLogo = true;
+      logoRetryUntil = Date.now() + 45000;
       $("current-artist").textContent = "Aktuelle Programminformation wird geladen …";
       $("current-cover").hidden = true;
       $("current-cover").removeAttribute("src");
       $("current-title").textContent = name;
       $("now-ticker").hidden = true;
       $("now-ticker-text").textContent = "";
+      updateSong();
       setTimeout(updateSong, 2500);
       updateRadioMetadata();
       if (["wdr2","1live","swr3"].includes(id)) setTimeout(updateRadioMetadata, 3000);
