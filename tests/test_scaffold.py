@@ -37,3 +37,17 @@ assert 'async function updateSong()' in js
 assert 'id="metadata-probe"' not in html
 assert 'id="stream-test"' not in html
 assert 'stream_test' not in source
+
+# A single shared monitor serves all browser clients; the frontend subscribes to SSE.
+backend = (root / "ha_music/metadata_feed.py").read_text()
+assert "class MetadataMonitor" in backend
+assert "ensure_icy_worker(station)" in backend
+assert "self.sequence += 1" in backend
+assert 'name == "events"' in source
+assert "MONITOR.select(body" in source
+assert 'new EventSource("api/events")' in js
+assert "if (!isRadio)" in js and "details?.image" in js
+assert "metadata_feed.py" in dockerfile
+# Station pictures must never be overwritten by delayed Alexa radio artwork.
+assert "if (!isRadio) {\n      const cover" in js
+print("Radio event-stream and Amazon artwork contracts passed")
