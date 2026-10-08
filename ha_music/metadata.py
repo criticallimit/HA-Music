@@ -111,8 +111,9 @@ def parse_1live_player(html):
     if len(part) != 2:
         return {"title": None, "artist": None, "show": None, "kind": "unavailable"}
     section = part[1].split("Ausführliche Playlist", 1)[0]
-    # The headline appears after the stream links, before the recent timed list.
-    match = re.search(r"(?:mehr\\s+)?([^<>]{2,80}?)\\s+-\\s+([^<>]{2,100}?)(?=\\s+(?:Image:|\\d{1,2}[.:]\\d{2}\\s|Ausführliche Playlist|$))", section)
+    # Discard the stream-link text; the last "mehr" precedes the player title.
+    header = section.split("Image:", 1)[0].rsplit("mehr", 1)[-1].strip()
+    match = re.fullmatch(r"(.{2,80}?)\\s+-\\s+(.{2,100}?)", header)
     if not match:
         return {"title": None, "artist": None, "show": None, "kind": "unavailable"}
     artist, title = match.group(1).strip(), match.group(2).strip()
