@@ -421,6 +421,20 @@ def radio_start_sequence(generation):
     global READY, STARTUP_ERROR, STARTED_AT
     try:
         startup_request(generation, "/services/input_boolean/turn_off", {"entity_id": RADIO_READY})
+        selected = enabled_device_ids()
+        station = last_selected_station()
+        preferred = DIRECT_STATIONS[station]["target"] if station else "media_player.wohnung"
+        reload_target = preferred if preferred in selected else next(iter(sorted(selected)), None)
+        if reload_target:
+            print(f"[HA Music] Reloading Alexa integration via {reload_target}", flush=True)
+            try:
+                startup_request(generation, "/services/homeassistant/reload_config_entry",
+                                {"entity_id": reload_target})
+            except StartupCancelled:
+                raise
+            except NETWORK_ERRORS as exc:
+                raise RuntimeError(f"Alexa-Integration konnte nicht neu geladen werden: {exc}") from exc
+            print("[HA Music] Alexa integration reload completed; waiting 50 seconds", flush=True)
         if not wait_for_start(generation, 50):
             return
         if state_snapshot().get(RADIO_SWITCH, {}).get("state") != "on":
@@ -544,7 +558,8 @@ def ha_request(path, payload=None, *, supervisor=False):
         "Authorization": "Bearer " + TOKEN,
         "Content-Type": "application/json",
     }, method="POST" if payload is not None else "GET")
-    with urlopen(req, timeout=8) as response:
+    timeout = 30 if path == "/services/homeassistant/reload_config_entry" else 8
+    with urlopen(req, timeout=timeout) as response:
         with RESPONSE_LOCK:
             if STANDBY.is_set():
                 raise RuntimeError("HA Music standby: response cancelled")

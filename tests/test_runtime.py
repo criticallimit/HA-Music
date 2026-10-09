@@ -75,6 +75,45 @@ class RuntimeTests(unittest.TestCase):
         self.assertTrue(all(c["volume_level"] == 0 for c in volumes if c["entity_id"].endswith("kueche")))
         self.assertEqual(app.speaker_levels()["media_player.wohnzimmer"], 0.4)
 
+    def test_reload_once_before_start_wait_even_with_unavailable_target(self):
+        app.save_selected_station("wdr2")
+        self.states["media_player.wohnzimmer"]["state"] = "unavailable"
+        phases = []
+        def request(path, body=None):
+            phases.append(path)
+            if path.endswith("reload_config_entry"):
+                self.assertEqual(body, {"entity_id": "media_player.wohnzimmer"})
+                self.states["media_player.wohnzimmer"]["state"] = "idle"
+            return {}
+        def wait(generation, seconds):
+            if seconds == 50:
+                self.assertEqual(phases[-1], "/services/homeassistant/reload_config_entry")
+            return True
+        with patch.object(app, "wait_for_start", side_effect=wait), patch.object(app, "state_snapshot", return_value=self.states), patch.object(app, "allowed_entities", return_value={"media_player.wohnung", "media_player.wohnzimmer"}), patch.object(app, "ha_request", side_effect=request):
+            app.radio_start_sequence(10)
+        self.assertTrue(app.READY)
+        self.assertEqual(phases.count("/services/homeassistant/reload_config_entry"), 1)
+
+    def test_reload_failure_blocks_probe_station_and_ready(self):
+        def request(path, body=None):
+            if path.endswith("reload_config_entry"):
+                raise TimeoutError("Reload timed out")
+            return {}
+        calls = self.startup(request).call_args_list
+        self.assertFalse(app.READY)
+        self.assertIn("Alexa-Integration konnte nicht neu geladen", app.STARTUP_ERROR)
+        self.assertEqual([c.args[0] for c in calls], ["/services/input_boolean/turn_off", "/services/homeassistant/reload_config_entry"])
+
+    def test_cancel_during_reload_stops_wait_and_all_later_commands(self):
+        def request(path, body=None):
+            if path.endswith("reload_config_entry"):
+                app.transition_power(False)
+            return {}
+        calls = self.startup(request).call_args_list
+        self.assertFalse(app.READY)
+        self.assertIsNone(app.STARTUP_ERROR)
+        self.assertEqual([c.args[0] for c in calls], ["/services/input_boolean/turn_off", "/services/homeassistant/reload_config_entry"])
+
     def test_failed_station_restores_but_never_marks_ready(self):
         app.save_selected_station("wdr2")
         def request(path, body=None):
@@ -157,7 +196,7 @@ class RuntimeTests(unittest.TestCase):
             if path.endswith("update_entity"):
                 app.transition_power(False)
         calls = self.startup(request).call_args_list
-        self.assertEqual([c.args[0] for c in calls], ["/services/input_boolean/turn_off", "/services/homeassistant/update_entity"])
+        self.assertEqual([c.args[0] for c in calls], ["/services/input_boolean/turn_off", "/services/homeassistant/reload_config_entry", "/services/homeassistant/update_entity"])
         self.assertFalse(app.READY)
 
     def test_no_stored_station_does_not_play(self):
