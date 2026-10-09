@@ -121,7 +121,7 @@ async function controlTrack(command) {
     renderGroupTransport();
     if (generation === uiGeneration && radioReadyForViews) {
       await loadRadioState();
-      updateSong();
+      await updateSong();
     }
   }
 }

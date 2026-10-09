@@ -1056,18 +1056,22 @@ def track_transport_state(states):
 
 
 def playback_status():
-    states = state_snapshot()
+    states = state_snapshot(fresh=True)
     with STATE_LOCK:
         target = ACTIVE_APPLE["target"] if ACTIVE_APPLE else "media_player.wohnzimmer"
+        apple = ACTIVE_APPLE is not None
         for entity, confirmation in list(VOLUME_CONFIRMATION.items()):
             entry = states.get(entity, {})
             observed_volume = (entry.get("attributes") or {}).get("volume_level")
             if entry.get("state") not in ("unknown", "unavailable") and type(observed_volume) in (int, float) and abs(observed_volume - confirmation["expected"]) <= 0.011:
                 VOLUME_CONFIRMATION.pop(entity, None)
         volume_confirmation = deepcopy(VOLUME_CONFIRMATION)
-    candidates = sorted(enabled_device_ids(), key=lambda entity: (entity != target, entity))
+    candidates = dict.fromkeys((target, "media_player.wohnung", *enabled_device_ids()))
+    selected = enabled_device_ids()
     observed = []
     for entity in candidates:
+        if entity not in selected:
+            continue
         state = states.get(entity)
         if not state:
             continue
@@ -1076,20 +1080,27 @@ def playback_status():
                          "title": attrs.get("media_title"),
                          "artist": attrs.get("media_artist"),
                          "album": attrs.get("media_album_name"),
-                         "image": attrs.get("entity_picture") or attrs.get("media_image_url"),
+                         "image": attrs.get("media_image_url") or attrs.get("entity_picture"),
                          "content_type": attrs.get("media_content_type")})
+    track_transport = track_transport_state(states)
     active = next((p for p in observed if p["state"] == "playing"), None)
     details = next((p for p in observed if p["title"] or p["artist"]), None)
     if RECOVERED_SESSION:
         # Idle devices may still carry another session's old title/artwork.
         details = active or next((p for p in observed if p["state"] == "paused"), None)
+    if apple:
+        # Read one complete snapshot from the player used by Vor/Zurück.
+        # Never fill missing fields from the controller or another room.
+        source = track_transport["entity_id"] or target
+        details = next((p for p in observed if p["entity_id"] == source and p["state"] in ("playing", "paused")), None)
+        active = details if details and details["state"] == "playing" else None
     _, station, payload = MONITOR.snapshot()
     return {"playing": active is not None, "players": observed,
             "radio_metadata": {"station": station, "metadata": payload},
             "transport": group_transport_state(states),
-            "track_transport": track_transport_state(states),
+            "track_transport": track_transport,
             "volume_confirmation":volume_confirmation,
-            "details": active if active and (active["title"] or active["artist"]) else details}
+            "details": details if apple else active if active and (active["title"] or active["artist"]) else details}
 
 
 def play_station(key, generation):
@@ -1178,7 +1189,17 @@ def perform_control(action, body, generation):
                 raise ValueError("Ungültiger Shuffle-Zustand")
             payload["shuffle"] = body["shuffle"]
         service = {"previous":"media_previous_track", "next":"media_next_track", "shuffle":"shuffle_set"}[command]
-        return startup_request(generation, "/services/media_player/" + service, payload)
+        result = startup_request(generation, "/services/media_player/" + service, payload)
+        if command in ("previous", "next"):
+            try:
+                startup_request(generation, "/services/homeassistant/update_entity", {"entity_id":entity})
+            except StartupCancelled:
+                raise
+            except NETWORK_ERRORS as exc:
+                # The track command was accepted: do not report it as failed
+                # or repeat it just because a metadata refresh failed.
+                print(f"[HA Music] Track metadata refresh failed for {entity}: {exc}", flush=True)
+        return result
     if action == "group_transport":
         command = body.get("command")
         if command not in ("play", "pause"):

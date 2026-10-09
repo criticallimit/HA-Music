@@ -461,6 +461,24 @@ test('Apple title and cover use Alexa metadata without changing radio selection'
   assert.equal(h.get('current-cover').hidden,false);
 });
 
+test('next track replaces Apple title artist and artwork together from new playback reply', async () => {
+  const h = harness();
+  let next=false;
+  h.context.reply=async(action)=>{
+    if(action==='track_transport'){next=true;return {ok:true};}
+    return {playing:true,track_transport:{entity_id:'media_player.wohnung',can_next:true},details:next
+      ? {entity_id:'media_player.wohnung',title:'Better Together',artist:'Jack Johnson',image:'https://example.com/new.jpg'}
+      : {entity_id:'media_player.wohnung',title:'Alter Titel',artist:'Alter Künstler',image:'https://example.com/old.jpg'}};
+  };
+  h.run('api=reply; radioReadyForViews=true; activeApple={id:"one",name:"Playlist"}; loadRadioState=async()=>{}');
+  await h.run('updateSong()');
+  assert.equal(h.get('now-ticker-text').textContent,'Alter Künstler – Alter Titel');
+  await h.run('controlTrack("next")');
+  assert.equal(h.get('current-title').textContent,'Better Together');
+  assert.equal(h.get('now-ticker-text').textContent,'Jack Johnson – Better Together');
+  assert.equal(h.get('current-cover').src,'https://example.com/new.jpg');
+});
+
 test('regular playback reply restores radiotext after missing event delivery', async () => {
   const h = harness();
   h.context.reply=async()=>({playing:true,radio_metadata:{station:'wdr2',metadata:{status:'available',title:'Track',artist:'Artist'}}});

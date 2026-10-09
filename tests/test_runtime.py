@@ -85,7 +85,10 @@ class RuntimeTests(unittest.TestCase):
                 expected = {"entity_id":"media_player.wohnung"}
                 if command == "shuffle":
                     expected["shuffle"] = True
-                request.assert_called_once_with("/services/media_player/" + service, expected)
+                self.assertEqual(request.call_args_list[0].args, ("/services/media_player/" + service, expected))
+                self.assertEqual(request.call_count, 1 if command == "shuffle" else 2)
+                if command != "shuffle":
+                    self.assertEqual(request.call_args_list[1].args, ("/services/homeassistant/update_entity", {"entity_id":"media_player.wohnung"}))
                 snapshot.assert_called_once_with(fresh=True)
 
     def test_apple_playlist_shuffle_on_and_off_only_changes_playback_order(self):
@@ -266,6 +269,49 @@ class RuntimeTests(unittest.TestCase):
         self.assertTrue(app.STANDBY.is_set())
         self.assertEqual(app.RESTORE_GENERATION, 10)
         self.assertIsNone(app.session_intent())
+
+    def test_apple_metadata_comes_entirely_from_track_control_group(self):
+        app.ACTIVE_APPLE = {"target":"media_player.wohnzimmer"}
+        self.states["media_player.wohnzimmer"] = {"state":"playing", "attributes":{
+            "media_title":"Alter Titel", "media_artist":"Absolutely Positively", "media_image_url":"/old.jpg"}}
+        self.states["media_player.wohnung"] = {"state":"playing", "attributes":{
+            "supported_features":16 | 32, "media_title":"Better Together", "media_artist":"Jack Johnson",
+            "media_album_name":"In Between Dreams", "media_image_url":"/new.jpg", "entity_picture":"/old-group.jpg"}}
+        with patch.object(app, "state_snapshot", return_value=self.states) as read:
+            status = app.playback_status()
+        read.assert_called_once_with(fresh=True)
+        self.assertEqual(status["details"]["entity_id"], status["track_transport"]["entity_id"])
+        self.assertEqual(status["details"]["entity_id"], "media_player.wohnung")
+        self.assertEqual((status["details"]["title"], status["details"]["artist"], status["details"]["album"], status["details"]["image"]),
+                         ("Better Together", "Jack Johnson", "In Between Dreams", "/new.jpg"))
+
+    def test_apple_missing_group_artist_is_not_filled_from_other_room(self):
+        app.ACTIVE_APPLE = {"target":"media_player.wohnzimmer"}
+        self.states["media_player.wohnzimmer"] = {"state":"playing", "attributes":{"media_artist":"Alter Künstler"}}
+        self.states["media_player.wohnung"] = {"state":"playing", "attributes":{"supported_features":32, "media_title":"Aktueller Titel"}}
+        with patch.object(app, "state_snapshot", return_value=self.states):
+            details = app.playback_status()["details"]
+        self.assertEqual(details["title"], "Aktueller Titel")
+        self.assertIsNone(details["artist"])
+        self.assertIsNone(details["image"])
+
+    def test_apple_metadata_forwards_same_snapshot_artist_without_guessing(self):
+        app.ACTIVE_APPLE = {"target":"media_player.wohnzimmer"}
+        self.states["media_player.wohnzimmer"] = {"state":"playing", "attributes":{"supported_features":32, "media_title":"Titel A", "media_artist":"Gleicher Künstler"}}
+        with patch.object(app, "state_snapshot", return_value=self.states):
+            self.assertEqual(app.playback_status()["details"]["artist"], "Gleicher Künstler")
+            self.states["media_player.wohnzimmer"]["attributes"]["media_title"] = "Titel B"
+            details = app.playback_status()["details"]
+        self.assertEqual((details["title"], details["artist"]), ("Titel B", "Gleicher Künstler"))
+
+    def test_metadata_refresh_failure_does_not_repeat_accepted_next_track(self):
+        app.READY = True
+        self.states["media_player.wohnung"] = {"state":"playing", "attributes":{"supported_features":32}}
+        with patch.object(app, "state_snapshot", return_value=self.states), patch.object(app, "allowed_entities", return_value=app.enabled_device_ids()), patch.object(app, "ha_request", side_effect=[{}, OSError("refresh unavailable")]) as request:
+            app.perform("track_transport", {"command":"next", "entity_id":"media_player.wohnung"})
+        self.assertEqual(request.call_count, 2)
+        self.assertEqual(request.call_args_list[0].args[0], "/services/media_player/media_next_track")
+        self.assertEqual(request.call_args_list[1].args[0], "/services/homeassistant/update_entity")
 
     def test_apple_session_restores_view_without_claiming_old_radio_or_playlist(self):
         app.save_selected_view("apple")
