@@ -74,6 +74,11 @@ let stationPending = false;
 let viewPending = false;
 let powerPending = false;
 let volumeRequests = 0;
+let volumeRevision = 0;
+let masterRoomLevels = {};
+const roomVolumeRows = new Map();
+const requestedRoomVolumes = new Map();
+const ROOM_VOLUME_PREVIEW_MS = 60000;
 let transportPending = false;
 let transportEpoch = 0;
 let groupTransport = null;
@@ -644,6 +649,33 @@ function masterView(groups, saved) {
   const volume = saved?.["media_player.wohnung"] ?? group.volume ?? 0;
   return {...group, volume};
 }
+function previewMasterVolume(level) {
+  const revision = ++volumeRevision;
+  for (const [entity, room] of roomVolumeRows) {
+    if (!(masterRoomLevels[entity] > 0)) continue;
+    requestedRoomVolumes.set(entity, {level, revision, generation:uiGeneration, expires:Date.now()+ROOM_VOLUME_PREVIEW_MS});
+    room.render(level);
+  }
+  return revision;
+}
+function discardMasterPreview(revision) {
+  for (const [entity, request] of requestedRoomVolumes) {
+    if (request.revision !== revision) continue;
+    requestedRoomVolumes.delete(entity);
+    const room = roomVolumeRows.get(entity);
+    if (room) room.render(room.observed);
+  }
+}
+function requestedRoomLevel(p) {
+  const request = requestedRoomVolumes.get(p.entity_id);
+  if (!request) return p.volume;
+  if (request.generation !== uiGeneration || Date.now() >= request.expires ||
+      (typeof p.volume === "number" && Math.abs(p.volume-request.level) < 0.005)) {
+    requestedRoomVolumes.delete(p.entity_id);
+    return p.volume;
+  }
+  return request.level;
+}
 function volumeRow(p, remembered, master) {
   const row = document.createElement("div"); row.className = "player-row";
   const title = document.createElement("span"); title.textContent = (master ? "Master Volume" : p.name + " (" + p.state + ")");
@@ -662,19 +694,42 @@ function volumeRow(p, remembered, master) {
         mute.setAttribute("aria-label", (master ? "Master" : p.name) + (audible ? " stummschalten" : " hörbar schalten"));
         mute.title = master ? "Master-Lautstärke umschalten" : "Raum hörbar/stumm schalten. Die Gruppenwiedergabe läuft weiter.";
       }
+      function renderLevel(level) {
+        slider.value = Math.round((level ?? 0)*100);
+        label.textContent = typeof level === "number" ? slider.value+"%" : "–";
+        renderAudioButton();
+      }
+      if (!master) {
+        roomVolumeRows.set(p.entity_id, {render:renderLevel, observed:p.volume});
+        renderLevel(requestedRoomLevel(p));
+      }
       renderAudioButton();
       slider.addEventListener("input", () => {
         label.textContent = slider.value + "%";
+        renderAudioButton();
+        if (!radioReadyForViews || mediaPreparing || strictStandby) return;
+        if (master) previewMasterVolume(Number(slider.value)/100);
+        else {
+          volumeRevision++;
+          requestedRoomVolumes.delete(p.entity_id);
+          masterRoomLevels[p.entity_id] = Number(slider.value)/100;
+        }
       });
       slider.addEventListener("change", async () => {
         if (!radioReadyForViews || mediaPreparing || strictStandby) return;
         const generation = uiGeneration;
         const volume = Number(slider.value)/100;
+        const revision = master ? previewMasterVolume(volume) : ++volumeRevision;
+        if (!master) {
+          requestedRoomVolumes.delete(p.entity_id);
+          masterRoomLevels[p.entity_id] = volume;
+        }
         volumeRequests++;
         slider.disabled = mute.disabled = true;
         try { await api("volume",{entity_id:p.entity_id,volume}); if(generation !== uiGeneration) return; if(volume>0)previous.set(p.entity_id,volume);label.textContent=slider.value+"%";renderAudioButton(); }
-        catch(e){if(generation === uiGeneration)reportError(e.message);}
-        finally { volumeRequests--; slider.disabled = mute.disabled = !radioReadyForViews || mediaPreparing; refreshPlayers(); }
+        catch(e){if(generation === uiGeneration){if(master)discardMasterPreview(revision);reportError(e.message);}}
+        finally { volumeRequests--; slider.disabled = mute.disabled = !radioReadyForViews || mediaPreparing; refreshPlayers();
+          if(master)setTimeout(()=>{if(generation === uiGeneration)refreshPlayers();},ROOM_VOLUME_PREVIEW_MS); }
       });
       mute.addEventListener("click",async () => {
         if (!radioReadyForViews || mediaPreparing || strictStandby) return;
@@ -682,17 +737,22 @@ function volumeRow(p, remembered, master) {
         const current = Number(slider.value)/100;
         const next = current > 0 ? 0 : (previous.get(p.entity_id) || remembered[p.entity_id] || 0.3);
         if(current>0) previous.set(p.entity_id,current);
+        const revision = master ? previewMasterVolume(next) : ++volumeRevision;
+        if (master) renderLevel(next);
+        else requestedRoomVolumes.delete(p.entity_id);
         volumeRequests++;
         slider.disabled = mute.disabled = true;
         try {
           const response = await api(master ? "volume" : "room_audio", master ? {entity_id:p.entity_id,volume:next} : {entity_id:p.entity_id,on:current===0});
           if (generation !== uiGeneration) return;
           slider.value = Math.round((master ? next : response.volume)*100);
+          if (!master) masterRoomLevels[p.entity_id] = response.volume;
           label.textContent=slider.value+"%";
           renderAudioButton();
         }
-        catch(e){if(generation === uiGeneration)reportError(e.message);}
-        finally { volumeRequests--; slider.disabled = mute.disabled = !radioReadyForViews || mediaPreparing; refreshPlayers(); }
+        catch(e){if(generation === uiGeneration){if(master)discardMasterPreview(revision);reportError(e.message);}}
+        finally { volumeRequests--; slider.disabled = mute.disabled = !radioReadyForViews || mediaPreparing; refreshPlayers();
+          if(master)setTimeout(()=>{if(generation === uiGeneration)refreshPlayers();},ROOM_VOLUME_PREVIEW_MS); }
       });
 
   if (master) {
@@ -724,9 +784,12 @@ async function refreshPlayers() {
   if (strictStandby || !radioReadyForViews || playersRequestRunning || volumeRequests) return;
   playersRequestRunning = true;
   const generation = uiGeneration;
+  const revision = volumeRevision;
   try {
-    const {players,groups,remembered,saved_levels} = await api("players");
-    if (generation !== uiGeneration || !radioReadyForViews || volumeRequests) return;
+    const {players,groups,remembered,saved_levels,master_room_levels} = await api("players");
+    if (generation !== uiGeneration || revision !== volumeRevision || !radioReadyForViews || volumeRequests) return;
+    masterRoomLevels = master_room_levels || Object.fromEntries(players.map(p=>[p.entity_id,saved_levels?.[p.entity_id] ?? p.volume]));
+    roomVolumeRows.clear();
     const master = masterView(groups, saved_levels);
     masterTransportButton = null;
     $("master-volume").replaceChildren();
@@ -737,7 +800,7 @@ async function refreshPlayers() {
     if (!players.length) wrap.textContent = "Keine Raumgeräte aktiviert. Bitte Geräte in der Add-on-Konfiguration auswählen.";
     for (const p of players) wrap.appendChild(volumeRow(p, remembered, false));
   } catch (e) {
-    if (generation === uiGeneration) {
+    if (generation === uiGeneration && revision === volumeRevision) {
       $("players").textContent = "Lautsprecher derzeit nicht verfügbar.";
       $("master-volume").textContent = "Master-Lautstärke nicht verfügbar";
       reportError("Lautsprecher konnten nicht geladen werden: " + e.message);

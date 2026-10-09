@@ -92,6 +92,21 @@ class RuntimeTests(unittest.TestCase):
                     self.assertEqual(request.call_args_list[1].args, ("/services/homeassistant/update_entity", {"entity_id":"media_player.wohnung"}))
                 snapshot.assert_called_once_with(fresh=True)
 
+    def test_master_preview_intent_preserves_recovered_mute_and_matches_command_targets(self):
+        app.RECOVERED_SESSION = True
+        app.save_speaker_levels({"media_player.wohnung":0, "media_player.wohnzimmer":0.4,
+                                "media_player.kueche":0})
+        app.ROOM_TARGETS.update({"media_player.wohnzimmer":0, "media_player.kueche":0})
+        rooms = [{"entity_id":"media_player.wohnzimmer", "volume":0},
+                 {"entity_id":"media_player.kueche", "volume":0}]
+        self.assertEqual(app.master_room_levels(rooms), {"media_player.wohnzimmer":0.4, "media_player.kueche":0})
+        app.READY = True
+        with patch.object(app, "classify_devices", return_value={"players":rooms, "groups":[{"entity_id":"media_player.wohnung"}]}), \
+             patch.object(app, "ha_request", return_value={}) as request:
+            app.perform("volume", {"entity_id":"media_player.wohnung", "volume":0.6})
+        request.assert_called_once_with("/services/media_player/volume_set", {
+            "entity_id":"media_player.wohnzimmer", "volume_level":0.6})
+
     def test_apple_playlist_shuffle_on_and_off_only_changes_playback_order(self):
         app.READY = True
         app.ACTIVE_APPLE = {"target":"media_player.wohnzimmer", "type":"playlist"}

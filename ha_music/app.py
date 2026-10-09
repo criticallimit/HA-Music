@@ -1233,6 +1233,15 @@ def perform(action, body):
         return perform_control(action, body, generation)
 
 
+def master_room_levels(room_players):
+    """Use the same active/muted intent for master commands and UI previews."""
+    stored = speaker_levels()
+    saved = displayed_speaker_levels() if RECOVERED_SESSION and stored.get("media_player.wohnung") != 0 else stored
+    intent = {p["entity_id"]: saved.get(p["entity_id"], p.get("volume")) for p in room_players}
+    return {entity: float(value) for entity, value in intent.items()
+            if type(value) in (int, float) and 0 <= value <= 1}
+
+
 def perform_control(action, body, generation):
     if action == "track_transport":
         command = body.get("command")
@@ -1307,17 +1316,12 @@ def perform_control(action, body, generation):
         if entity == "media_player.wohnung":
             # Independent virtual master: apply its absolute percentage to unmuted rooms.
             room_players = classified["players"]
-            stored = speaker_levels()
             # After a reattachment, use observed rooms until master mute has
             # captured their active/muted intent. Zero targets alone cannot
             # distinguish a master mute from an individually muted room.
-            saved = displayed_speaker_levels() if RECOVERED_SESSION and stored.get("media_player.wohnung") != 0 else stored
-            room_intent = {p["entity_id"]: saved.get(p["entity_id"], p.get("volume"))
-                           for p in room_players}
-            room_intent = {entity: float(value) for entity, value in room_intent.items()
-                           if type(value) in (int, float) and 0 <= value <= 1}
+            room_intent = master_room_levels(room_players)
             active = [p for p in room_players
-                      if saved.get(p["entity_id"], p.get("volume") or 0) > 0]
+                      if room_intent.get(p["entity_id"], 0) > 0]
             changed = {}
             failed = []
             for p in active:
@@ -1500,6 +1504,7 @@ class Handler(BaseHTTPRequestHandler):
                 classified = classify_devices(inventory)
                 return self.reply(200, {"players": classified["players"], "groups": classified["groups"], "excluded": classified["excluded"],
                     "remembered": remembered(), "saved_levels": displayed_speaker_levels(), "discovery": "integration_registry",
+                    "master_room_levels": master_room_levels(classified["players"]),
                     "diagnostics": {domain: {"entities": len(values),
                         "media_players": sum(v.startswith("media_player.") for v in values)}
                         for domain, values in inventory.items()}})
