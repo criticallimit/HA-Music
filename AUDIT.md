@@ -121,3 +121,10 @@ Der englische custom-Playlistversuch wurde auf Nutzerwunsch zurückgenommen. Pla
 
 Sicherung davor: [backup/main-2026-10-09-before-german-provider-942cb3c](https://github.com/criticallimit/HA-Music/tree/backup/main-2026-10-09-before-german-provider-942cb3c), Commit `942cb3c243a7a726b00e8939e3e86d86add8f259`.
 Validierung: 280 Tests und alle vorgeschriebenen Syntax-/Vertragsprüfungen erfolgreich. Kein Release oder Versionswechsel.
+
+### Einfacher bestätigter Playlist-Wortlaut
+
+Auf Nutzerwunsch entspricht der Playlist-Text jetzt exakt dem erfolgreichen Sprachbefehl: `spiel playlist <gespeicherter Alexa-Name>`. Kein Weckwort, kein meine, kein Dienst-, Gruppen- oder Shuffle-Zusatz. Verwendung des Textbefehlwegs (custom bzw. Alexa Devices send_text_command), ein einziger Start an das freigegebene Steuergerät. Alben bleiben APPLE_MUSIC, Radio bleibt unverändert. Auch der gespeicherte Playlist-Wiederanlauf verwendet diesen Wortlaut; Add-on-Neustart-Recovery bleibt rein lesend. Alexa entscheidet anhand ihrer Kontoeinstellungen über den Musikdienst. Gleicher Wortlaut über die Integration sowie tatsächliche Geräteausgabe müssen noch live geprüft werden.
+
+Sicherung davor: [backup/main-2026-10-09-before-simple-playlist-ecf912a](https://github.com/criticallimit/HA-Music/tree/backup/main-2026-10-09-before-simple-playlist-ecf912a), Commit `ecf912aa81cc416e14105b0f657dac8877c6f94f`.
+Validierung: 281 Tests und alle vorgeschriebenen Syntax-/Vertragsprüfungen erfolgreich. Exakter Wortlaut, unveränderter Alexa-Name, Einzel-/Gruppenkonfiguration ohne Zusatz, Wiederanlauf, beide Integrationen und Albumweg geprüft. Keine automatische Befehlswiederholung oder Shuffle-Zustandsannahme. Kein Release oder Versionswechsel.

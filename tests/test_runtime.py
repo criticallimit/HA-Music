@@ -594,7 +594,7 @@ class RuntimeTests(unittest.TestCase):
                 requests = self.startup().call_args_list
                 playback = [c for c in requests if c.args[0].endswith("play_media")]
                 self.assertEqual(len(playback), 1)
-                self.assertEqual(playback[0].args[1]["media"]["media_content_type"], "APPLE_MUSIC")
+                self.assertEqual(playback[0].args[1]["media"]["media_content_type"], "custom" if kind == "Playlist" else "APPLE_MUSIC")
                 self.assertIn("Abendmusik von Dirk", playback[0].args[1]["media"]["media_content_id"])
                 self.assertEqual(app.ACTIVE_APPLE["id"], favorite)
                 self.assertIsNone(app.SOURCE_RESTORE_ERROR)
@@ -729,7 +729,7 @@ class RuntimeTests(unittest.TestCase):
                 operation()
                 self.assertGreater(flush.call_count, before)
 
-    def test_apple_favorite_starts_group_without_touching_volumes_or_saved_radio(self):
+    def test_apple_playlist_sends_exact_text_without_touching_volumes_or_saved_radio(self):
         app.READY = True
         app.save_selected_station("wdr2")
         favorite = self.apple_favorite()
@@ -737,12 +737,12 @@ class RuntimeTests(unittest.TestCase):
             app.perform("apple_music", {"favorite":favorite})
         request.assert_called_once_with("/services/media_player/play_media", {
             "entity_id":"media_player.wohnzimmer", "media":{
-                "media_content_type":"APPLE_MUSIC", "media_content_id":"meine Playlist Abendmusik von Dirk in zufälliger Reihenfolge auf Wohnung", "metadata":{}}})
+                "media_content_type":"custom", "media_content_id":"spiel playlist Abendmusik von Dirk", "metadata":{}}})
         self.assertEqual(app.ACTIVE_APPLE["id"], favorite)
         self.assertEqual(app.last_selected_station(), "wdr2")
         self.monitor.select.assert_called_once_with("")
 
-    def test_playlist_shuffle_requested_once_for_single_echo_and_startup(self):
+    def test_playlist_exact_command_once_without_group_or_shuffle_for_selection_and_startup(self):
         for group, startup in (("", False), ("Wohnung", True)):
             with self.subTest(group=group, startup=startup):
                 app.READY, app.PREPARING = True, startup
@@ -751,12 +751,12 @@ class RuntimeTests(unittest.TestCase):
                     app.play_apple_music(favorite, 10, startup=startup)
                 request.assert_called_once()
                 phrase = request.call_args.args[1]["media"]["media_content_id"]
-                self.assertEqual(phrase, "meine Playlist Abendmusik von Dirk in zufälliger Reihenfolge" + (" auf " + group if group else ""))
-                self.assertEqual(request.call_args.args[1]["media"]["media_content_type"], "APPLE_MUSIC")
+                self.assertEqual(phrase, "spiel playlist Abendmusik von Dirk")
+                self.assertEqual(request.call_args.args[1]["media"]["media_content_type"], "custom")
                 self.assertEqual(app.last_selected_source(), {"kind":"apple", "id":favorite})
                 self.assertNotIn("shuffle", app.ACTIVE_APPLE)
 
-    def test_playlist_shuffle_request_does_not_fabricate_confirmed_shuffle(self):
+    def test_playlist_simple_request_does_not_fabricate_confirmed_shuffle(self):
         app.READY = True
         favorite = self.apple_favorite()
         with patch.object(app, "ha_request", return_value={}):
@@ -774,18 +774,31 @@ class RuntimeTests(unittest.TestCase):
             app.perform("apple_music", {"favorite":favorite})
         self.assertEqual(request.call_args.args[1]["media"], {"media_content_type":"APPLE_MUSIC", "media_content_id":"Album Abendmusik von Dirk", "metadata":{}})
 
-    def test_official_alexa_apple_uses_provider_without_text_fallback(self):
+    def test_official_alexa_album_uses_provider_without_text_fallback(self):
         app.READY = True
-        favorite = self.apple_favorite()
+        favorite = self.apple_favorite("Album")
         app.INVENTORY_CACHE = (time.monotonic(), {"alexa_devices":["media_player.wohnzimmer"], "alexa_media":[]})
         with patch.object(app, "ha_request", return_value={}) as request:
             app.perform("apple_music", {"favorite":favorite})
         request.assert_called_once_with("/services/media_player/play_media", {
             "entity_id":"media_player.wohnzimmer", "media":{
                 "media_content_type":"APPLE_MUSIC",
-                "media_content_id":"meine Playlist Abendmusik von Dirk in zufälliger Reihenfolge auf Wohnung",
+                "media_content_id":"Album Abendmusik von Dirk auf Wohnung",
                 "metadata":{}}})
         self.assertIsNotNone(app.ACTIVE_APPLE)
+        self.assertEqual(app.last_selected_source(), {"kind":"apple", "id":favorite})
+
+    def test_official_alexa_playlist_sends_exact_spoken_text_to_registered_device(self):
+        app.READY = True
+        favorite = self.apple_favorite()
+        app.INVENTORY_CACHE = (time.monotonic(), {"alexa_devices":["media_player.wohnzimmer"], "alexa_media":[]})
+        device = "a" * 32
+        with patch.object(app, "ha_request", side_effect=[json.dumps({"domain":"alexa_devices", "device_id":device}), {}]) as request:
+            app.perform("apple_music", {"favorite":favorite})
+        self.assertEqual(request.call_count, 2)
+        self.assertEqual(request.call_args_list[0].args[0], "/template")
+        self.assertEqual(request.call_args.args, ("/services/alexa_devices/send_text_command", {
+            "device_id":device, "text_command":"spiel playlist Abendmusik von Dirk"}))
         self.assertEqual(app.last_selected_source(), {"kind":"apple", "id":favorite})
 
     def test_official_alexa_radio_uses_text_command_without_other_device_or_volume(self):
@@ -1101,8 +1114,8 @@ class RuntimeTests(unittest.TestCase):
         with patch.object(app, "ha_request", return_value={}) as request, patch("builtins.print") as log:
             app.play_apple_music(selected["id"], 10)
         self.assertEqual(request.call_args.args[1]["media"]["media_content_id"],
-                         "meine Playlist Dirk Favoriten in zufälliger Reihenfolge auf Wohnung")
-        self.assertEqual(request.call_args.args[1]["media"]["media_content_type"], "APPLE_MUSIC")
+                         "spiel playlist Dirk Favoriten")
+        self.assertEqual(request.call_args.args[1]["media"]["media_content_type"], "custom")
         self.assertIn("Dirk Favoriten", log.call_args.args[0])
 
     def test_album_selection_includes_saved_artwork_without_cover_query_or_full_image_read(self):
