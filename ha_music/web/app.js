@@ -303,7 +303,10 @@ function closeRadioEvents() {
 // Alexa is the authoritative source for Amazon song and cover changes.
 setInterval(updateSong, 6000);
 const previous = new Map();
-function status(text) { $("message").textContent = text; }
+function status(text) {
+  $("message").textContent = text;
+  $("message").hidden = !text;
+}
 const stationButtons = new Map();
 for (const [id,name] of STATIONS) {
   const button = document.createElement("button");
@@ -534,7 +537,7 @@ async function refresh() {
   try {
     const config = await api("status"); ready = config.backend === "connected";
     await loadRadioState();
-    status(ready ? "Sender werden direkt über Home Assistant abgespielt, ohne externe Skripte." : "Home-Assistant-Verbindung nicht verfügbar.");
+    status(ready ? "" : "Home-Assistant-Verbindung nicht verfügbar.");
   } catch(e) { status(e.message); }
   await refreshPlayers();
   await updateSong();
