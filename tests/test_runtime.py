@@ -580,6 +580,41 @@ class RuntimeTests(unittest.TestCase):
                 self.assertIsNone(app.SOURCE_RESTORE_ERROR)
                 self.assertEqual(app.last_selected_station(), "wdr2")
 
+    def test_normal_radio_start_replaces_saved_apple_browsing_view(self):
+        app.save_selected_station("wdr2")
+        app.save_selected_view("apple")
+        self.startup()
+        self.assertEqual(app.selected_view(), "radio")
+        self.assertEqual(app.radio_state()["selected_view"], "radio")
+
+    def test_normal_apple_start_replaces_saved_radio_browsing_view(self):
+        favorite = self.apple_favorite()
+        app.save_selected_source("apple", favorite)
+        app.save_selected_view("radio")
+        self.startup()
+        self.assertEqual(app.selected_view(), "apple")
+        self.assertEqual(app.radio_state()["apple_music"]["active"]["id"], favorite)
+
+    def test_accepted_source_selection_persists_corresponding_view(self):
+        app.READY = True
+        favorite = self.apple_favorite()
+        with patch.object(app, "ha_request", return_value={}) as request:
+            app.perform("apple_music", {"favorite":favorite})
+            self.assertEqual(app.selected_view(), "apple")
+            app.perform("radio_direct", {"station":"wdr2"})
+            self.assertEqual(app.selected_view(), "radio")
+        self.assertEqual(request.call_count, 2)
+        self.assertTrue(all(c.args[0].endswith("play_media") for c in request.call_args_list))
+
+    def test_rejected_source_selection_does_not_switch_view(self):
+        app.READY = True
+        favorite = self.apple_favorite()
+        app.save_selected_view("radio")
+        with patch.object(app, "ha_request", side_effect=OSError("offline")):
+            with self.assertRaises(OSError):
+                app.perform("apple_music", {"favorite":favorite})
+        self.assertEqual(app.selected_view(), "radio")
+
     def test_deleted_apple_favorite_never_restarts_old_radio(self):
         app.save_selected_station("wdr2")
         favorite = self.apple_favorite()

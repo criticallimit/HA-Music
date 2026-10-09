@@ -24,6 +24,10 @@ Bei einer aus einer älteren Version wieder angebundenen Sitzung ohne gespeicher
 
 Sicherung vor dieser Änderung: [backup/main-2026-10-09-before-source-persistence-0dc6ac9](https://github.com/criticallimit/HA-Music/tree/backup/main-2026-10-09-before-source-persistence-0dc6ac9), Commit `0dc6ac90436786864d1b2048adc9a6f5d8e3f6db`.
 
+Beim normalen Einschalten folgt die Startansicht der gespeicherten Wiedergabequelle: Radio startet in der Radioansicht, ein Apple-Favorit in der Apple-Ansicht. Ein zuvor nur zum Stöbern geöffneter Tab setzt sich dabei nicht über die Quelle hinweg. Auch ein angenommener Sender-/Apple-Auswahlbefehl speichert die passende Ansicht. Anschließend lassen sich beide Tabs weiterhin ohne Wiedergabebefehl öffnen. Bei der ausschließlich lesenden Wiederanbindung bleibt die gespeicherte Ansicht erhalten, solange die tatsächliche Quelle nicht bestätigt ist; sie wird nicht aus einem alten Sendernamen erraten.
+
+Sicherung vor der Korrektur der Startansicht: [backup/main-2026-10-09-before-source-view-686cf8e](https://github.com/criticallimit/HA-Music/tree/backup/main-2026-10-09-before-source-view-686cf8e), Commit `686cf8ec9c03f1d06720c2ff5c8b6989f276d65a`.
+
 ## Apple-Music-Oberfläche
 
 Titel, Künstler, Album und Cover der Apple-Auswahl werden unverändert aus einem frischen HA-Datensatz des Players gelesen, den auch Vor/Zurück steuert. Die Oberfläche übernimmt keine einzelnen Felder aus anderen Räumen und wählt keinen Künstler anhand eines vorherigen Titels. Das aktuelle `media_image_url` hat Vorrang vor einem allgemeinen `entity_picture`. Nach einem ausdrücklich angeklickten Vor/Zurück wird genau dieser Player einmal mit `homeassistant.update_entity` aktualisiert, danach die Anzeige neu eingelesen. Ein fehlgeschlagenes Metadaten-Update wiederholt den bereits angenommenen Titelbefehl nicht. Bei der automatischen Wiederanbindung gibt es weiterhin kein `update_entity` und keine Gerätebefehle. Bereits falsch oder verzögert von HA gelieferte Felder werden nicht durch Vermutungen ersetzt; der Audiostream selbst wird bei Apple Music nicht gelesen.

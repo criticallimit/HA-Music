@@ -552,6 +552,8 @@ def radio_start_sequence(generation):
             set_probe_volume(generation)
             with STATE_LOCK:
                 check_generation(generation)
+                if source:
+                    save_selected_view("apple" if source["kind"] == "apple" else "radio")
                 READY = True
                 STARTED_AT = None
                 # Radiotext belongs to the displayed preset, independently of
@@ -945,6 +947,7 @@ def play_apple_music(favorite_id, generation, *, startup=False):
     with STATE_LOCK:
         check_generation(generation)
         save_selected_source("apple", favorite_id)
+        save_selected_view("apple")
         ACTIVE_APPLE = {**favorite, "target": selection["target"]}
         SOURCE_UNCONFIRMED = False
         SOURCE_RESTORE_ERROR = None
@@ -1164,6 +1167,7 @@ def play_station(key, generation):
     with STATE_LOCK:
         check_generation(generation)
         save_selected_station(key)
+        save_selected_view("radio")
         ACTIVE_APPLE = None
         SOURCE_UNCONFIRMED = False
         SOURCE_RESTORE_ERROR = None

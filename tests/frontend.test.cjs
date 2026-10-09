@@ -79,6 +79,39 @@ test('saved Apple view survives off state and is restored when ready', async () 
   assert.equal(h.get('apple-page').hidden,false);
 });
 
+test('normal radio start overrides the previous Apple tab without a playback request', async () => {
+  const h = harness();
+  const calls=[];
+  h.context.reply=async(action)=>{
+    calls.push(action);
+    return {stations:[{id:'wdr2',available:true}],power:'on',ready:'on',selected_view:'radio',last_station:'wdr2',apple_music:{items:[],active:null}};
+  };
+  h.run('api=reply; preferredView="apple"; show("apple"); refreshPlayers=async()=>{}; updateSong=async()=>{}');
+  await h.run('loadRadioState()');
+  assert.equal(h.get('radio-page').hidden,false);
+  assert.equal(h.get('apple-page').hidden,true);
+  assert.equal(h.get('radio-tab').classList.contains('active'),true);
+  assert.equal(h.get('apple-tab').classList.contains('active'),false);
+  assert.equal(h.run('selectedStation'),'wdr2');
+  assert.deepEqual(calls,['radio-state']);
+});
+
+test('normal Apple start overrides the previous Radio tab without a playback request', async () => {
+  const h = harness();
+  const calls=[];
+  h.context.reply=async(action)=>{
+    calls.push(action);
+    return {stations:[],power:'on',ready:'on',selected_view:'apple',last_station:'wdr2',apple_music:{items:[],active:{id:'favorite',name:'Dirk'}}};
+  };
+  h.run('api=reply; preferredView="radio"; refreshPlayers=async()=>{}; updateSong=async()=>{}');
+  await h.run('loadRadioState()');
+  assert.equal(h.get('apple-page').hidden,false);
+  assert.equal(h.get('radio-page').hidden,true);
+  assert.equal(h.get('apple-tab').classList.contains('active'),true);
+  assert.equal(h.run('selectedStation'),'');
+  assert.deepEqual(calls,['radio-state']);
+});
+
 test('automatic recovery shows a check in progress without permitting a premature power command', async () => {
   const h = harness();
   h.context.reply=async()=>({stations:[],power:'off',ready:'off',standby:true,recovering:true,
