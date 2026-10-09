@@ -115,6 +115,7 @@ python tests/test_scaffold.py
 python tests/test_smoke.py
 python -m unittest discover -s tests -p 'test_runtime.py' -v
 python -m unittest discover -s tests -p 'test_discovery_template.py' -v
+python -m unittest discover -s tests -p 'test_logo_sources.py' -v
 node --test tests/frontend.test.cjs
 node --check ha_music/web/app.js
 node --check ha_music/lovelace/ha-music-card.js
@@ -122,6 +123,10 @@ node --check ha_music/lovelace/ha-music-card-loader.js
 ```
 
 Die CI führt diese Prüfungen bei Push auf `main` aus. Geprüfte Änderungen werden auf `main` übernommen; vor jeder Änderung wird dessen exakter bisheriger Commit in einem neuen Backup-Branch gesichert und überprüft. Die Arbeitsregeln stehen in [AGENTS.md](AGENTS.md). Releases, Versionsänderungen und Installationen nur nach ausdrücklicher Freigabe. Befunde, Änderungen, Testumfang und verbleibende Risiken: [Codeprüfung vom 9. Oktober 2026](AUDIT.md).
+
+Bei der Gesamtprüfung wurden unbenutzte Sender-/Gerätekataloge, alte Lautstärke-Angleichung, tote Frontend-Zähler und die unbenutzte Lautstärke-Reconciliation entfernt. Die Statusanzeige braucht keine zusätzliche HA-Abfrage; tatsächliche Playerzustände werden weiterhin separat gelesen. Raum-Stumm/Hörbar richtet sich nach der angezeigten HA-Lautstärke, statt durch einen alten Sollwert blockiert zu werden. Nach Wiederanbindung behält Master-Stumm/Hörbar die zuvor beobachtete Raum-Auswahl. Metadaten inaktiver Geräte und unabhängiger Räume werden nicht als aktuelle bekannte Gruppenwiedergabe ausgegeben. Beim Wechsel einer Quelle ist Gruppen-Play/Pause ebenfalls gesperrt. Die alten Tests zur Master-Angleichung wurden durch Tests der tatsächlich geforderten Raum-Wiederherstellung ersetzt. Die Konfigurationsbeschreibung nennt die bereits vorhandene Apple-Favoritenunterstützung.
+
+Sicherung vor dieser Gesamtprüfung: [backup/main-2026-10-09-before-addon-audit-603f18c](https://github.com/criticallimit/HA-Music/tree/backup/main-2026-10-09-before-addon-audit-603f18c), Commit `603f18ccf4bfd0982801ea061c04a1f3f40eb0e0`. Frühere, teilweise abgelöste Prüfschritte stehen getrennt in [AUDIT_HISTORY.md](AUDIT_HISTORY.md).
 
 Rückkehrpunkt vor der automatischen Wiederanbindung und den Titel-/Shuffle-Bedienelementen: [backup/main-2026-10-09-before-playback-recovery-7d93a7c](https://github.com/criticallimit/HA-Music/tree/backup/main-2026-10-09-before-playback-recovery-7d93a7c), Commit `7d93a7ca1965850bdb6899ec330096b608e52e6b`, Add-on-Version `0.0.6`. Die GitHub-Prüfung dieses Stands war erfolgreich; die bekannten Neustartfehler sind darin noch enthalten. Für eine Rückkehr wird nach Sicherung des dann aktuellen `main` ein neuer Commit mit dem gesicherten Dateistand erstellt. So bleibt die Historie erhalten. Die Code-Sicherung umfasst keine laufenden HA-Zustände oder Add-on-Daten unter `/data`; vor einer Installation zusätzlich eine Home-Assistant-Sicherung anlegen.
 

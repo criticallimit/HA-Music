@@ -1,4 +1,4 @@
-"""Dependency-free checks for the first development scaffold."""
+"""Static checks for container packaging and frontend/backend contracts."""
 from pathlib import Path
 import ast
 
@@ -22,12 +22,15 @@ assert "detected_devices" in source
 # Detailed routing, mapping and standby restrictions are tested in test_runtime.
 assert "/services/alexa_devices/send_text_command" in source
 assert "alexa_devices" in source and "alexa_media" in source
-print("Scaffold validation passed")
+print("Container and API contracts passed")
 
 # The container must ship every local Python module imported by the entrypoint.
 dockerfile = (root / "ha_music/Dockerfile").read_text()
-assert "metadata.py" in dockerfile
-assert (root / "ha_music/metadata.py").exists()
+for node in ast.walk(ast.parse(source)):
+    if isinstance(node, ast.ImportFrom) and node.module:
+        module = node.module.split(".")[0] + ".py"
+        if (root / "ha_music" / module).exists():
+            assert module in dockerfile, f"Container does not copy {module}"
 
 # Supervisor injects its token through the s6 container environment.
 assert 'CMD ["/run.sh"]' in dockerfile
@@ -55,7 +58,6 @@ assert "metadata_feed.py" in dockerfile
 assert "now-playing?station=" not in js
 assert "icy-diagnostics" not in source
 assert "metadata-probe" not in source
-# Station pictures must never be overwritten by delayed Alexa radio artwork.
-assert "if (!isRadio) {\n      const cover" in js
+# Delayed station artwork behavior is verified by the frontend regression tests.
 print("Radio event-stream and Amazon artwork contracts passed")
 

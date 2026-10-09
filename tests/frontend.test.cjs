@@ -122,24 +122,32 @@ test('protocol-relative artwork is rejected', async () => {
   assert.equal(h.get('current-cover').hidden,true);
 });
 
-test('room slider and percentage show only the current HA volume', () => {
+test('room slider and percentage show only the current HA volume', async () => {
   const h = harness();
-  const room = h.run('roomView({entity_id:"media_player.wohnzimmer",volume:0.5,state:"idle"},{"media_player.wohnzimmer":0.2})');
-  const row = h.run('volumeRow(roomView({entity_id:"media_player.wohnzimmer",volume:0.5,state:"idle"},{"media_player.wohnzimmer":0.2}),{},false)');
-  assert.equal(room.volume,0.5);
+  h.context.reply=async()=>({players:[{entity_id:'media_player.wohnzimmer',volume:.5,state:'idle'}],groups:[],remembered:{},saved_levels:{'media_player.wohnzimmer':.2}});
+  h.run('api=reply; radioReadyForViews=true');
+  await h.run('refreshPlayers()');
+  const row = h.get('players').children[0];
   assert.equal(row.children[1].value,50);
   assert.equal(row.children[2].textContent,'50%');
   assert.equal(row.children[2].title,undefined);
 });
 
-test('saved mute does not replace the HA room volume', () => {
+test('saved mute does not replace the HA room volume', async () => {
   const h = harness();
-  assert.equal(h.run('roomView({entity_id:"media_player.wohnzimmer",volume:0.4},{"media_player.wohnung":0,"media_player.wohnzimmer":0}).volume'),0.4);
+  h.context.reply=async()=>({players:[{entity_id:'media_player.wohnzimmer',volume:.4,state:'playing'}],groups:[],remembered:{},saved_levels:{'media_player.wohnung':0,'media_player.wohnzimmer':0}});
+  h.run('api=reply; radioReadyForViews=true');
+  await h.run('refreshPlayers()');
+  assert.equal(h.get('players').children[0].children[2].textContent,'40%');
 });
 
-test('individual volume remains independent of master zero after startup', () => {
+test('individual volume remains independent of master zero after startup', async () => {
   const h = harness();
-  assert.equal(h.run('roomView({entity_id:"media_player.wohnzimmer",volume:0.3},{"media_player.wohnung":0,"media_player.wohnzimmer":0.3}).volume'),0.3);
+  h.context.reply=async()=>({players:[{entity_id:'media_player.wohnzimmer',volume:.3,state:'playing'}],groups:[{entity_id:'media_player.wohnung',volume:.7}],remembered:{},saved_levels:{'media_player.wohnung':0,'media_player.wohnzimmer':.3}});
+  h.run('api=reply; radioReadyForViews=true');
+  await h.run('refreshPlayers()');
+  assert.equal(h.get('players').children[0].children[2].textContent,'30%');
+  assert.equal(h.get('master-volume').children[0].children[2].textContent,'0%');
 });
 
 test('room audio switch uses room action and server restored volume', async () => {
@@ -413,6 +421,17 @@ test('Apple favorite commands coalesce and cannot wake standby', async () => {
   assert.equal(h.run('activeApple'),null);
 });
 
+test('group pause is disabled during a pending source selection', async () => {
+  const h = harness();
+  let calls=0;
+  h.context.reply=async()=>{calls++;return {ok:true};};
+  const row=h.run('volumeRow({entity_id:"media_player.wohnung",volume:.4,state:"playing"},{},true)');
+  h.run('api=reply; radioReadyForViews=true; stationPending=true; groupTransport={state:"playing",can_pause:true}; renderGroupTransport()');
+  assert.equal(row.children[3].children[1].disabled,true);
+  await h.run('controlGroup("pause")');
+  assert.equal(calls,0);
+});
+
 test('accepted Apple click removes radio branding even when state polling is already running', async () => {
   const h = harness();
   h.context.reply=async()=>({ok:true});
@@ -431,14 +450,24 @@ test('unconfirmed echo volumes do not claim audible playback', async () => {
   h.run('api=reply; radioReadyForViews=true');
   await h.run('updateSong()');
   assert.match(h.get('playback-state').textContent,/Hörbare Wiedergabe nicht bestätigt/);
-  const row=h.run('volumeRow(roomView({entity_id:"media_player.bad",name:"Bad",state:"playing",volume:.01},{"media_player.bad":.4}),{},false)');
+  const row=h.run('volumeRow({entity_id:"media_player.bad",name:"Bad",state:"playing",volume:.01},{},false)');
   assert.equal(row.children[2].textContent,'1%');
 });
 
 test('missing HA room volume does not pretend a saved percentage is current', () => {
   const h = harness();
-  const row=h.run('volumeRow(roomView({entity_id:"media_player.bad",name:"Bad",state:"unknown",volume:null},{"media_player.bad":.4}),{},false)');
+  const row=h.run('volumeRow({entity_id:"media_player.bad",name:"Bad",state:"unknown",volume:null},{},false)');
   assert.equal(row.children[2].textContent,'–');
+});
+
+test('invalid artwork does not discard valid playback controls', async () => {
+  const h = harness();
+  h.context.reply=async()=>({playing:true,details:{title:'Titel',image:42},track_transport:{entity_id:'media_player.wohnung',can_next:true}});
+  h.run('api=reply; radioReadyForViews=true');
+  await h.run('updateSong()');
+  assert.equal(h.get('current-cover').hidden,true);
+  assert.equal(h.get('track-next').disabled,false);
+  assert.equal(h.get('current-title').textContent,'Titel');
 });
 
 test('failed saved source restoration is visible even if Alexa reports playing', async () => {

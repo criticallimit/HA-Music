@@ -131,7 +131,7 @@ function renderGroupTransport() {
   renderTrackTransport();
   if (!masterTransportButton) return;
   const pause = groupTransport?.state === "playing";
-  masterTransportButton.disabled = !radioReadyForViews || mediaPreparing || transportPending || !(pause ? groupTransport?.can_pause : groupTransport?.can_play);
+  masterTransportButton.disabled = strictStandby || !radioReadyForViews || mediaPreparing || stationPending || transportPending || !(pause ? groupTransport?.can_pause : groupTransport?.can_play);
   const label = transportPending ? "Gruppenbefehl wird gesendet …" :
     masterTransportButton.disabled ? "Gruppensteuerung derzeit nicht verfügbar" :
     pause ? "Gesamte Gruppe pausieren" : "Gesamte Gruppe fortsetzen";
@@ -141,7 +141,7 @@ function renderGroupTransport() {
     (pause ? '<path d="M8 5v14M16 5v14" stroke-linecap="round"/>' : '<path d="m8 5 11 7-11 7Z"/>') + '</svg>';
 }
 async function controlGroup(command) {
-  if (strictStandby || !radioReadyForViews || mediaPreparing || transportPending || !groupTransport?.["can_" + command]) return;
+  if (strictStandby || !radioReadyForViews || mediaPreparing || stationPending || transportPending || !groupTransport?.["can_" + command]) return;
   transportPending = true;
   transportEpoch++;
   const generation = uiGeneration;
@@ -254,18 +254,15 @@ function setActiveStation(station) {
     button.setAttribute("aria-pressed", String(active));
   }
 }
-let ready = false;
 let selectedStation = "";
 let activeApple = null;
 let appleSelection = {items:[], available:false};
 let appleItemsSignature = "";
 const appleButtons = new Map();
 let stationEpoch = 0;
-let songRequestEpoch = 0;
 let songRequestRunning = false;
 const lastStationMetadata = new Map();
 const METADATA_GRACE_MS = 90000;
-const metadataInFlight = new Set();
 function renderRadioMetadata(station, external) {
   if (station !== selectedStation) return;
   const line = external?.title && external?.artist
@@ -314,7 +311,7 @@ async function updateSong() {
     if (!isRadio) {
       const cover = $("current-cover");
       const image = details?.image;
-      if (image && ((image.startsWith("/") && !image.startsWith("//")) || image.startsWith("https://"))) {
+      if (typeof image === "string" && ((image.startsWith("/") && !image.startsWith("//")) || image.startsWith("https://"))) {
         if (cover.getAttribute("src") !== image) cover.src = image;
         cover.alt = details?.album || details?.title || (activeApple ? "Apple Music" : "Amazon Music");
         cover.hidden = false;
@@ -337,7 +334,6 @@ async function updateSong() {
   } finally { songRequestRunning = false; }
 }
 // One backend monitor polls radio metadata, all open clients receive changes.
-let radioEventsReady = false;
 function applyRadioMetadata(update) {
   if (!radioReadyForViews || update.station !== selectedStation) return;
   const item = update.metadata;
@@ -363,8 +359,6 @@ function connectRadioEvents() {
   if (strictStandby || !radioReadyForViews || radioEventSource) return;
   const source = new EventSource("api/events");
   radioEventSource = source;
-  source.onopen = () => { radioEventsReady = true; };
-  source.onerror = () => { radioEventsReady = false; };
   source.onmessage = event => {
     if (radioEventSource !== source || !radioReadyForViews) return;
     try {
@@ -383,7 +377,6 @@ function connectRadioEvents() {
 function closeRadioEvents() {
   if (radioEventSource) radioEventSource.close();
   radioEventSource = null;
-  radioEventsReady = false;
 }
  // The server provides live ICY changes over the event connection.
 
@@ -438,7 +431,7 @@ async function startAppleFavorite(id) {
   if (!favorite) return;
   stationPending = true;
   trackTransport = null;
-  renderTrackTransport();
+  renderGroupTransport();
   const generation = ++uiGeneration;
   renderAppleSelection(appleSelection);
   for (const button of stationButtons.values()) button.disabled = true;
@@ -448,7 +441,6 @@ async function startAppleFavorite(id) {
     activeApple = favorite;
     selectedStation = "";
     stationEpoch++;
-    songRequestEpoch++;
     updateStationLogo("");
     setActiveStation("");
     $("now-ticker").hidden = true;
@@ -485,7 +477,7 @@ for (const [id,name] of STATIONS) {
     if (stationPending || transportPending || !radioReadyForViews || mediaPreparing) return;
     stationPending = true;
     trackTransport = null;
-    renderTrackTransport();
+    renderGroupTransport();
     const generation = ++uiGeneration;
     for (const item of stationButtons.values()) item.disabled = true;
     try {
@@ -496,7 +488,6 @@ for (const [id,name] of STATIONS) {
       updateStationLogo(id);
       setActiveStation(id);
       stationEpoch++;
-      songRequestEpoch++;
       $("current-artist").textContent = ["1live","wdr2","swr3"].includes(id) ? "Aktueller Radiotext" : "Jetzt läuft";
       $("current-title").textContent = name;
       $("now-ticker").hidden = true;
@@ -547,7 +538,6 @@ async function loadRadioState() {
       selectedStation = "";
       activeApple = null;
       stationEpoch++;
-      songRequestEpoch++;
       updateStationLogo("");
       setActiveStation("");
       $("now-ticker").hidden = true;
@@ -558,7 +548,6 @@ async function loadRadioState() {
       activeApple = nextApple;
       selectedStation = "";
       stationEpoch++;
-      songRequestEpoch++;
       updateStationLogo("");
       setActiveStation("");
       $("now-ticker").hidden = true;
@@ -648,36 +637,12 @@ for (const [id,on] of [["power-on",true],["power-off",false]]) {
 setInterval(() => {
   if (!strictStandby || !document.hidden) loadRadioState();
 }, 3000);
-let volumeReconcileGeneration = 0;
-function scheduleVolumeReconciliation(value) {
-  const generation = ++volumeReconcileGeneration;
-  const room = $("players");
-  for (const row of room.querySelectorAll(".player-row")) {
-    const slider = row.querySelector("input[type=range]");
-    const label = row.querySelectorAll("span")[1];
-    const name = row.querySelector("span")?.textContent || "";
-    if (!slider || slider.disabled) continue;
-    slider.value = Math.round(value * 100);
-    if (label) label.textContent = Math.round(value * 100) + "%";
-  }
-  setTimeout(async () => {
-    if (generation !== volumeReconcileGeneration) return;
-    await refreshPlayers();
-  }, 3000);
-  setTimeout(async () => {
-    if (generation !== volumeReconcileGeneration) return;
-    await refreshPlayers();
-  }, 15000);
-}
-function masterView(groups, players, saved) {
+function masterView(groups, saved) {
   const group = groups.find(p => p.entity_id === "media_player.wohnung");
   if (!group) return null;
   // The master setting is independent; individual room changes must not move it.
   const volume = saved?.["media_player.wohnung"] ?? group.volume ?? 0;
   return {...group, volume};
-}
-function roomView(player) {
-  return player;
 }
 function volumeRow(p, remembered, master) {
   const row = document.createElement("div"); row.className = "player-row";
@@ -747,9 +712,9 @@ function volumeRow(p, remembered, master) {
 }
 async function refresh() {
   try {
-    const config = await api("status"); ready = config.backend === "connected";
+    const config = await api("status");
     await loadRadioState();
-    reportError(ready ? "" : "Home-Assistant-Verbindung nicht verfügbar.");
+    reportError(config.backend === "connected" ? "" : "Home-Assistant-Verbindung nicht verfügbar.");
   } catch(e) { reportError(e.message); }
   await refreshPlayers();
   await updateSong();
@@ -762,7 +727,7 @@ async function refreshPlayers() {
   try {
     const {players,groups,remembered,saved_levels} = await api("players");
     if (generation !== uiGeneration || !radioReadyForViews || volumeRequests) return;
-    const master = masterView(groups, players, saved_levels);
+    const master = masterView(groups, saved_levels);
     masterTransportButton = null;
     $("master-volume").replaceChildren();
     if (master) $("master-volume").appendChild(volumeRow(master, remembered, true));
@@ -770,7 +735,7 @@ async function refreshPlayers() {
     $("groups").textContent = groups.length ? "Gruppe: " + groups.map(p => p.name).join(", ") + " · Alexa-Multiroom" : "Master-Gruppe Wohnung ist nicht aktiviert oder nicht verfügbar.";
     const wrap = $("players"); wrap.replaceChildren();
     if (!players.length) wrap.textContent = "Keine Raumgeräte aktiviert. Bitte Geräte in der Add-on-Konfiguration auswählen.";
-    for (const p of players) wrap.appendChild(volumeRow(roomView(p), remembered, false));
+    for (const p of players) wrap.appendChild(volumeRow(p, remembered, false));
   } catch (e) {
     if (generation === uiGeneration) {
       $("players").textContent = "Lautsprecher derzeit nicht verfügbar.";

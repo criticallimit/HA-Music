@@ -20,8 +20,6 @@ OPTIONS = Path(os.environ.get("OPTIONS_FILE", "/data/options.json"))
 HA_API = os.environ.get("HA_API", "http://supervisor/core/api").rstrip("/")
 SUPERVISOR_API = os.environ.get("SUPERVISOR_API", "http://supervisor").rstrip("/")
 TOKEN = os.environ.get("SUPERVISOR_TOKEN", "") or os.environ.get("HASSIO_TOKEN", "")
-STATIONS = {"wdr2": "WDR 2", "1live": "1LIVE", "wdr4": "WDR 4",
-            "80s80s": "80s80s", "ndr2": "NDR 2", "radiobob": "Radio BOB!"}
 ENTITY_RE = re.compile(r"^media_player\.[a-z0-9_]+$")
 
 VOLUME_FILE = Path(os.environ.get("VOLUME_FILE", "/data/volumes.json"))
@@ -35,7 +33,7 @@ STARTED_AT = None
 RESTORE_GENERATION = 0
 RADIO_MONITOR_STOP = threading.Event()
 STANDBY = threading.Event()
-STANDBY.set()  # Only an explicit local power-on permits network/startup.
+STANDBY.set()  # Bootstrap recovery has separate, read-only admission.
 READY = False
 PREPARING = False
 ROOM_TARGETS = {}
@@ -54,7 +52,6 @@ SOURCE_UNCONFIRMED = False
 SOURCE_RESTORE_ERROR = None
 RECOVERY_MESSAGE = None
 VOLUME_CONFIRMATION = {}
-RADIO_PLAYERS = ("media_player.wohnung", "media_player.wohnzimmer", "media_player.kueche", "media_player.bad")
 LOCK = threading.Lock()
 CACHE_LOCK = threading.RLock()
 STATE_CACHE = (0.0, None)
@@ -339,21 +336,6 @@ def displayed_speaker_levels():
         return {**saved, **ROOM_TARGETS}
 
 
-def capture_speaker_levels(states):
-    # Capture before the radio switch powers the devices down.
-    permitted = allowed_entities()
-    saved = {}
-    for entity in permitted:
-        entry = states.get(entity, {})
-        if entry.get("state") in ("unavailable", "unknown"):
-            continue
-        value = (entry.get("attributes") or {}).get("volume_level")
-        if type(value) in (float, int) and 0 <= value <= 1:
-            saved[entity] = float(value)
-    if saved:
-        save_speaker_levels(saved)
-
-
 class StartupCancelled(RuntimeError):
     pass
 
@@ -367,7 +349,10 @@ def startup_request(generation, path, payload=None):
     # Serialize commands; recheck after acquiring the lock and after slow I/O.
     with COMMAND_LOCK:
         check_generation(generation)
-        if path in ("/services/media_player/volume_set", "/services/media_player/play_media", "/services/media_player/media_play", "/services/media_player/media_pause", "/services/homeassistant/update_entity"):
+        if path in ("/services/media_player/volume_set", "/services/media_player/play_media",
+                    "/services/media_player/media_play", "/services/media_player/media_pause",
+                    "/services/media_player/media_previous_track", "/services/media_player/media_next_track",
+                    "/services/media_player/shuffle_set", "/services/homeassistant/update_entity"):
             targets = payload.get("entity_id", [])
             targets = [targets] if isinstance(targets, str) else targets
             selected = enabled_device_ids()
@@ -422,11 +407,9 @@ def verify_restored_volumes(generation, expected):
         print(f"[HA Music] WARNING: {entity} has not confirmed its restored volume", flush=True)
 
 
-def restore_speakers(generation, use_master=False):
+def restore_speakers(generation):
     levels = speaker_levels()
     master = levels.get("media_player.wohnung")
-    if use_master and master is None:
-        raise RuntimeError("Master-Lautstärke nicht verfügbar")
     available = enabled_device_ids()
     sent, failed = {}, []
     if "media_player.wohnung" in available and master is not None:
@@ -442,7 +425,7 @@ def restore_speakers(generation, use_master=False):
         if entity not in available:
             continue
         # A muted virtual master must remain silent across power cycles.
-        level = 0.0 if levels[entity] == 0 or master == 0 else master if use_master else levels[entity]
+        level = 0.0 if master == 0 else levels[entity]
         try:
             startup_request(generation, "/services/media_player/volume_set",
                             {"entity_id": entity, "volume_level": level})
@@ -451,9 +434,6 @@ def restore_speakers(generation, use_master=False):
                 check_generation(generation)
                 ROOM_TARGETS[entity] = level
                 VOLUME_CONFIRMATION[entity] = {"expected":level, "observed":None}
-                if use_master and level > 0:
-                    save_speaker_levels({entity: level})
-                    save_remembered(entity, level)
         except StartupCancelled:
             raise
         except NETWORK_ERRORS:
@@ -1049,6 +1029,12 @@ def state_snapshot(*, fresh=False):
         return result
 
 def radio_state():
+    with STATE_LOCK:
+        return _radio_state()
+
+
+def _radio_state():
+    """Read one consistent local lifecycle snapshot; no unused HA request."""
     if STANDBY.is_set():
         return {"power":"off", "ready":"off", "standby":True, "last_station":last_selected_station(),
                 "recovering":RECOVERING, "recovery_message":RECOVERY_MESSAGE,
@@ -1056,7 +1042,6 @@ def radio_state():
                 "dashboard_card_installed":dashboard_card_installed(),
                 "show_dashboard_setup":options().get("show_dashboard_setup", False) is True,
                 "stations":[{"id":key,"name":item["name"],"available":False} for key,item in DIRECT_STATIONS.items()]}
-    states = state_snapshot()
     selected = enabled_device_ids()
     return {"power":LAST_POWER,
             "ready":"on" if READY else "off",
@@ -1091,7 +1076,7 @@ def track_transport_state(states):
     with STATE_LOCK:
         if not ACTIVE_APPLE and not SOURCE_UNCONFIRMED and last_selected_station() in ("wdr2", "1live", "swr3"):
             return result  # Live radio has no track queue.
-        target = ACTIVE_APPLE["target"] if ACTIVE_APPLE else "media_player.wohnzimmer"
+        target = ACTIVE_APPLE["target"] if ACTIVE_APPLE else apple_music_selection()["target"] if SOURCE_UNCONFIRMED else "media_player.wohnzimmer"
     selected = enabled_device_ids()
     for entity in dict.fromkeys(("media_player.wohnung", target)):
         if entity not in selected:
@@ -1115,8 +1100,9 @@ def track_transport_state(states):
 def playback_status():
     states = state_snapshot(fresh=True)
     with STATE_LOCK:
-        target = ACTIVE_APPLE["target"] if ACTIVE_APPLE else "media_player.wohnzimmer"
+        target = ACTIVE_APPLE["target"] if ACTIVE_APPLE else apple_music_selection()["target"] if SOURCE_UNCONFIRMED else "media_player.wohnzimmer"
         apple = ACTIVE_APPLE is not None
+        unconfirmed_source = SOURCE_UNCONFIRMED
         source_restore_error = SOURCE_RESTORE_ERROR
         for entity, confirmation in list(VOLUME_CONFIRMATION.items()):
             entry = states.get(entity, {})
@@ -1141,11 +1127,15 @@ def playback_status():
                          "image": attrs.get("media_image_url") or attrs.get("entity_picture"),
                          "content_type": attrs.get("media_content_type")})
     track_transport = track_transport_state(states)
-    active = next((p for p in observed if p["state"] == "playing"), None)
-    details = next((p for p in observed if p["title"] or p["artist"]), None)
-    if RECOVERED_SESSION:
-        # Idle devices may still carry another session's old title/artwork.
-        details = active or next((p for p in observed if p["state"] == "paused"), None)
+    priority = dict.fromkeys((track_transport["entity_id"], "media_player.wohnung", target))
+    queue_players = [p for entity in priority for p in observed if p["entity_id"] == entity]
+    if unconfirmed_source:
+        queue_players += [p for p in observed if p["entity_id"] not in priority]
+    # Idle devices may carry another session's title/artwork in normal starts
+    # as well as reattached sessions. Never fill a live player's missing fields
+    # from one of those stale entries.
+    details = next((p for p in queue_players if p["state"] in ("playing", "paused")), None)
+    active = details if details and details["state"] == "playing" else None
     if apple:
         # Read one complete snapshot from the player used by Vor/Zurück.
         # Never fill missing fields from the controller or another room.
@@ -1159,7 +1149,7 @@ def playback_status():
             "track_transport": track_transport,
             "volume_confirmation":volume_confirmation,
             "source_restore_error":source_restore_error,
-            "details": details if apple else active if active and (active["title"] or active["artist"]) else details}
+            "details": details}
 
 
 def play_station(key, generation):
@@ -1278,10 +1268,11 @@ def perform_control(action, body, generation):
         player = next((p for p in classify_devices()["players"] if p["entity_id"] == entity), None)
         if player is None:
             raise ValueError("Raumgerät ist nicht freigegeben oder nicht verfügbar")
-        level = displayed_speaker_levels().get(entity, player.get("volume"))
-        if type(level) not in (int, float) or not 0 <= level <= 1:
-            level = 0.01
-        if on == (level > 0):
+        # Match the observed volume displayed by the room control. A saved
+        # target may belong to an earlier session or an external Alexa change.
+        level = player.get("volume")
+        known_level = type(level) in (int, float) and 0 <= level <= 1
+        if on and known_level and level > 0:
             return {"ok": True, "volume": level}
         restore = remembered().get(entity)
         if type(restore) not in (int, float) or not 0 < restore <= 1:
@@ -1289,7 +1280,7 @@ def perform_control(action, body, generation):
         if type(restore) not in (int, float) or not 0 < restore <= 1:
             restore = 0.3
         perform_control("volume", {"entity_id": entity, "volume": restore if on else 0}, generation)
-        if not on:
+        if not on and known_level and level > 0:
             save_remembered(entity, level)
         return {"ok": True, "volume": restore if on else 0}
     if action == "volume":
@@ -1305,7 +1296,15 @@ def perform_control(action, body, generation):
         if entity == "media_player.wohnung":
             # Independent virtual master: apply its absolute percentage to unmuted rooms.
             room_players = classified["players"]
-            saved = displayed_speaker_levels() if RECOVERED_SESSION else speaker_levels()
+            stored = speaker_levels()
+            # After a reattachment, use observed rooms until master mute has
+            # captured their active/muted intent. Zero targets alone cannot
+            # distinguish a master mute from an individually muted room.
+            saved = displayed_speaker_levels() if RECOVERED_SESSION and stored.get("media_player.wohnung") != 0 else stored
+            room_intent = {p["entity_id"]: saved.get(p["entity_id"], p.get("volume"))
+                           for p in room_players}
+            room_intent = {entity: float(value) for entity, value in room_intent.items()
+                           if type(value) in (int, float) and 0 <= value <= 1}
             active = [p for p in room_players
                       if saved.get(p["entity_id"], p.get("volume") or 0) > 0]
             changed = {}
@@ -1327,7 +1326,7 @@ def perform_control(action, body, generation):
             with STATE_LOCK:
                 check_generation(generation)
                 save_speaker_levels({"media_player.wohnung": float(level),
-                                     **(changed if level > 0 else {})})
+                                     **(changed if level > 0 else room_intent)})
                 for changed_entity in changed:
                     VOLUME_CONFIRMATION.pop(changed_entity, None)
                 if level > 0:
@@ -1440,7 +1439,7 @@ class Handler(BaseHTTPRequestHandler):
         path = unquote(urlsplit(self.path).path)
         name = path.rsplit("/", 1)[-1]
         if name == "status" and "/api/" in path:
-            return self.reply(200, {"radio": "direct_playback_pending",
+            return self.reply(200, {"radio": "direct_presets",
                                     "apple_music": "alexa_favorites", "backend": "connected" if TOKEN else "unavailable"})
         if name == "events" and "/api/" in path:
             if STANDBY.is_set():

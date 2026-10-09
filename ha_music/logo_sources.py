@@ -18,7 +18,7 @@ def install():
     for station, filename in ASSETS.items():
         digest = md5(filename.replace(" ", "_").encode("utf-8")).hexdigest()
         url = "https://upload.wikimedia.org/wikipedia/commons/" + digest[0] + "/" + digest[:2] + "/" + filename
-        req = Request(url, headers={"User-Agent": "HA-Music/0.0.3 (logo asset import)"})
+        req = Request(url, headers={"User-Agent": "HA-Music (logo asset import)"})
         with urlopen(req, timeout=25) as response:
             content = response.read(512001)
         if not 100 < len(content) <= 512000:
@@ -32,10 +32,14 @@ def install():
             if node.tag.rsplit("}", 1)[-1] in bad:
                 raise ValueError(f"Unexpected executable SVG element: {station}")
             for k, v in node.attrib.items():
-                if k.lower().endswith("href") and (v.startswith("http") or v.startswith("javascript:")):
+                attribute = k.rsplit("}", 1)[-1].lower()
+                if attribute.startswith("on"):
+                    raise ValueError(f"Unexpected SVG event handler: {station}")
+                if attribute == "href" and v.strip() and not v.strip().startswith("#"):
                     raise ValueError(f"External SVG reference: {station}")
         (TARGET / f"{station}.svg").write_bytes(content)
         print(f"Bundled original station logo: {station} ({len(content)} bytes)")
 
 if __name__ == "__main__":
     install()
+

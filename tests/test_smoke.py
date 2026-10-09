@@ -38,7 +38,7 @@ with tempfile.TemporaryDirectory(dir=ROOT) as temp:
         assert "media_player.fire_tv" in {p["entity_id"] for p in app.detected_devices()}
         try:
             app.perform("radio", {"station": "wdr2"})
-            raise AssertionError("Voice commands must not be enabled")
+            raise AssertionError("Obsolete radio endpoint must not accept commands")
         except ValueError: pass
     with patch.object(app, "TOKEN", "test-token"):
         with patch.object(app, "urlopen") as fake:
@@ -78,3 +78,4 @@ with patch.object(metadata, "ensure_icy_worker"):
         assert metadata.now_playing("wdr2")["title"] == "Song A"
         assert metadata.now_playing("1live")["title"] == "Song B"
         assert metadata.now_playing("swr3")["show"] == "SWR3 Nachrichten"
+
