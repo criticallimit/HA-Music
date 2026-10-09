@@ -37,11 +37,13 @@ class RuntimeTests(unittest.TestCase):
         app.RESTORE_GENERATION = 10
         app.LAST_POWER = "on"
         app.READY = False
+        app.ROOM_TARGETS.clear()
         app.STARTUP_ERROR = None
         app.STARTED_AT = None
         app.STATE_CACHE = (0, None)
         self.states = {
             app.RADIO_SWITCH: {"state": "on"},
+            "media_player.wohnung": {"state": "idle", "attributes": {"volume_level": 0.4}},
             "media_player.wohnzimmer": {"state": "idle", "attributes": {"volume_level": 0.4}},
             "media_player.kueche": {"state": "idle", "attributes": {"volume_level": 0}},
         }
@@ -51,7 +53,7 @@ class RuntimeTests(unittest.TestCase):
              patch.object(app, "state_snapshot", return_value=self.states), \
              patch.object(app, "allowed_entities", return_value=set(self.states)), \
              patch.object(app, "ha_request", side_effect=request or (lambda *args: {})) as calls:
-            app.radio_start_sequence(10)
+            app.radio_start_sequence(app.RESTORE_GENERATION)
             return calls
 
     def test_success_order_and_saved_mute(self):
@@ -129,6 +131,52 @@ class RuntimeTests(unittest.TestCase):
         calls = self.startup().call_args_list
         self.assertTrue(all(c.args[1]["volume_level"] == 0 for c in calls if c.args[0].endswith("volume_set")))
         self.assertEqual(app.speaker_levels()["media_player.wohnzimmer"], 0.4)
+        self.assertEqual(app.displayed_speaker_levels()["media_player.wohnzimmer"], 0)
+
+    def test_start_sets_every_active_room_to_probe_then_master(self):
+        self.states["media_player.bad"] = {"state": "idle", "attributes": {"volume_level": 0.7}}
+        self.states["media_player.buero"] = {"state": "idle", "attributes": {"volume_level": 0.6}}
+        app.save_speaker_levels({"media_player.wohnung": 0.25, "media_player.wohnzimmer": 0.15,
+                                 "media_player.bad": 0.7, "media_player.kueche": 0})
+        calls = self.startup().call_args_list
+        for entity in ("media_player.wohnzimmer", "media_player.bad", "media_player.buero"):
+            commands = [c.args[1]["volume_level"] for c in calls if c.args[0].endswith("volume_set") and c.args[1]["entity_id"] == entity]
+            self.assertEqual(commands, [0.01, 0.25])
+            self.assertEqual(app.speaker_levels()[entity], 0.25)
+            self.assertEqual(app.remembered()[entity], 0.25)
+        self.assertEqual(app.speaker_levels()["media_player.kueche"], 0)
+
+    def test_individual_changes_after_start_do_not_follow_master(self):
+        app.save_speaker_levels({"media_player.wohnung": 0.25, "media_player.wohnzimmer": 0.15})
+        self.startup()
+        devices = {"players": [{"entity_id": "media_player.wohnzimmer", "state": "idle", "volume": 0.25}], "groups": [], "excluded": []}
+        with patch.object(app, "classify_devices", return_value=devices), patch.object(app, "ha_request", return_value={}) as request:
+            app.perform("volume", {"entity_id": "media_player.wohnzimmer", "volume": 0.55})
+        self.assertEqual(request.call_count, 1)
+        self.assertEqual(app.speaker_levels()["media_player.wohnung"], 0.25)
+        self.assertEqual(app.displayed_speaker_levels()["media_player.wohnzimmer"], 0.55)
+        self.assertEqual(app.speaker_levels()["media_player.wohnzimmer"], 0.55)
+        app.transition_power(False)
+        app.transition_power(True)
+        calls = self.startup().call_args_list
+        commands = [c.args[1]["volume_level"] for c in calls if c.args[0].endswith("volume_set") and c.args[1]["entity_id"] == "media_player.wohnzimmer"]
+        self.assertEqual(commands, [0.01, 0.25])
+
+    def test_individual_room_can_be_raised_after_start_with_master_zero(self):
+        app.save_speaker_levels({"media_player.wohnung": 0, "media_player.wohnzimmer": 0.4})
+        self.startup()
+        devices = {"players": [{"entity_id": "media_player.wohnzimmer", "state": "idle", "volume": 0}], "groups": [], "excluded": []}
+        with patch.object(app, "classify_devices", return_value=devices), patch.object(app, "ha_request", return_value={}):
+            app.perform("volume", {"entity_id": "media_player.wohnzimmer", "volume": 0.3})
+        self.assertEqual(app.displayed_speaker_levels()["media_player.wohnzimmer"], 0.3)
+        self.assertEqual(app.speaker_levels()["media_player.wohnung"], 0)
+
+    def test_missing_master_blocks_probe_and_ready(self):
+        self.states.pop("media_player.wohnung")
+        calls = self.startup().call_args_list
+        self.assertFalse(app.READY)
+        self.assertIn("Master-Lautstärke nicht verfügbar", app.STARTUP_ERROR)
+        self.assertFalse(any(c.args[0].endswith("volume_set") and c.args[1]["volume_level"] == 0.01 for c in calls))
 
     def test_wait_is_interruptible(self):
         app.CANCEL.set()

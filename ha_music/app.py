@@ -32,6 +32,7 @@ RADIO_MONITOR_STOP = threading.Event()
 STANDBY = threading.Event()
 STANDBY.set()  # Only an explicit local power-on permits network/startup.
 READY = False
+ROOM_TARGETS = {}
 STARTUP_ERROR = None
 STATE_LOCK = threading.RLock()
 COMMAND_LOCK = threading.RLock()
@@ -136,6 +137,11 @@ def save_speaker_levels(levels):
         temporary.replace(SPEAKER_FILE)
 
 
+def displayed_speaker_levels():
+    with STATE_LOCK:
+        return {**speaker_levels(), **ROOM_TARGETS}
+
+
 def capture_speaker_levels(states):
     # Capture before the radio switch powers the devices down.
     permitted = allowed_entities()
@@ -193,8 +199,11 @@ def verify_restored_volumes(generation, expected):
         print(f"[HA Music] WARNING: {entity} has not confirmed its restored volume", flush=True)
 
 
-def restore_speakers(generation):
+def restore_speakers(generation, use_master=False):
     levels = speaker_levels()
+    master = levels.get("media_player.wohnung")
+    if use_master and master is None:
+        raise RuntimeError("Master-Lautstärke nicht verfügbar")
     available = allowed_entities()
     sent, failed = {}, []
     for entity in sorted(e for e in levels if e != "media_player.wohnung"):
@@ -202,11 +211,17 @@ def restore_speakers(generation):
         if entity not in available:
             continue
         # A muted virtual master must remain silent across power cycles.
-        level = 0.0 if levels.get("media_player.wohnung") == 0 else levels[entity]
+        level = 0.0 if levels[entity] == 0 or master == 0 else master if use_master else levels[entity]
         try:
             startup_request(generation, "/services/media_player/volume_set",
                             {"entity_id": entity, "volume_level": level})
             sent[entity] = level
+            with STATE_LOCK:
+                check_generation(generation)
+                ROOM_TARGETS[entity] = level
+                if use_master and level > 0:
+                    save_speaker_levels({entity: level})
+                    save_remembered(entity, level)
         except StartupCancelled:
             raise
         except NETWORK_ERRORS:
@@ -241,9 +256,17 @@ def set_probe_volume(generation):
     saved = speaker_levels()
     states = state_snapshot()
     permitted = allowed_entities()
+    if "media_player.wohnung" not in saved:
+        entry = states.get("media_player.wohnung", {})
+        master = (entry.get("attributes") or {}).get("volume_level")
+        if entry.get("state") in (None, "unknown", "unavailable") or type(master) not in (int, float) or not 0 <= master <= 1:
+            raise RuntimeError("Master-Lautstärke nicht verfügbar")
+        check_generation(generation)
+        save_speaker_levels({"media_player.wohnung": float(master)})
+        saved["media_player.wohnung"] = float(master)
     # Preserve known pre-probe levels on first use; never guess a restore value.
     missing = {}
-    for entity in RADIO_PLAYERS:
+    for entity in sorted(permitted):
         entry = states.get(entity, {})
         value = (entry.get("attributes") or {}).get("volume_level")
         if entity != "media_player.wohnung" and entity in permitted and entity not in saved and entry.get("state") not in (None, "unknown", "unavailable") and type(value) in (int, float) and 0 <= value <= 1:
@@ -252,7 +275,7 @@ def set_probe_volume(generation):
     if missing:
         save_speaker_levels(missing)
         saved.update(missing)
-    for entity in RADIO_PLAYERS:
+    for entity in sorted(permitted):
         check_generation(generation)
         if entity == "media_player.wohnung" or entity not in permitted or entity not in saved:
             continue
@@ -273,6 +296,7 @@ def radio_start_sequence(generation):
             raise RuntimeError("Radioschalter bestätigt Einschalten nicht")
         startup_request(generation, "/services/homeassistant/update_entity",
                         {"entity_id": list(RADIO_PLAYERS)})
+        startup_completed = False
         try:
             set_probe_volume(generation)
             if not wait_for_start(generation, 2):
@@ -280,10 +304,11 @@ def radio_start_sequence(generation):
             station = last_selected_station()
             if station:
                 play_station(station, generation)
+            startup_completed = True
         finally:
             # Even a failed station/probe command must not leave rooms at 1%.
             check_generation(generation)
-            restore_speakers(generation)
+            restore_speakers(generation, use_master=startup_completed)
         startup_request(generation, "/services/input_boolean/turn_on", {"entity_id": RADIO_READY})
         with STATE_LOCK:
             check_generation(generation)
@@ -324,6 +349,7 @@ def transition_power(on):
         LAST_POWER = "on" if on else "off"
         READY = False
         STARTUP_ERROR = None
+        ROOM_TARGETS.clear()
         STARTED_AT = time.monotonic() if on else None
         STANDBY_UNTIL = 0 if on else time.monotonic() + 10
         if on:
@@ -615,6 +641,9 @@ def perform_control(action, body, generation):
                     startup_request(generation, "/services/media_player/volume_set", {
                         "entity_id": p["entity_id"], "volume_level": level})
                     changed[p["entity_id"]] = float(level)
+                    with STATE_LOCK:
+                        check_generation(generation)
+                        ROOM_TARGETS[p["entity_id"]] = float(level)
                 except StartupCancelled:
                     raise
                 except NETWORK_ERRORS as exc:
@@ -630,7 +659,10 @@ def perform_control(action, body, generation):
                 raise RuntimeError("Master: " + "; ".join(failed))
             return {"ok": True, "updated": len(changed)}
         result = startup_request(generation, "/services/media_player/volume_set", {"entity_id": entity, "volume_level": level})
-        save_speaker_levels({entity: float(level)})
+        with STATE_LOCK:
+            check_generation(generation)
+            save_speaker_levels({entity: float(level)})
+            ROOM_TARGETS[entity] = float(level)
         print(f"[HA Music] Saved speaker {entity}: {round(level * 100)}%", flush=True)
         if level > 0: save_remembered(entity, level)
         return result
@@ -709,7 +741,7 @@ class Handler(BaseHTTPRequestHandler):
                 inventory = integration_inventory()
                 classified = classify_devices(inventory)
                 return self.reply(200, {"players": classified["players"], "groups": classified["groups"], "excluded": classified["excluded"],
-                    "remembered": remembered(), "saved_levels": speaker_levels(), "discovery": "integration_registry",
+                    "remembered": remembered(), "saved_levels": displayed_speaker_levels(), "discovery": "integration_registry",
                     "diagnostics": {domain: {"entities": len(values),
                         "media_players": sum(v.startswith("media_player.") for v in values)}
                         for domain, values in inventory.items()}})

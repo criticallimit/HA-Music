@@ -433,7 +433,7 @@ function masterView(groups, players, saved) {
   return {...group, volume};
 }
 function roomView(player, saved) {
-  const desired = saved?.["media_player.wohnung"] === 0 ? 0 : saved?.[player.entity_id];
+  const desired = saved?.[player.entity_id];
   if (typeof desired !== "number" || typeof player.volume !== "number" || Math.abs(desired-player.volume) <= 0.011) return player;
   return {...player, volume:desired, pending:true, observed:player.volume};
 }

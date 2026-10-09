@@ -26,8 +26,8 @@ Ingress-Gegenstellenprüfung gemäß [Home-Assistant-Entwicklerdokumentation](ht
 ## Verifiziert
 
 - Python-Syntax aller vier Module, bestehende Scaffold-/Smoke-Prüfungen.
-- 30 Python-Regressionstests: Startreihenfolge, 45+2 Sekunden Warteparameter, Fehler, Abbruch, alte Timer, stumme Räume/Master, Persistenz, Cache, Verifikation, Ingress und ICY-Lebenszyklus.
-- 9 JavaScript-Verhaltenstests: Countdown, Fehlerzustände, parallele Polls, verspätete Antworten, gespeicherte Ansicht, Artwork-URL-Prüfung und Soll-/Ist-Lautstärke.
+- 34 Python-Regressionstests: Startreihenfolge, 45+2 Sekunden Warteparameter, Fehler, Abbruch, alte Timer, stumme Räume/Master, Persistenz, Cache, Verifikation, Ingress, ICY-Lebenszyklus und Angleichung an den Master ausschließlich beim Start.
+- 10 JavaScript-Verhaltenstests: Countdown, Fehlerzustände, parallele Polls, verspätete Antworten, gespeicherte Ansicht, Artwork-URL-Prüfung, Soll-/Ist-Lautstärke und unabhängige Raumregelung bei Master 0.
 - JavaScript-Syntax für Frontend, Lovelace-Karte und Loader; `git diff --check`.
 - Die Tests verwenden keine reale HA-/Alexa-Steuerung. Der Socket-Test verwendet ausschließlich eine lokale Verbindung. Unter Windows kann ein Reader erst nach seinem Socket-Timeout zurückkehren; der Standby-Pfad wartet darauf nicht mehr unbegrenzt.
 
@@ -44,9 +44,15 @@ Ingress-Gegenstellenprüfung gemäß [Home-Assistant-Entwicklerdokumentation](ht
 ## Abnahme auf der Zielinstallation
 
 1. Add-on aus `main` neu aufbauen (Version bleibt `0.0.6`), Browser neu laden; Add-on-Neustart darf keine Wiedergabe starten.
-2. Lokal einschalten: Countdown, `update_entity`, nur 1% für aktive Räume, Senderstart, individuelle Wiederherstellung und stumme Räume kontrollieren. Keine gespeicherte Station: kein automatischer Medienbefehl.
+2. Lokal einschalten: Countdown, `update_entity`, nur 1% für aktive Räume, Senderstart, anschließende Angleichung aktiver Räume an die Master-Lautstärke und stumme Räume kontrollieren. Danach Räume einzeln regeln; erst der nächste Start darf sie erneut angleichen. Keine gespeicherte Station: kein automatischer Medienbefehl.
 3. Während der Wartezeit sowie während Senderstart/Restore ausschalten; anschließend schnell wieder einschalten. Alte Durchläufe dürfen keine neuen Befehle senden oder Ready setzen.
 4. HA/API absichtlich nicht erreichbar: Fehler muss sichtbar sein; Ausschalten muss dennoch in Netzwerk-Standby gehen. Netzwerkverkehr nach der Frist mitschneiden, inklusive DNS.
 5. Radio → Amazon → anderes Radio wechseln; pro ausgewähltem Radiosender höchstens ein Metadatenstream, bei Amazon/Standby keiner.
 6. Unterschiedliche Raumlautstärken, ein stummer Raum und Master 0 testen. Nach Ein-/Ausschalten sowie Browserreload Sollwerte, `*`-Hinweise und tatsächlichen Ton vergleichen.
 7. Apple-Ansicht auswählen, aus-/einschalten und Browserreload testen; gespeicherte Ansicht muss nach Ready wieder erscheinen. Zwei Dashboards gleichzeitig öffnen und verzögerte HA-Antworten prüfen.
+
+## Ergänzung: Master-Lautstärke nur beim Start
+
+Auf ausdrücklichen Wunsch ersetzt der erfolgreiche Startabschluss die früheren individuellen Raumwerte durch den gespeicherten Master-Wert. Reihenfolge: 1%-Probe → Senderstart → Master für nicht stumme Räume → Ready. Erfolgreich gesendete positive Werte werden als Raum-Sollwerte und Entstummungswerte gespeichert. Raumwerte von 0 bleiben 0. Bei Master 0 bleiben positive Raum-Absichten gespeichert, während die aktuellen Sollwerte 0 zeigen; ein Raum kann anschließend einzeln angehoben werden, ohne den Master zu ändern. Es gibt keine dauerhafte Kopplung an den Master.
+
+Ohne gespeicherten Master wird vor der Probe ein gültiger Wert der Gruppe `media_player.wohnung` übernommen. Fehlt auch dieser, wird der Start mit sichtbarem Fehler beendet. Bei Probe-/Senderfehlern werden die bisherigen Werte nach Möglichkeit zurückgesetzt, statt einen erfolgreichen Start zu behaupten. Zusätzliche erkannte Raumgeräte nehmen ebenfalls an Probe und Master-Angleichung teil.

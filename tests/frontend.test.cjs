@@ -101,7 +101,12 @@ test('stale HA volume does not move desired room slider to 50 percent', () => {
   assert.equal(room.pending,true);
 });
 
-test('master mute renders zero without losing saved room intent', () => {
+test('room target supplied by backend renders startup mute', () => {
   const h = harness();
-  assert.equal(h.run('roomView({entity_id:"media_player.wohnzimmer",volume:0.4},{"media_player.wohnung":0,"media_player.wohnzimmer":0.4}).volume'),0);
+  assert.equal(h.run('roomView({entity_id:"media_player.wohnzimmer",volume:0.4},{"media_player.wohnung":0,"media_player.wohnzimmer":0}).volume'),0);
+});
+
+test('individual volume remains independent of master zero after startup', () => {
+  const h = harness();
+  assert.equal(h.run('roomView({entity_id:"media_player.wohnzimmer",volume:0.3},{"media_player.wohnung":0,"media_player.wohnzimmer":0.3}).volume'),0.3);
 });

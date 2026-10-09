@@ -9,7 +9,7 @@ Home-Assistant-Add-on für Alexa-Multiroom-Radio mit Ingress-Oberfläche und Lov
 ## Aktuelles Verhalten
 
 - Nach Add-on-Start bleibt das Netzwerk im Standby. Nur der Einschaltbutton in HA Music startet den Ablauf; ein externer Schalterwechsel oder Browserreload startet keinen Sender.
-- Nach Einschalten: 45 Sekunden warten, Alexa-Zustände aktualisieren, bekannte aktive Räume auf 1% setzen, zwei Sekunden warten, gespeicherten Sender anfordern und individuelle Lautstärken wiederherstellen. Stumme Räume und ein stummer Master bleiben bei 0%.
+- Nach Einschalten: 45 Sekunden warten, Alexa-Zustände aktualisieren, bekannte aktive Räume auf 1% setzen, zwei Sekunden warten, gespeicherten Sender anfordern und die gespeicherte Master-Lautstärke auf alle nicht stummen Räume anwenden. Stumme Räume und ein stummer Master bleiben bei 0%. Diese Angleichung erfolgt nur beim Start; anschließend lassen sich die Räume unabhängig regeln. Beim nächsten Start werden aktive Räume erneut an den Master angeglichen.
 - Die 50-Sekunden-Anzeige ist eine Schätzung. Ready wird erst nach erfolgreichen Serviceaufrufen gesetzt; hörbare Wiedergabe kann später beginnen. Fehler sind sichtbar, Lautstärkebestätigungen erfolgen asynchron.
 - Beim Ausschalten werden Startabläufe und Metadaten abgebrochen. Nach zehn Sekunden sperrt das Add-on neue HA-Anfragen. Grenzen bereits laufender Netzwerk-/Alexa-Aufträge: [Prüfbericht](AUDIT.md).
 - Raumregler speichern ihre Sollwerte. `*` bedeutet: HA meldet noch einen anderen Wert. Stummschaltung setzt die Lautstärke auf 0, ohne Räume aus einer Alexa-Gruppe zu entfernen.
