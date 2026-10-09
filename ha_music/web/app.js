@@ -475,7 +475,7 @@ function scheduleVolumeReconciliation(value) {
     const slider = row.querySelector("input[type=range]");
     const label = row.querySelectorAll("span")[1];
     const name = row.querySelector("span")?.textContent || "";
-    if (!slider || slider.disabled || /unavailable/i.test(name)) continue;
+    if (!slider || slider.disabled) continue;
     slider.value = Math.round(value * 100);
     if (label) label.textContent = Math.round(value * 100) + "%*";
   }
@@ -497,6 +497,7 @@ function masterView(groups, players, saved) {
 }
 function roomView(player, saved) {
   const desired = saved?.[player.entity_id];
+  if (typeof player.volume !== "number") return {...player, volume:desired ?? 0.01};
   if (typeof desired !== "number" || typeof player.volume !== "number" || Math.abs(desired-player.volume) <= 0.011) return player;
   return {...player, volume:desired, pending:true, observed:player.volume};
 }
@@ -509,7 +510,7 @@ function volumeRow(p, remembered, master) {
       if (p.pending) label.title = "Gespeicherter Sollwert; Home Assistant meldet " + Math.round(p.observed*100) + "%. Bestätigung steht aus.";
       const mute = document.createElement("button"); mute.type="button"; mute.textContent="Stumm";
       slider.setAttribute("aria-label", (master ? "Master" : p.name) + " Lautstärke");
-      slider.disabled = mediaPreparing || ["unavailable", "unknown"].includes(p.state) || p.volume === null || p.volume === undefined;
+      slider.disabled = mediaPreparing;
       mute.disabled = slider.disabled;
       function renderAudioButton() {
         const audible = Number(slider.value) > 0;

@@ -379,12 +379,11 @@ def restore_speakers(generation, use_master=False):
     master = levels.get("media_player.wohnung")
     if use_master and master is None:
         raise RuntimeError("Master-Lautstärke nicht verfügbar")
-    available = allowed_entities()
-    states = state_snapshot()
+    available = enabled_device_ids()
     sent, failed = {}, []
     for entity in sorted(e for e in levels if e != "media_player.wohnung"):
         check_generation(generation)
-        if entity not in available or states.get(entity, {}).get("state") in (None, "unknown", "unavailable"):
+        if entity not in available:
             continue
         # A muted virtual master must remain silent across power cycles.
         level = 0.0 if levels[entity] == 0 or master == 0 else master if use_master else levels[entity]
@@ -430,38 +429,33 @@ def wait_for_start(generation, seconds):
 
 def set_probe_volume(generation):
     saved = speaker_levels()
-    states = state_snapshot()
-    permitted = allowed_entities()
+    try:
+        states = state_snapshot()
+    except NETWORK_ERRORS as exc:
+        print(f"[HA Music] Startup state read failed; using saved levels: {exc}", flush=True)
+        states = {}
+    permitted = enabled_device_ids()
     if "media_player.wohnung" not in saved:
-        entry = states.get("media_player.wohnung", {})
-        master = (entry.get("attributes") or {}).get("volume_level")
-        if entry.get("state") in (None, "unknown", "unavailable") or type(master) not in (int, float) or not 0 <= master <= 1:
-            raise RuntimeError("Master-Lautstärke nicht verfügbar")
+        master = (states.get("media_player.wohnung", {}).get("attributes") or {}).get("volume_level")
+        saved["media_player.wohnung"] = float(master) if type(master) in (int, float) and 0 <= master <= 1 else 0.01
+    for entity in permitted:
+        if entity not in saved:
+            value = (states.get(entity, {}).get("attributes") or {}).get("volume_level")
+            saved[entity] = float(value) if type(value) in (int, float) and 0 <= value <= 1 else saved["media_player.wohnung"]
+    with STATE_LOCK:
         check_generation(generation)
-        save_speaker_levels({"media_player.wohnung": float(master)})
-        saved["media_player.wohnung"] = float(master)
-    # Preserve known pre-probe levels on first use; never guess a restore value.
-    missing = {}
-    for entity in sorted(permitted):
-        entry = states.get(entity, {})
-        value = (entry.get("attributes") or {}).get("volume_level")
-        if entity != "media_player.wohnung" and entity in permitted and entity not in saved and entry.get("state") not in (None, "unknown", "unavailable") and type(value) in (int, float) and 0 <= value <= 1:
-            missing[entity] = value
-    check_generation(generation)
-    if missing:
-        save_speaker_levels(missing)
-        saved.update(missing)
+        save_speaker_levels(saved)
     probed = {}
-    for entity in sorted(permitted):
-        check_generation(generation)
-        if entity == "media_player.wohnung" or entity not in permitted or entity not in saved:
-            continue
-        if states.get(entity, {}).get("state") in (None, "unknown", "unavailable"):
-            continue
-        level = 0.0 if saved[entity] == 0 or saved.get("media_player.wohnung") == 0 else 0.01
-        startup_request(generation, "/services/media_player/volume_set",
-                        {"entity_id": entity, "volume_level": level})
-        probed[entity] = level
+    for entity in sorted(permitted - {"media_player.wohnung"}):
+        level = 0.0 if saved[entity] == 0 or saved["media_player.wohnung"] == 0 else 0.01
+        try:
+            startup_request(generation, "/services/media_player/volume_set",
+                            {"entity_id": entity, "volume_level": level})
+            probed[entity] = level
+        except StartupCancelled:
+            raise
+        except NETWORK_ERRORS as exc:
+            print(f"[HA Music] Startup volume failed for {entity}: {exc}", flush=True)
     print(f"[HA Music] Startup probe applied: {json.dumps(probed, sort_keys=True)}", flush=True)
     return probed
 
@@ -520,21 +514,22 @@ def radio_start_sequence(generation):
             raise
         except NETWORK_ERRORS as exc:
             print(f"[HA Music] Device synchronization failed: {exc}", flush=True)
-        refresh_entities = sorted(allowed_entities())
+        refresh_entities = sorted(enabled_device_ids())
         if refresh_entities:
-            startup_request(generation, "/services/homeassistant/update_entity",
-                            {"entity_id": refresh_entities})
+            try:
+                startup_request(generation, "/services/homeassistant/update_entity", {"entity_id": refresh_entities})
+            except StartupCancelled:
+                raise
+            except NETWORK_ERRORS as exc:
+                print(f"[HA Music] Device refresh failed; continuing startup: {exc}", flush=True)
         station = last_selected_station()
         startup_completed = False
         try:
-            probed = set_probe_volume(generation)
+            set_probe_volume(generation)
             if not wait_for_start(generation, 2):
                 return
             if station and DIRECT_STATIONS[station]["target"] in enabled_device_ids():
-                target = DIRECT_STATIONS[station]["target"]
-                if target not in probed:
-                    raise RuntimeError(f"Senderstart nicht gesendet: keine sichere Startlautstärke für {target}")
-                play_station(station, generation, check_availability=False)
+                play_station(station, generation)
             startup_completed = True
         finally:
             # Even a failed station/probe command must not leave rooms at 1%.
@@ -767,8 +762,7 @@ def radio_state():
             "dashboard_card_installed":dashboard_card_installed(),
             "show_dashboard_setup":options().get("show_dashboard_setup", False) is True,
             "stations":[{"id":key, "name":item["name"],
-                         "available":item["target"] in selected and item["target"] in states and
-                            states[item["target"]].get("state") not in ("unknown","unavailable")}
+                         "available":item["target"] in selected}
                         for key,item in DIRECT_STATIONS.items()]}
 
 
@@ -806,17 +800,13 @@ def playback_status():
             "details": active if active and (active["title"] or active["artist"]) else details}
 
 
-def play_station(key, generation, *, check_availability=True):
+def play_station(key, generation):
     if not isinstance(key, str) or key not in DIRECT_STATIONS:
         raise ValueError("Unbekannter Sender")
     preset = DIRECT_STATIONS[key]
-    states = state_snapshot()
     target = preset["target"]
     if target not in enabled_device_ids():
         raise ValueError(f"Alexa-Senderziel {target} ist in der Add-on-Konfiguration deaktiviert")
-    state = states.get(target, {}).get("state")
-    if check_availability and state in (None, "unknown", "unavailable"):
-        raise ValueError(f"Alexa-Senderziel {target}: {state or 'Entity fehlt'} – nicht verfügbar")
     result = startup_request(generation, "/services/media_player/play_media", {
         "entity_id": target, "media": {
             "media_content_id": preset["media_content_id"],
@@ -889,11 +879,11 @@ def perform_control(action, body, generation):
         if type(on) is not bool:
             raise ValueError("Ungültiger Raum-Schaltzustand")
         player = next((p for p in classify_devices()["players"] if p["entity_id"] == entity), None)
-        if player is None or player["state"] in ("unknown", "unavailable"):
+        if player is None:
             raise ValueError("Raumgerät ist nicht freigegeben oder nicht verfügbar")
         level = displayed_speaker_levels().get(entity, player.get("volume"))
         if type(level) not in (int, float) or not 0 <= level <= 1:
-            raise ValueError("Raumlautstärke ist nicht verfügbar")
+            level = 0.01
         if on == (level > 0):
             return {"ok": True, "volume": level}
         restore = remembered().get(entity)
@@ -915,15 +905,12 @@ def perform_control(action, body, generation):
         if entity not in {p["entity_id"] for p in permitted}:
             raise ValueError("Media Player nicht freigegeben")
         found = next(x for x in permitted if x["entity_id"] == entity)
-        if found["state"] in ("unknown", "unavailable"):
-            raise ValueError("Media Player nicht verfügbar")
         if entity == "media_player.wohnung":
             # Independent virtual master: apply its absolute percentage to unmuted rooms.
             room_players = classified["players"]
             saved = speaker_levels()
             active = [p for p in room_players
-                      if p["state"] not in ("unknown", "unavailable")
-                      and saved.get(p["entity_id"], p.get("volume") or 0) > 0]
+                      if saved.get(p["entity_id"], p.get("volume") or 0) > 0]
             changed = {}
             failed = []
             for p in active:

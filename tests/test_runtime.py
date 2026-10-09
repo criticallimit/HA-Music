@@ -117,16 +117,16 @@ class RuntimeTests(unittest.TestCase):
             state = app.radio_state()
         self.assertEqual(state["ready"], "on")
         self.assertEqual(state["power"], "on")
-        self.assertFalse(next(s for s in state["stations"] if s["id"] == "wdr2")["available"])
+        self.assertTrue(next(s for s in state["stations"] if s["id"] == "wdr2")["available"])
 
-    def test_offline_room_restore_does_not_send_or_erase_saved_level(self):
+    def test_offline_room_restore_is_attempted_and_adopts_master(self):
         self.states["media_player.buero"] = {"state": "unavailable"}
         app.save_speaker_levels({"media_player.wohnung": 0.25, "media_player.wohnzimmer": 0.4,
                                  "media_player.buero": 0.6})
         with patch.object(app, "state_snapshot", return_value=self.states), patch.object(app, "allowed_entities", return_value=set(self.states)), patch.object(app, "ha_request") as calls:
             app.restore_speakers(10, use_master=True)
-        self.assertEqual([c.args[1]["entity_id"] for c in calls.call_args_list], ["media_player.wohnzimmer"])
-        self.assertEqual(app.speaker_levels()["media_player.buero"], 0.6)
+        self.assertEqual([c.args[1]["entity_id"] for c in calls.call_args_list], ["media_player.buero", "media_player.wohnzimmer"])
+        self.assertEqual(app.speaker_levels()["media_player.buero"], 0.25)
         self.assertEqual(app.speaker_levels()["media_player.wohnzimmer"], 0.25)
 
     def test_cancelled_empty_master_command_cannot_save_new_volume(self):
@@ -240,7 +240,7 @@ class RuntimeTests(unittest.TestCase):
         self.assertTrue(any("Station timed out" in str(c) for c in log.call_args_list))
         self.assertTrue(any(c.args[0].endswith("volume_set") and c.args[1]["volume_level"] == 0.4 for c in calls))
 
-    def test_unavailable_target_keeps_interface_visible_without_unprobed_sender(self):
+    def test_unavailable_target_is_probed_and_sender_is_requested(self):
         app.save_selected_station("wdr2")
         self.states["media_player.wohnzimmer"]["state"] = "unavailable"
         with patch.object(app, "wait_for_start", return_value=True) as wait, patch.object(app, "state_snapshot", return_value=self.states), patch.object(app, "allowed_entities", return_value={"media_player.wohnung", "media_player.wohnzimmer"}), patch.object(app, "ha_request", return_value={}) as calls:
@@ -250,8 +250,9 @@ class RuntimeTests(unittest.TestCase):
         delays = [c.args[1] for c in wait.call_args_list]
         self.assertEqual([delays[0], delays[2]], [40, 2])
         self.assertTrue(9 <= delays[1] <= 10)
-        self.assertEqual(sum(c.args[0].endswith("play_media") for c in calls.call_args_list), 0)
-        self.monitor.select.assert_called_once_with("wdr2")
+        self.assertEqual(sum(c.args[0].endswith("play_media") for c in calls.call_args_list), 1)
+        self.assertTrue(any(c.args[0].endswith("volume_set") and c.args[1]["entity_id"] == "media_player.wohnzimmer" for c in calls.call_args_list))
+        self.monitor.select.assert_any_call("wdr2")
 
     def test_playback_status_includes_cached_radiotext_without_new_fetch(self):
         item = {"status": "available", "title": "Track", "artist": "Artist"}
@@ -307,7 +308,7 @@ class RuntimeTests(unittest.TestCase):
         self.assertFalse(app.PREPARING)
         self.assertTrue(any("nicht wiederhergestellt" in str(c) for c in log.call_args_list))
 
-    def test_probe_failure_restores_and_does_not_play(self):
+    def test_probe_failure_is_logged_but_sender_and_restore_are_attempted(self):
         app.save_selected_station("wdr2")
         def request(path, body=None):
             if path.endswith("volume_set") and body["volume_level"] == 0.01:
@@ -316,8 +317,28 @@ class RuntimeTests(unittest.TestCase):
         calls = self.startup(request).call_args_list
         self.assertTrue(app.READY)
         self.assertFalse(app.PREPARING)
-        self.assertFalse(any(c.args[0].endswith("play_media") for c in calls))
+        self.assertTrue(any(c.args[0].endswith("play_media") for c in calls))
         self.assertTrue(any(c.args[0].endswith("volume_set") and c.args[1]["volume_level"] == 0.4 for c in calls))
+
+    def test_failed_refresh_does_not_stop_probe_or_sender(self):
+        app.save_selected_station("wdr2")
+        def request(path, body=None):
+            if path.endswith("update_entity"):
+                raise TimeoutError("Refresh timed out")
+            return {}
+        calls = self.startup(request).call_args_list
+        self.assertTrue(any(c.args[0].endswith("play_media") for c in calls))
+        self.assertTrue(any(c.args[0].endswith("volume_set") for c in calls))
+        self.assertTrue(app.READY)
+
+    def test_manual_sender_and_room_commands_accept_unavailable_state(self):
+        app.READY = True
+        app.save_speaker_levels({"media_player.wohnzimmer": 0.4})
+        self.states["media_player.wohnzimmer"]["state"] = "unavailable"
+        with patch.object(app, "state_snapshot", return_value=self.states), patch.object(app, "classify_devices", return_value={"players":[{"entity_id":"media_player.wohnzimmer", "state":"unavailable", "volume":0.4}], "groups":[]}), patch.object(app, "ha_request") as calls:
+            app.perform("radio_direct", {"station":"wdr2"})
+            app.perform("volume", {"entity_id":"media_player.wohnzimmer", "volume":0.2})
+        self.assertEqual([c.args[0] for c in calls.call_args_list], ["/services/media_player/play_media", "/services/media_player/volume_set"])
 
     def test_power_off_does_not_queue_behind_media_lock(self):
         with patch.object(app, "ha_request", return_value={}) as request:
@@ -341,10 +362,10 @@ class RuntimeTests(unittest.TestCase):
         self.assertFalse(any(c.args[0].endswith("play_media") for c in calls))
         self.assertTrue(app.READY)
 
-    def test_unknown_first_use_volume_is_not_probed(self):
+    def test_unknown_first_use_volume_uses_master_and_is_probed(self):
         self.states["media_player.wohnzimmer"]["attributes"] = {}
         calls = self.startup().call_args_list
-        self.assertFalse(any(c.args[0].endswith("volume_set") and c.args[1]["entity_id"].endswith("wohnzimmer") for c in calls))
+        self.assertTrue(any(c.args[0].endswith("volume_set") and c.args[1]["entity_id"].endswith("wohnzimmer") for c in calls))
 
     def test_master_zero_remains_silent(self):
         app.save_speaker_levels({"media_player.wohnung": 0, "media_player.wohnzimmer": 0.4})
@@ -391,13 +412,15 @@ class RuntimeTests(unittest.TestCase):
         self.assertEqual(app.displayed_speaker_levels()["media_player.wohnzimmer"], 0.3)
         self.assertEqual(app.speaker_levels()["media_player.wohnung"], 0)
 
-    def test_missing_master_blocks_unsafe_probe_but_not_interface(self):
+    def test_missing_master_uses_one_percent_fallback(self):
         self.states.pop("media_player.wohnung")
         calls = self.startup().call_args_list
         self.assertTrue(app.READY)
         self.assertFalse(app.PREPARING)
         self.assertIsNone(app.STARTUP_ERROR)
-        self.assertFalse(any(c.args[0].endswith("volume_set") and c.args[1]["volume_level"] == 0.01 for c in calls))
+        self.assertTrue(any(c.args[0].endswith("volume_set") and c.args[1]["volume_level"] == 0.01 for c in calls))
+
+        self.assertEqual(app.speaker_levels()["media_player.wohnung"], 0.01)
 
     def test_wait_is_interruptible(self):
         app.CANCEL.set()
