@@ -167,3 +167,33 @@ html.ha-dashboard-card .player-row>span:nth-of-type(2){color:var(--muted)}
 html.ha-dashboard-card .power-buttons button{background:var(--surface)}
 html.ha-dashboard-card .station:hover:not(:disabled){background:var(--secondary-background-color,var(--surface));border-color:var(--border)}
 html.ha-dashboard-card .station.active,html.ha-dashboard-card nav button.active{color:var(--text)}
+
+/* Tablet landscape: fit the complete two-column radio dashboard to viewport height.
+   Width-only tablet breakpoints would stack the cards and force scrolling. */
+@media (orientation:landscape) and (min-width:700px) and (max-height:950px) {
+  .shell{padding:clamp(7px,1.1vh,12px) clamp(10px,1.8vw,24px)}
+  header{min-height:clamp(40px,7vh,52px);margin-bottom:clamp(6px,1vh,10px)}
+  .dashboard{grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:clamp(7px,1vw,12px);align-items:start}
+  .now{height:calc(100dvh - clamp(76px,12vh,105px));min-height:340px;border-radius:clamp(12px,1.6vw,20px)}
+  .now-overlay{min-height:clamp(130px,23vh,170px);padding:clamp(22px,4vh,32px) clamp(12px,1.5vw,22px) 10px}
+  .now h2{font-size:clamp(15px,1.6vw,19px)}
+  .now-ticker{font-size:clamp(13px,1.35vw,16px)}
+  .dashboard-right{gap:clamp(5px,.9vh,9px)}
+  .players{gap:clamp(5px,.9vh,9px)}
+  .master-volume{min-height:clamp(62px,10vh,84px);padding:4px clamp(10px,1.5vw,18px)}
+  .speaker-list .player-row{min-height:clamp(62px,10vh,84px);padding:7px clamp(10px,1.5vw,18px)}
+  .player-row{grid-template-columns:clamp(34px,5vw,55px) minmax(0,1fr) 40px;gap:clamp(3px,.7vh,7px) 7px}
+  .player-row>span:first-child{font-size:clamp(11px,1.15vw,13px)}
+  .player-row>span:nth-of-type(2){font-size:12px}
+  .player-row button{width:30px;height:30px}
+  .player-row button::after{width:19px;height:19px}
+  .stations{grid-template-columns:repeat(4,minmax(0,1fr));gap:clamp(5px,.7vw,9px);margin-top:0}
+  .station{min-height:clamp(56px,9vh,79px);gap:4px;padding:5px 2px;font-size:clamp(10px,1.05vw,13px);border-radius:12px}
+  .station-icon{width:clamp(20px,3.5vw,29px);height:clamp(20px,3.5vw,29px)}
+  .station-icon svg{width:100%;height:100%}
+  .power-buttons button{width:clamp(36px,5vh,44px);height:clamp(36px,5vh,44px)}
+  .power-buttons .power-icon{font-size:clamp(22px,3.7vh,28px)}
+  .settings-toggle{height:clamp(36px,5vh,44px);width:clamp(36px,5vh,44px)}
+  .radio-standby{min-height:calc(100dvh - 110px)}
+}
+/* Very narrow landscape views remain scrollable instead of making controls untappable. */
