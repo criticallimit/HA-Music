@@ -27,10 +27,14 @@ class RuntimeTests(unittest.TestCase):
         self.stack = ExitStack()
         self.addCleanup(self.stack.close)
         folder = Path(self.stack.enter_context(tempfile.TemporaryDirectory(dir=ROOT)))
-        for name in ("VOLUME_FILE", "STATION_FILE", "SPEAKER_FILE", "VIEW_FILE", "OPTIONS"):
+        for name in ("VOLUME_FILE", "STATION_FILE", "SPEAKER_FILE", "VIEW_FILE", "SESSION_FILE", "OPTIONS"):
             self.stack.enter_context(patch.object(app, name, folder / (name + ".json")))
         self.stack.enter_context(patch.object(app, "SUPERVISOR_OPTIONS", None))
         self.stack.enter_context(patch.object(app, "ACTIVE_APPLE", None))
+        self.stack.enter_context(patch.object(app, "RECOVERING", False))
+        self.stack.enter_context(patch.object(app, "RECOVERED_SESSION", False))
+        self.stack.enter_context(patch.object(app, "SOURCE_UNCONFIRMED", False))
+        self.stack.enter_context(patch.object(app, "RECOVERY_MESSAGE", None))
         self.stack.enter_context(patch.dict(app.REGISTERED_DEVICE_NAMES, {}, clear=True))
         app.OPTIONS.write_text(json.dumps({"devices": [{"entity_id": entity, "name": entity, "enabled": True} for entity in ("media_player.wohnung", "media_player.wohnzimmer", "media_player.kueche", "media_player.bad", "media_player.buero")]}))
         self.stack.enter_context(patch.object(app, "synchronize_device_configuration"))
@@ -65,6 +69,393 @@ class RuntimeTests(unittest.TestCase):
              patch.object(app, "ha_request", side_effect=request or (lambda *args: {})) as calls:
             app.radio_start_sequence(app.RESTORE_GENERATION)
             return calls
+
+    def test_track_commands_target_live_group_and_never_change_volume(self):
+        app.READY = True
+        self.states["media_player.wohnung"] = {"state":"playing", "attributes":{
+            "supported_features":16 | 32 | 32768, "shuffle":False}}
+        for command, service in (("previous","media_previous_track"), ("next","media_next_track"), ("shuffle","shuffle_set")):
+            with self.subTest(command=command), patch.object(app, "state_snapshot", return_value=self.states) as snapshot, \
+                 patch.object(app, "allowed_entities", return_value=app.enabled_device_ids()), patch.object(app, "ha_request", return_value={}) as request:
+                body = {"command":command, "entity_id":"media_player.wohnung"}
+                if command == "shuffle":
+                    body["shuffle"] = True
+                app.perform("track_transport", body)
+                expected = {"entity_id":"media_player.wohnung"}
+                if command == "shuffle":
+                    expected["shuffle"] = True
+                request.assert_called_once_with("/services/media_player/" + service, expected)
+                snapshot.assert_called_once_with(fresh=True)
+
+    def test_apple_playlist_shuffle_on_and_off_only_changes_playback_order(self):
+        app.READY = True
+        app.ACTIVE_APPLE = {"target":"media_player.wohnzimmer", "type":"playlist"}
+        for playback_state in ("playing", "paused"):
+            for current in (False, True):
+                self.states["media_player.wohnung"] = {"state":playback_state, "attributes":{
+                    "supported_features":32768, "shuffle":current, "media_content_type":"music"}}
+                with self.subTest(state=playback_state, shuffle=current), \
+                     patch.object(app, "state_snapshot", return_value=self.states), \
+                     patch.object(app, "allowed_entities", return_value=app.enabled_device_ids()), \
+                     patch.object(app, "ha_request", return_value={}) as request:
+                    self.assertEqual(app.track_transport_state(self.states)["shuffle"], current)
+                    app.perform("track_transport", {"command":"shuffle", "entity_id":"media_player.wohnung", "shuffle":not current})
+                    request.assert_called_once_with("/services/media_player/shuffle_set", {
+                        "entity_id":"media_player.wohnung", "shuffle":not current})
+
+    def test_track_capabilities_handle_official_alexa_without_shuffle(self):
+        self.states["media_player.wohnung"] = {"state":"paused", "attributes":{"supported_features":16 | 32}}
+        result = app.track_transport_state(self.states)
+        self.assertTrue(result["can_next"])
+        self.assertTrue(result["can_previous"])
+        self.assertFalse(result["can_shuffle"])
+        self.assertIsNone(result["shuffle"])
+
+    def test_track_transport_falls_back_only_to_configured_controller(self):
+        self.states["media_player.wohnzimmer"] = {"state":"playing", "attributes":{"supported_features":32}}
+        self.states["media_player.kueche"] = {"state":"playing", "attributes":{"supported_features":16 | 32 | 32768}}
+        self.assertEqual(app.track_transport_state(self.states)["entity_id"], "media_player.wohnzimmer")
+        self.states["media_player.wohnzimmer"]["state"] = "unavailable"
+        self.assertIsNone(app.track_transport_state(self.states)["entity_id"])
+
+    def test_apple_transport_uses_its_configured_target_if_group_unavailable(self):
+        app.ACTIVE_APPLE = {"target":"media_player.bad"}
+        self.states["media_player.bad"] = {"state":"playing", "attributes":{"supported_features":32}}
+        self.assertEqual(app.track_transport_state(self.states)["entity_id"], "media_player.bad")
+
+    def test_live_radio_has_no_track_controls_even_with_static_alexa_features(self):
+        app.save_selected_station("wdr2")
+        self.states["media_player.wohnung"] = {"state":"playing", "attributes":{"supported_features":16 | 32 | 32768, "shuffle":False}}
+        state = app.track_transport_state(self.states)
+        self.assertFalse(state["can_next"])
+        self.assertFalse(state["can_previous"])
+        self.assertFalse(state["can_shuffle"])
+
+    def test_unsupported_or_changed_track_target_cannot_send_service(self):
+        app.READY = True
+        self.states["media_player.wohnung"] = {"state":"playing", "attributes":{"supported_features":32}}
+        for body in ({"command":"next", "entity_id":"media_player.kueche"},
+                     {"command":"previous", "entity_id":"media_player.wohnung"},
+                     {"command":"shuffle", "entity_id":"media_player.wohnung", "shuffle":True},
+                     {"command":"turn_on", "entity_id":"media_player.wohnung"}):
+            with self.subTest(body=body), patch.object(app, "state_snapshot", return_value=self.states), \
+                 patch.object(app, "allowed_entities", return_value=app.enabled_device_ids()), patch.object(app, "ha_request") as request:
+                with self.assertRaises(ValueError):
+                    app.perform("track_transport", body)
+                request.assert_not_called()
+
+    def test_shuffle_requires_boolean_state_and_boolean_request(self):
+        app.READY = True
+        self.states["media_player.wohnung"] = {"state":"playing", "attributes":{"supported_features":32768}}
+        self.assertFalse(app.track_transport_state(self.states)["can_shuffle"])
+        self.states["media_player.wohnung"]["attributes"]["shuffle"] = False
+        for value in (None, "true", 1):
+            with self.subTest(value=value), patch.object(app, "state_snapshot", return_value=self.states), \
+                 patch.object(app, "allowed_entities", return_value=app.enabled_device_ids()), patch.object(app, "ha_request") as request:
+                with self.assertRaises(ValueError):
+                    app.perform("track_transport", {"command":"shuffle", "entity_id":"media_player.wohnung", "shuffle":value})
+                request.assert_not_called()
+
+    def test_track_commands_cannot_wake_standby_or_run_during_preparation(self):
+        for standby, ready, preparing in ((True,True,False), (False,False,False), (False,True,True)):
+            app.READY, app.PREPARING = ready, preparing
+            if standby:
+                app.STANDBY.set()
+            else:
+                app.STANDBY.clear()
+            with patch.object(app, "ha_request") as request:
+                with self.assertRaises((app.StartupCancelled, ValueError)):
+                    app.perform("track_transport", {"command":"next", "entity_id":"media_player.wohnung"})
+                request.assert_not_called()
+
+    def test_fresh_track_state_read_bypasses_old_cached_capabilities(self):
+        app.STATE_CACHE = (time.monotonic(), self.states)
+        with patch.object(app, "ha_request", return_value=[]) as request:
+            self.assertEqual(app.state_snapshot(fresh=True), {})
+        request.assert_called_once_with("/states")
+
+    def recovery(self, replies=None):
+        app.STANDBY.set()
+        app.LAST_POWER = "off"
+        app.RECOVERING = True
+        raw = [{"entity_id": entity, **state} for entity, state in self.states.items()]
+        cancellation = Mock()
+        cancellation.is_set.return_value = False
+        cancellation.wait.return_value = False
+        with patch.object(app, "ha_request", side_effect=replies or [raw, raw]) as request:
+            app.recover_session(10, cancellation)
+        return request
+
+    def test_upgrade_reattaches_radio_without_any_device_or_helper_command(self):
+        self.states["media_player.wohnzimmer"]["state"] = "playing"
+        app.save_selected_station("wdr2")
+        app.save_speaker_levels({"media_player.wohnzimmer": 0.8})
+        request = self.recovery()
+        self.assertEqual(request.call_count, 2)
+        for call in request.call_args_list:
+            self.assertEqual(call.args, ("/states",))
+            self.assertEqual(call.kwargs, {"recovery_read": True})
+        self.assertTrue(app.READY)
+        self.assertFalse(app.STANDBY.is_set())
+        self.assertTrue(app.RECOVERED_SESSION)
+        self.assertEqual(app.session_intent(), "on")
+        self.assertEqual(app.speaker_levels()["media_player.wohnzimmer"], 0.8)
+        self.assertNotIn("media_player.wohnzimmer", app.displayed_speaker_levels())
+        self.monitor.assert_not_called()
+        self.assertEqual(self.monitor.method_calls, [("resume", (), {})])
+        with patch.object(app, "state_snapshot", return_value=self.states):
+            self.assertEqual(app.radio_state()["last_station"], "")
+
+    def test_update_reattaches_already_on_ready_idle_devices_without_startup(self):
+        self.states[app.RADIO_READY] = {"state":"on"}
+        with patch.object(app, "radio_start_sequence") as startup:
+            request = self.recovery()
+        self.assertEqual(request.call_count, 2)
+        self.assertTrue(app.READY)
+        self.assertEqual(app.LAST_POWER, "on")
+        self.assertFalse(app.STANDBY.is_set())
+        self.assertTrue(all(call.args == ("/states",) for call in request.call_args_list))
+        startup.assert_not_called()
+
+    def test_already_on_without_ready_or_playback_never_runs_startup(self):
+        self.states[app.RADIO_READY] = {"state":"off"}
+        raw = [{"entity_id": entity, **state} for entity, state in self.states.items()]
+        with patch.object(app, "radio_start_sequence") as startup:
+            request = self.recovery([raw] * 12)
+        self.assertFalse(app.READY)
+        self.assertTrue(app.STANDBY.is_set())
+        self.assertTrue(all(call.args == ("/states",) for call in request.call_args_list))
+        startup.assert_not_called()
+
+    def test_stale_ready_without_available_device_does_not_unlock_ui(self):
+        self.states[app.RADIO_READY] = {"state":"on"}
+        for entity in app.enabled_device_ids():
+            self.states[entity] = {"state":"unavailable"}
+        raw = [{"entity_id": entity, **state} for entity, state in self.states.items()]
+        request = self.recovery([raw] * 12)
+        self.assertEqual(request.call_count, 12)
+        self.assertFalse(app.READY)
+        self.assertTrue(app.STANDBY.is_set())
+
+    def test_ready_idle_recovery_requires_two_consistent_observations(self):
+        ready = [{"entity_id": entity, **state} for entity, state in self.states.items()] + [{"entity_id":app.RADIO_READY, "state":"on"}]
+        not_ready = [{"entity_id": entity, **state} for entity, state in self.states.items()] + [{"entity_id":app.RADIO_READY, "state":"off"}]
+        request = self.recovery([ready, not_ready, ready, ready])
+        self.assertEqual(request.call_count, 4)
+        self.assertTrue(app.READY)
+
+    def test_switch_off_wins_over_ready_idle_devices(self):
+        self.states[app.RADIO_SWITCH] = {"state":"off"}
+        self.states[app.RADIO_READY] = {"state":"on"}
+        request = self.recovery()
+        self.assertEqual(request.call_count, 1)
+        self.assertTrue(app.STANDBY.is_set())
+        self.assertFalse(app.READY)
+
+    def test_power_on_during_update_check_cannot_launch_startup_or_cancel_recovery(self):
+        app.RECOVERING = True
+        app.STANDBY.set()
+        app.LAST_POWER = "off"
+        with patch.object(app, "ha_request") as request, patch.object(app, "radio_start_sequence") as startup:
+            with self.assertRaisesRegex(ValueError, "keine Startsequenz"):
+                app.power_command(True)
+        request.assert_not_called()
+        startup.assert_not_called()
+        self.assertTrue(app.RECOVERING)
+        self.assertTrue(app.STANDBY.is_set())
+        self.assertEqual(app.RESTORE_GENERATION, 10)
+        self.assertIsNone(app.session_intent())
+
+    def test_apple_session_restores_view_without_claiming_old_radio_or_playlist(self):
+        app.save_selected_view("apple")
+        app.save_selected_station("wdr2")
+        self.states["media_player.wohnzimmer"] = {"state": "playing", "attributes": {
+            "media_title": "Aktueller Titel", "media_artist": "Interpret", "volume_level": 0.25}}
+        self.recovery()
+        with patch.object(app, "state_snapshot", return_value=self.states):
+            state = app.radio_state()
+            playback = app.playback_status()
+        self.assertEqual(state["selected_view"], "apple")
+        self.assertEqual(state["last_station"], "")
+        self.assertIsNone(state["apple_music"]["active"])
+        self.assertEqual(playback["details"]["title"], "Aktueller Titel")
+
+    def test_paused_session_reattaches_without_resuming(self):
+        self.states["media_player.wohnung"]["state"] = "paused"
+        request = self.recovery()
+        self.assertTrue(app.READY)
+        self.assertTrue(all(call.args == ("/states",) for call in request.call_args_list))
+
+    def test_explicit_station_selection_after_recovery_restores_radio_metadata(self):
+        self.states["media_player.wohnzimmer"]["state"] = "playing"
+        self.recovery()
+        with patch.object(app, "ha_request", return_value={}), patch.object(app, "state_snapshot", return_value=self.states):
+            app.perform("radio_direct", {"station": "wdr2"})
+            state = app.radio_state()
+        self.assertFalse(state["recovered_session"])
+        self.assertEqual(state["last_station"], "wdr2")
+        self.monitor.resume.assert_called_once()
+        self.monitor.select.assert_called_once_with("wdr2")
+        self.assertTrue(app.RECOVERED_SESSION)
+
+    def test_explicit_apple_selection_after_recovery_keeps_active_favorite(self):
+        favorite = self.apple_favorite()
+        self.states["media_player.wohnzimmer"]["state"] = "playing"
+        self.recovery()
+        with patch.object(app, "ha_request", return_value={}), patch.object(app, "state_snapshot", return_value=self.states):
+            app.perform("apple_music", {"favorite": favorite})
+            state = app.radio_state()
+        self.assertFalse(state["recovered_session"])
+        self.assertEqual(state["apple_music"]["active"]["id"], favorite)
+
+    def test_recovered_playback_does_not_use_idle_devices_old_metadata(self):
+        self.states["media_player.wohnzimmer"]["state"] = "playing"
+        self.states["media_player.kueche"]["attributes"]["media_title"] = "Alte Playlist"
+        self.recovery()
+        with patch.object(app, "state_snapshot", return_value=self.states):
+            info = app.playback_status()
+        self.assertIsNone(info["details"]["title"])
+        self.assertEqual(info["details"]["entity_id"], "media_player.wohnzimmer")
+
+    def test_master_after_recovery_does_not_unmute_room_from_stale_saved_level(self):
+        self.states["media_player.wohnzimmer"]["state"] = "playing"
+        app.save_speaker_levels({"media_player.kueche": 0.8, "media_player.wohnung": 0.4})
+        self.recovery()
+        found = {"groups": [{"entity_id":"media_player.wohnung", "volume":0.4}], "players": [
+            {"entity_id":"media_player.wohnzimmer", "volume":0.4},
+            {"entity_id":"media_player.kueche", "volume":0}], "excluded": []}
+        with patch.object(app, "classify_devices", return_value=found), patch.object(app, "ha_request", return_value={}) as request:
+            app.perform("volume", {"entity_id":"media_player.wohnung", "volume":0.3})
+        request.assert_called_once_with("/services/media_player/volume_set", {
+            "entity_id":"media_player.wohnzimmer", "volume_level":0.3})
+
+    def test_external_off_immediately_after_recovery_is_not_missed(self):
+        self.states["media_player.wohnzimmer"]["state"] = "playing"
+        self.recovery()
+        self.states[app.RADIO_SWITCH]["state"] = "off"
+        with patch.object(app, "state_snapshot", return_value=self.states), patch.object(app, "ha_request", return_value={}), \
+             patch.object(app.RADIO_MONITOR_STOP, "wait", side_effect=[False, True]):
+            app.radio_switch_monitor()
+        self.assertFalse(app.READY)
+        self.assertEqual(app.session_intent(), "off")
+
+    def test_saved_off_never_reads_ha_even_if_cached_playback_is_active(self):
+        app.save_session_intent(False)
+        app.STANDBY.set()
+        with patch.object(app, "ha_request") as request, patch.object(app.threading, "Thread") as thread:
+            app.start_session_recovery()
+        request.assert_not_called()
+        thread.assert_not_called()
+        self.assertTrue(app.STANDBY.is_set())
+
+    def test_active_or_missing_intent_automatically_schedules_read_only_recovery(self):
+        for intent in (None, True):
+            with self.subTest(intent=intent):
+                if intent:
+                    app.save_session_intent(True)
+                app.STANDBY.set()
+                app.RECOVERING = False
+                with patch.object(app.threading, "Thread") as thread:
+                    app.start_session_recovery()
+                    app.start_session_recovery()
+                thread.assert_called_once()
+                self.assertEqual(thread.call_args.kwargs["target"], app.recover_session)
+                self.assertTrue(app.RECOVERING)
+
+    def test_confirmed_switch_off_wins_over_stale_playing_state(self):
+        self.states[app.RADIO_SWITCH]["state"] = "off"
+        self.states["media_player.wohnzimmer"]["state"] = "playing"
+        request = self.recovery()
+        self.assertEqual(request.call_count, 1)
+        self.assertEqual(app.session_intent(), "off")
+        self.assertTrue(app.STANDBY.is_set())
+        self.assertFalse(app.READY)
+
+    def test_unknown_or_disabled_devices_never_unlock_from_saved_ready(self):
+        for state, switch in (("unknown", "on"), ("unavailable", "on"), ("playing", "unknown")):
+            with self.subTest(state=state, switch=switch):
+                self.states[app.RADIO_SWITCH]["state"] = switch
+                self.states[app.RADIO_READY] = {"state": "on"}
+                for entity in app.enabled_device_ids():
+                    self.states[entity] = {"state":state}
+                raw = [{"entity_id": entity, **item} for entity, item in self.states.items()]
+                self.recovery([raw] * 12)
+                self.assertTrue(app.STANDBY.is_set())
+                self.assertFalse(app.READY)
+                self.assertIsNotNone(app.RECOVERY_MESSAGE)
+        self.states[app.RADIO_SWITCH]["state"] = "on"
+        for entity in app.enabled_device_ids():
+            self.states[entity] = {"state":"unavailable"}
+        self.states["media_player.wohnzimmer"]["state"] = "playing"
+        with patch.object(app, "enabled_device_ids", return_value={"media_player.bad"}):
+            raw = [{"entity_id": entity, **item} for entity, item in self.states.items()]
+            self.recovery([raw] * 12)
+        self.assertFalse(app.READY)
+
+    def test_recovery_retries_ha_outage_but_never_runs_startup(self):
+        self.states["media_player.wohnzimmer"]["state"] = "playing"
+        raw = [{"entity_id": entity, **item} for entity, item in self.states.items()]
+        with patch.object(app, "radio_start_sequence") as startup:
+            self.recovery([OSError("offline"), raw, raw])
+        startup.assert_not_called()
+        self.assertTrue(app.READY)
+        self.assertIsNone(app.RECOVERY_MESSAGE)
+
+    def test_delayed_recovery_reply_cannot_undo_explicit_power_off(self):
+        self.states["media_player.wohnzimmer"]["state"] = "playing"
+        raw = [{"entity_id": entity, **item} for entity, item in self.states.items()]
+        def reply(*args, **kwargs):
+            app.power_command(False)
+            return raw
+        app.STANDBY.set()
+        app.RECOVERING = True
+        with patch.object(app, "ha_request", side_effect=reply):
+            app.recover_session(10, app.CANCEL)
+        self.assertEqual(app.session_intent(), "off")
+        self.assertTrue(app.STANDBY.is_set())
+        self.assertFalse(app.READY)
+        self.assertFalse(app.RECOVERING)
+
+    def test_recovery_admission_allows_only_get_states_while_standby(self):
+        app.STANDBY.set()
+        app.RECOVERING = True
+        with patch.object(app, "TOKEN", "test"), patch.object(app, "urlopen") as opened:
+            opened.return_value.__enter__.return_value.read.return_value = b"[]"
+            self.assertEqual(app.ha_request("/states", recovery_read=True), [])
+            self.assertEqual(opened.call_args.args[0].get_method(), "GET")
+            for path, payload, supervisor in (("/states", {}, False), ("/states", None, True),
+                                               ("/services/switch/turn_on", None, False), ("/template", None, False)):
+                with self.assertRaises(ValueError):
+                    app.ha_request(path, payload, supervisor=supervisor, recovery_read=True)
+            self.assertEqual(opened.call_count, 1)
+        app.RECOVERING = False
+        with self.assertRaises(ValueError):
+            app.ha_request("/states", recovery_read=True)
+
+    def test_failed_intent_write_does_not_open_network_on_power_on(self):
+        app.STANDBY.set()
+        with patch.object(app, "save_session_intent", side_effect=OSError("disk full")), patch.object(app, "ha_request") as request:
+            with self.assertRaises(OSError):
+                app.power_command(True)
+        self.assertTrue(app.STANDBY.is_set())
+        request.assert_not_called()
+
+    def test_full_disk_does_not_prevent_explicit_power_off(self):
+        app.READY = True
+        with patch.object(app, "save_session_intent", side_effect=OSError("disk full")), patch.object(app, "ha_request", return_value={}) as request:
+            app.power_command(False)
+        self.assertFalse(app.READY)
+        self.assertEqual(app.LAST_POWER, "off")
+        request.assert_any_call("/services/switch/turn_off", {"entity_id":app.RADIO_SWITCH})
+
+    def test_invalid_intent_is_unknown_and_normal_power_transitions_persist(self):
+        for text in ('{', '[]', '{"version":1,"intent":"invalid"}', '{"version":2,"intent":"on"}'):
+            app.SESSION_FILE.write_text(text)
+            self.assertIsNone(app.session_intent())
+        app.transition_power(True)
+        self.assertEqual(app.session_intent(), "on")
+        app.transition_power(False)
+        self.assertEqual(app.session_intent(), "off")
 
     def apple_favorite(self, kind="Playlist", group="Wohnung"):
         config = json.loads(app.OPTIONS.read_text())
@@ -1123,3 +1514,4 @@ class SecurityTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+

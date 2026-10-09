@@ -28,6 +28,7 @@ VOLUME_FILE = Path(os.environ.get("VOLUME_FILE", "/data/volumes.json"))
 STATION_FILE = Path(os.environ.get("STATION_FILE", "/data/last_station.json"))
 SPEAKER_FILE = Path(os.environ.get("SPEAKER_FILE", "/data/speaker_levels.json"))
 VIEW_FILE = Path(os.environ.get("VIEW_FILE", "/data/selected_view.json"))
+SESSION_FILE = Path(os.environ.get("SESSION_FILE", "/data/session.json"))
 CARD_INSTALLED_FILE = Path("/data/dashboard_card_installed")
 STARTED_AT = None
 RESTORE_GENERATION = 0
@@ -46,6 +47,10 @@ NETWORK_ERRORS = (RuntimeError, OSError, ValueError, HTTPException)
 STANDBY_UNTIL = 0.0
 LAST_POWER = "off"
 ACTIVE_APPLE = None
+RECOVERING = False
+RECOVERED_SESSION = False
+SOURCE_UNCONFIRMED = False
+RECOVERY_MESSAGE = None
 RADIO_PLAYERS = ("media_player.wohnung", "media_player.wohnzimmer", "media_player.kueche", "media_player.bad")
 LOCK = threading.Lock()
 CACHE_LOCK = threading.RLock()
@@ -61,6 +66,9 @@ SUPERVISOR_OPTIONS = None
 REGISTERED_DEVICE_NAMES = {}
 MEDIA_FEATURE_PAUSE = 1
 MEDIA_FEATURE_PLAY = 16384
+MEDIA_FEATURE_PREVIOUS = 16
+MEDIA_FEATURE_NEXT = 32
+MEDIA_FEATURE_SHUFFLE = 32768
 INVENTORY_TEMPLATE = """
 {% set result = namespace(data={}, names={}) %}
 {% for domain in ['alexa_devices', 'alexa_media'] %}
@@ -310,7 +318,11 @@ def save_speaker_levels(levels):
 
 def displayed_speaker_levels():
     with STATE_LOCK:
-        return {**speaker_levels(), **ROOM_TARGETS}
+        saved = speaker_levels()
+        # A reattached session uses observed room levels, not old desired levels.
+        if RECOVERED_SESSION:
+            saved = {k: v for k, v in saved.items() if k == "media_player.wohnung"}
+        return {**saved, **ROOM_TARGETS}
 
 
 def capture_speaker_levels(states):
@@ -577,10 +589,123 @@ def enter_standby(generation):
     print("[HA Music] Standby active: outgoing requests disabled", flush=True)
 
 
+def session_intent():
+    """Missing/invalid pre-upgrade state is unknown, never assumed active."""
+    try:
+        data = json.loads(SESSION_FILE.read_text())
+        if isinstance(data, dict) and data.get("version") == 1:
+            value = data.get("intent")
+            return value if value in ("on", "off") else None
+    except (OSError, ValueError):
+        pass
+    return None
+
+
+def save_session_intent(on):
+    with LOCK:
+        SESSION_FILE.parent.mkdir(parents=True, exist_ok=True)
+        temporary = SESSION_FILE.with_suffix(".tmp")
+        temporary.write_text(json.dumps({"version": 1, "intent": "on" if on else "off"}))
+        temporary.replace(SESSION_FILE)
+
+
+def start_session_recovery():
+    """Bootstrap only. A known local off does not admit even a HA state read.
+
+    On the first upgrade there is no intent file: inspect HA's stored states,
+    without contacting/reloading Alexa or invoking any HA service.
+    """
+    global RECOVERING, RECOVERY_MESSAGE
+    with POWER_LOCK, STATE_LOCK:
+        if session_intent() == "off" or RECOVERING or not STANDBY.is_set():
+            return
+        RECOVERING = True
+        RECOVERY_MESSAGE = "Bestehenden Einschalt- und Wiedergabestatus prüfen …"
+        generation, cancellation = RESTORE_GENERATION, CANCEL
+        threading.Thread(target=recover_session, args=(generation, cancellation), daemon=True).start()
+
+
+def recover_session(generation, cancellation):
+    """Confirm playback or already-ready devices; never run cold startup."""
+    global RECOVERING, RECOVERY_MESSAGE, RECOVERED_SESSION, LAST_POWER, READY
+    global STATE_CACHE
+    global SOURCE_UNCONFIRMED
+    previous = set()
+    previous_ready = set()
+    try:
+        for attempt in range(12):
+            with STATE_LOCK:
+                if generation != RESTORE_GENERATION or cancellation.is_set() or not RECOVERING:
+                    return
+            try:
+                raw = ha_request("/states", recovery_read=True)
+                if not isinstance(raw, list):
+                    raise ValueError("Ungültige Home-Assistant-Zustände")
+                states = {s["entity_id"]: s for s in raw
+                          if isinstance(s, dict) and isinstance(s.get("entity_id"), str)}
+                switch = states.get(RADIO_SWITCH, {}).get("state")
+                active = {entity for entity in enabled_device_ids()
+                          if states.get(entity, {}).get("state") in ("playing", "paused")}
+                already_ready = {entity for entity in enabled_device_ids()
+                                 if states.get(entity, {}).get("state") in ("on", "idle", "playing", "paused")}
+                if states.get(RADIO_READY, {}).get("state") != "on":
+                    already_ready = set()
+                with STATE_LOCK:
+                    if generation != RESTORE_GENERATION or cancellation.is_set() or not RECOVERING:
+                        return
+                    if switch == "off":
+                        save_session_intent(False)
+                        RECOVERY_MESSAGE = None
+                        return
+                    if switch == "on" and (active & previous or already_ready & previous_ready):
+                        save_session_intent(True)
+                        # No transition_power(), ready-helper write, metadata
+                        # selection, volume restore or playback command here.
+                        LAST_POWER = "on"
+                        READY = True
+                        RECOVERED_SESSION = True
+                        SOURCE_UNCONFIRMED = True
+                        RECOVERY_MESSAGE = None
+                        MONITOR.resume()  # No station selected; opens no streams.
+                        STANDBY.clear()
+                        # Do not acquire CACHE_LOCK under STATE_LOCK: requests
+                        # already use the opposite order for standby admission.
+                        break
+                previous = active if switch == "on" else set()
+                previous_ready = already_ready if switch == "on" else set()
+            except NETWORK_ERRORS as exc:
+                previous = set()
+                previous_ready = set()
+                print(f"[HA Music] Read-only session recovery retry: {exc}", flush=True)
+            if attempt < 11 and cancellation.wait(5):
+                return
+        else:
+            with STATE_LOCK:
+                if generation == RESTORE_GENERATION:
+                    RECOVERY_MESSAGE = "Wiedergabe nicht sicher erkannt; keine Gerätebefehle ausgeführt"
+            return
+        with CACHE_LOCK:
+            # The normal monitor will obtain fresh states after this snapshot.
+            STATE_CACHE = (0.0, None)
+        print("[HA Music] Existing powered session reattached without device commands", flush=True)
+    finally:
+        with STATE_LOCK:
+            if generation == RESTORE_GENERATION:
+                RECOVERING = False
+
+
 def transition_power(on):
     global RESTORE_GENERATION, STARTED_AT, LAST_POWER, STANDBY_UNTIL, READY, PREPARING, STARTUP_ERROR, CANCEL
     global ACTIVE_APPLE
+    global RECOVERING, RECOVERED_SESSION, RECOVERY_MESSAGE, SOURCE_UNCONFIRMED
     with STATE_LOCK:
+        try:
+            save_session_intent(on)
+        except OSError as exc:
+            if on:
+                raise  # Failed persistence must not open standby admission.
+            # Disk failure must never prevent an explicit/observed power-off.
+            print(f"[HA Music] Off intent could not be saved: {exc}", flush=True)
         CANCEL.set()
         CANCEL = threading.Event()
         RESTORE_GENERATION += 1
@@ -590,6 +715,10 @@ def transition_power(on):
         PREPARING = on
         STARTUP_ERROR = None
         ACTIVE_APPLE = None
+        RECOVERING = False
+        RECOVERED_SESSION = False
+        SOURCE_UNCONFIRMED = False
+        RECOVERY_MESSAGE = None
         ROOM_TARGETS.clear()
         STARTED_AT = time.monotonic() if on else None
         STANDBY_UNTIL = 0 if on else time.monotonic() + 10
@@ -613,7 +742,7 @@ def radio_switch_monitor():
             with POWER_LOCK:
                 generation = RESTORE_GENERATION
                 if generation != observed_generation:
-                    observed_generation, seen_on = generation, False
+                    observed_generation, seen_on = generation, RECOVERED_SESSION
                 state = state_snapshot().get(RADIO_SWITCH, {}).get("state")
                 if state == "on":
                     seen_on = True
@@ -638,12 +767,15 @@ def options():
     except (OSError, ValueError):
         return {}
 
-def ha_request(path, payload=None, *, supervisor=False, startup_configuration=False):
+def ha_request(path, payload=None, *, supervisor=False, startup_configuration=False, recovery_read=False):
     global STATE_CACHE, INVENTORY_CACHE
     configuration_access = startup_configuration and supervisor and path in ("/addons/self/info", "/addons/self/options")
     if startup_configuration and not configuration_access:
         raise ValueError("Initialisierung erlaubt nur die eigenen Supervisor-Optionen")
-    if STANDBY.is_set() and not configuration_access:
+    recovery_access = recovery_read and RECOVERING and path == "/states" and payload is None and not supervisor
+    if recovery_read and not recovery_access:
+        raise ValueError("Wiederanbindung erlaubt nur das Lesen der HA-Zustände")
+    if STANDBY.is_set() and not (configuration_access or recovery_access):
         raise RuntimeError("HA Music standby: outbound network disabled")
     if not TOKEN:
         raise RuntimeError("Home Assistant API token unavailable")
@@ -655,7 +787,7 @@ def ha_request(path, payload=None, *, supervisor=False, startup_configuration=Fa
     timeout = 30 if path == "/services/homeassistant/reload_config_entry" else 8
     with urlopen(req, timeout=timeout) as response:
         with RESPONSE_LOCK:
-            if STANDBY.is_set() and not configuration_access:
+            if STANDBY.is_set() and not (configuration_access or (recovery_access and RECOVERING)):
                 raise RuntimeError("HA Music standby: response cancelled")
             ACTIVE_RESPONSES.add(response)
         try:
@@ -735,7 +867,7 @@ def apple_music_selection():
 
 
 def play_apple_music(favorite_id, generation):
-    global ACTIVE_APPLE
+    global ACTIVE_APPLE, SOURCE_UNCONFIRMED
     selection = apple_music_selection()
     favorite = next((item for item in selection["items"] if item["id"] == favorite_id), None)
     if favorite is None:
@@ -751,6 +883,7 @@ def play_apple_music(favorite_id, generation):
     with STATE_LOCK:
         check_generation(generation)
         ACTIVE_APPLE = {**favorite, "target": selection["target"]}
+        SOURCE_UNCONFIRMED = False
         MONITOR.select("")  # Apple playback no longer needs a radio metadata stream.
     return result
 
@@ -798,13 +931,13 @@ def startup_remaining():
     return max(0, 70 - int(time.monotonic() - STARTED_AT))
 
 
-def state_snapshot():
+def state_snapshot(*, fresh=False):
     global STATE_CACHE
     with CACHE_LOCK:
         if STANDBY.is_set():
             raise RuntimeError("HA Music standby: outbound network disabled")
         at, cached = STATE_CACHE
-        if cached is not None and time.monotonic() - at < 2:
+        if not fresh and cached is not None and time.monotonic() - at < 2:
             return cached
         states = ha_request("/states")
         if not isinstance(states, list):
@@ -816,6 +949,7 @@ def state_snapshot():
 def radio_state():
     if STANDBY.is_set():
         return {"power":"off", "ready":"off", "standby":True, "last_station":last_selected_station(),
+                "recovering":RECOVERING, "recovery_message":RECOVERY_MESSAGE,
                 "selected_view":selected_view(), "startup_remaining":None, "apple_music":apple_music_selection(),
                 "dashboard_card_installed":dashboard_card_installed(),
                 "show_dashboard_setup":options().get("show_dashboard_setup", False) is True,
@@ -826,7 +960,8 @@ def radio_state():
             "ready":"on" if READY else "off",
             "preparing":PREPARING,
             "startup_error":STARTUP_ERROR,
-            "last_station":last_selected_station(),
+            "last_station":"" if SOURCE_UNCONFIRMED else last_selected_station(),
+            "recovering":False, "recovered_session":SOURCE_UNCONFIRMED,
             "selected_view":selected_view(),
             "apple_music":apple_music_selection(),
             "startup_remaining":startup_remaining(),
@@ -845,6 +980,34 @@ def group_transport_state(states):
     return {"state": state,
             "can_play": state == "paused" and bool(features & MEDIA_FEATURE_PLAY),
             "can_pause": state == "playing" and bool(features & MEDIA_FEATURE_PAUSE)}
+
+
+def track_transport_state(states):
+    """Choose the live group/controller, never an unrelated playing room."""
+    result = {"entity_id":None, "can_previous":False, "can_next":False,
+              "can_shuffle":False, "shuffle":None}
+    with STATE_LOCK:
+        if not ACTIVE_APPLE and not SOURCE_UNCONFIRMED and last_selected_station() in ("wdr2", "1live", "swr3"):
+            return result  # Live radio has no track queue.
+        target = ACTIVE_APPLE["target"] if ACTIVE_APPLE else "media_player.wohnzimmer"
+    selected = enabled_device_ids()
+    for entity in dict.fromkeys(("media_player.wohnung", target)):
+        if entity not in selected:
+            continue
+        entry = states.get(entity, {})
+        attrs = entry.get("attributes") or {}
+        features = attrs.get("supported_features", 0)
+        features = features if type(features) is int else 0
+        if entry.get("state") not in ("playing", "paused") or not features & (
+            MEDIA_FEATURE_PREVIOUS | MEDIA_FEATURE_NEXT | MEDIA_FEATURE_SHUFFLE
+        ) or attrs.get("media_content_type") in ("channel", "radio", "url"):
+            continue
+        shuffle = attrs.get("shuffle")
+        return {"entity_id":entity, "can_previous":bool(features & MEDIA_FEATURE_PREVIOUS),
+                "can_next":bool(features & MEDIA_FEATURE_NEXT),
+                "can_shuffle":bool(features & MEDIA_FEATURE_SHUFFLE) and type(shuffle) is bool,
+                "shuffle":shuffle if type(shuffle) is bool else None}
+    return result
 
 
 def playback_status():
@@ -866,15 +1029,19 @@ def playback_status():
                          "content_type": attrs.get("media_content_type")})
     active = next((p for p in observed if p["state"] == "playing"), None)
     details = next((p for p in observed if p["title"] or p["artist"]), None)
+    if RECOVERED_SESSION:
+        # Idle devices may still carry another session's old title/artwork.
+        details = active or next((p for p in observed if p["state"] == "paused"), None)
     _, station, payload = MONITOR.snapshot()
     return {"playing": active is not None, "players": observed,
             "radio_metadata": {"station": station, "metadata": payload},
             "transport": group_transport_state(states),
+            "track_transport": track_transport_state(states),
             "details": active if active and (active["title"] or active["artist"]) else details}
 
 
 def play_station(key, generation):
-    global ACTIVE_APPLE
+    global ACTIVE_APPLE, SOURCE_UNCONFIRMED
     if not isinstance(key, str) or key not in DIRECT_STATIONS:
         raise ValueError("Unbekannter Sender")
     preset = DIRECT_STATIONS[key]
@@ -888,6 +1055,7 @@ def play_station(key, generation):
     with STATE_LOCK:
         check_generation(generation)
         ACTIVE_APPLE = None
+        SOURCE_UNCONFIRMED = False
         MONITOR.select(key)
         save_selected_station(key)
     return result
@@ -898,11 +1066,13 @@ def power_command(on):
         raise ValueError("Ungültiger Schaltzustand")
     with POWER_LOCK:
         if on:
+            if RECOVERING:
+                raise ValueError("Bestehender Einschaltzustand wird noch geprüft; keine Startsequenz ausgeführt")
             if LAST_POWER == "on" and not STANDBY.is_set():
                 return
             with STATE_LOCK:
-                STANDBY.clear()
                 generation = transition_power(True)
+                STANDBY.clear()
             try:
                 with COMMAND_LOCK:
                     ha_request("/services/switch/turn_on", {"entity_id": RADIO_SWITCH})
@@ -913,6 +1083,9 @@ def power_command(on):
                 raise
         else:
             if STANDBY.is_set():
+                # An explicit off also cancels a pending read-only reattachment.
+                transition_power(False)
+                enter_standby(RESTORE_GENERATION)
                 return
             if LAST_POWER != "off":
                 transition_power(False)
@@ -940,6 +1113,23 @@ def perform(action, body):
 
 
 def perform_control(action, body, generation):
+    if action == "track_transport":
+        command = body.get("command")
+        if command not in ("previous", "next", "shuffle"):
+            raise ValueError("Ungültiger Titelbefehl")
+        transport = track_transport_state(state_snapshot(fresh=True))
+        entity = body.get("entity_id")
+        if not entity or entity != transport["entity_id"] or entity not in allowed_entities():
+            raise ValueError("Wiedergabeziel hat sich geändert oder ist nicht freigegeben")
+        if not transport["can_" + command]:
+            raise ValueError("Titelfunktion wird für die aktuelle Wiedergabe nicht unterstützt")
+        payload = {"entity_id":entity}
+        if command == "shuffle":
+            if type(body.get("shuffle")) is not bool:
+                raise ValueError("Ungültiger Shuffle-Zustand")
+            payload["shuffle"] = body["shuffle"]
+        service = {"previous":"media_previous_track", "next":"media_next_track", "shuffle":"shuffle_set"}[command]
+        return startup_request(generation, "/services/media_player/" + service, payload)
     if action == "group_transport":
         command = body.get("command")
         if command not in ("play", "pause"):
@@ -985,7 +1175,7 @@ def perform_control(action, body, generation):
         if entity == "media_player.wohnung":
             # Independent virtual master: apply its absolute percentage to unmuted rooms.
             room_players = classified["players"]
-            saved = speaker_levels()
+            saved = displayed_speaker_levels() if RECOVERED_SESSION else speaker_levels()
             active = [p for p in room_players
                       if saved.get(p["entity_id"], p.get("volume") or 0) > 0]
             changed = {}
@@ -1190,7 +1380,7 @@ class Handler(BaseHTTPRequestHandler):
             return self.reply(403, {"error": "Ingress only"})
         path = unquote(urlsplit(self.path).path)
         action = path.rsplit("/", 1)[-1]
-        if "/api/" not in path or action not in ("volume", "room_audio", "group_transport", "radio_direct", "apple_music", "radio_power", "selected_view", "dashboard_card_installed"):
+        if "/api/" not in path or action not in ("volume", "room_audio", "group_transport", "track_transport", "radio_direct", "apple_music", "radio_power", "selected_view", "dashboard_card_installed"):
             return self.reply(404, {"error": "Not found"})
         if self.headers.get("Sec-Fetch-Site") == "cross-site":
             return self.reply(403, {"error": "Cross-site request rejected"})
@@ -1222,4 +1412,6 @@ if __name__ == "__main__":
     except NETWORK_ERRORS as exc:
         print(f"[HA Music] Device status migration pending: {exc}", flush=True)
     threading.Thread(target=radio_switch_monitor, daemon=True).start()
+    start_session_recovery()
     ThreadingHTTPServer(("0.0.0.0", PORT), Handler).serve_forever()
+
