@@ -218,3 +218,8 @@ Lokale Coveradressen werden direkt in der Albumliste der normalen Zustandsantwor
 
 Sicherung davor: [backup/main-2026-10-09-before-immediate-covers-9b51d91](https://github.com/criticallimit/HA-Music/tree/backup/main-2026-10-09-before-immediate-covers-9b51d91), Commit 9b51d91fec4ff6179a05d120c93c76e0a9e33744.
 
+### Dezente Musik-Kacheln
+
+Playlist-Kacheln zeigen ein lokal eingebettetes Apple-Logo mit 14% Deckkraft hinter dem lesbaren Namen. Aktive Radio-, Playlist- und Albumkacheln behalten die normale Fläche und werden mit einem Rand in der bisherigen Akzentfarbe markiert; der Albumrand liegt über dem Cover. Playlist- und Albumbereiche sind bündig mit den Lautstärkekarten ausgerichtet. Mobile Ansicht und quadratische Albumcover bleiben erhalten. Das Logo benötigt keine Netzwerkanfrage. SVG-Quelle: [Simple Icons Apple](https://github.com/simple-icons/simple-icons/blob/develop/icons/apple.svg).
+
+Sicherung davor: [backup/main-2026-10-09-before-library-style-a81ca6a](https://github.com/criticallimit/HA-Music/tree/backup/main-2026-10-09-before-library-style-a81ca6a), Commit `a81ca6a7e5474130bc906eff6abf40b14e83c11f`.
