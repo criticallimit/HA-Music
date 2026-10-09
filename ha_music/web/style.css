@@ -27,7 +27,7 @@ nav button.active{background:#275276;border-color:#4d8bb8;color:#fff}
 /* AMAZON: square album art covers the full surface; this is intentional. */
 .now:not(.radio-selected) .art{background:#17191d}
 .now:not(.radio-selected) .art img:not([hidden]){object-fit:cover;padding:0}
-.now-overlay{position:absolute;left:0;right:0;bottom:0;min-height:192px;display:flex;flex-direction:column;justify-content:flex-start;padding:40px 24px 16px;border-radius:0 0 24px 24px;color:#fff;background:linear-gradient(transparent,rgba(12,14,19,.7) 32%,rgba(12,14,19,.85))}
+.now-overlay{position:absolute;left:0;right:0;bottom:0;min-height:192px;display:flex;flex-direction:column;justify-content:flex-start;padding:40px 24px 16px;color:#fff;background:linear-gradient(transparent,rgba(12,14,19,.7) 32%,rgba(12,14,19,.85))}
 .now-head{height:28px;flex:0 0 28px}
 .now-head small{display:none}
 .now h2{font-size:20px;line-height:26px;margin:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
