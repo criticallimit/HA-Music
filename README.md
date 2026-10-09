@@ -1,12 +1,24 @@
 # HA Music
 
-Home-Assistant-Add-on für Alexa-Multiroom-Radio mit Ingress-Oberfläche und Lovelace-Karte. Entwicklungsstand auf `main`, Version **0.0.6**. Die Apple-Music-Oberfläche ist vorbereitet; Kontoverknüpfung, Mediathekabruf und Apple-Music-Startbefehle sind noch nicht implementiert.
+Home-Assistant-Add-on für Alexa-Multiroom-Radio und Apple-Music-Favoriten mit Ingress-Oberfläche und Lovelace-Karte. Entwicklungsstand auf `main`, Version **0.0.6**. Apple Music wird über das in Alexa verknüpfte Konto abgespielt; ein automatischer Mediathekabruf ist noch nicht implementiert.
 
 ## Apple-Music-Oberfläche
 
-Der vorhandene Button **Apple Music** öffnet eine Seite im gleichen Layout wie Radio. Cover/Logo, laufende Wiedergabe, Master-Lautstärke, Play/Pause und sämtliche aktiv ausgewählten Raumgeräte werden gemeinsam verwendet. Die bestehenden Elemente werden beim Umschalten verschoben, nicht dupliziert; dadurch bleiben Lautstärken, Bedienung und vorhandene Abfragen erhalten. Anstelle der Radiosender erscheinen vorbereitete Bereiche für **Playlists** und **Alben**, zunächst mit ehrlichen Leeranzeigen. Es gibt noch keine persönlichen Inhalte oder funktionslosen Abspielkacheln.
+Der vorhandene Button **Apple Music** öffnet eine Seite im gleichen Layout wie Radio. Cover/Logo, laufende Wiedergabe, Master-Lautstärke, Play/Pause und sämtliche aktiv ausgewählten Raumgeräte werden gemeinsam verwendet. Die bestehenden Elemente werden beim Umschalten verschoben, nicht dupliziert; dadurch bleiben Lautstärken, Bedienung und vorhandene Abfragen erhalten. Anstelle der Radiosender erscheinen konfigurierte **Playlists** und **Alben**. Ohne Favoriten zeigen diese Bereiche Leeranzeigen.
 
-Das Umschalten ändert ausschließlich die gespeicherte Ansicht. Es startet oder stoppt keine Musik und verändert keine Lautstärken. Ein bereits laufender Sender bleibt sichtbar und hörbar. Die feste Startreihenfolge und der gespeicherte Radiosender bleiben unverändert. Für die nächste Ausbaustufe sollen persönliche Favoriten über ein zuvor in Alexa verknüpftes Apple-Music-Konto abgespielt werden; eine automatisch geladene Mediathek benötigt zusätzlich MusicKit/Apple Music API.
+Das Umschalten der Ansicht startet oder stoppt keine Musik und verändert keine Lautstärken. Ein bereits laufender Sender bleibt sichtbar und hörbar. Erst ein Klick auf eine Apple-Music-Kachel sendet einen Abspielbefehl. Dann endet die zusätzliche Radio-Metadatenabfrage; Titel, Interpret und Cover kommen aus Home Assistants Alexa-Media-Player-Zuständen. Die Auswahl gilt gemeinsam für alle geöffneten Ingress-Ansichten. Ein Klick auf einen Radiosender stellt die Radioanzeige wieder her.
+
+### Apple Music einrichten
+
+1. In der **Alexa-App → Musik & Podcasts** Apple Music mit dem gewünschten Apple Account verknüpfen. Der Account muss Apple Music nutzen dürfen, etwa als Mitglied eines Apple-Music-Familienabos. Ein Apple-Passwort wird im Add-on nicht benötigt.
+2. Nach einem Neuaufbau unter **Add-on → Konfiguration** das **Apple-Music-Steuergerät** auswählen: Entity-ID eines unter Alexa-Geräte auf **Aktiv** gesetzten Echo. Standard: `media_player.wohnzimmer`.
+3. Als **Apple-Music-Lautsprechergruppe** den exakten Alexa-Gruppennamen eintragen, standardmäßig `Wohnung`. Leer bedeutet Wiedergabe direkt auf dem Steuergerät. Die bestehenden Master-/Raumregler beziehen sich weiterhin auf die vorhandene Wohnung-Konfiguration. Eine andere Alexa-Gruppe wird durch diese Option nicht automatisch mit neuen Masterreglern eingerichtet.
+4. Unter **Apple-Music-Favoriten → Hinzufügen** Anzeigename und Art (`Playlist` oder `Album`) hinterlegen. Optional als Suchbegriff den exakten persönlichen Playlistnamen oder Albumtitel mit Interpret angeben. Ohne Suchbegriff wird der Anzeigename verwendet.
+5. Speichern, das Add-on neu starten, HA Music einschalten und nach der bisherigen Startvorbereitung **Apple Music** öffnen. Eine Kachel startet die Auswahl über einen Textbefehl wie „spiele meine Playlist Abendmusik auf Apple Music auf Wohnung“.
+
+Es gibt keine automatische Erkennung deiner Playlists, keine Apple-Kontoprüfung und keinen automatischen Apple-Music-Start beim Einschalten: Die vorhandene feste Startreihenfolge und der zuletzt gespeicherte Radiosender bleiben unverändert. Die Apple-Auswahl wird beim Ausschalten/Neustart zurückgesetzt; die konfigurierten Favoriten und die bevorzugte Ansicht bleiben erhalten. Im Standby und während der Startvorbereitung sind Abspielbefehle gesperrt. Fehler stehen im Add-on-Protokoll/Browserprotokoll, ohne zusätzliche Meldungsfenster.
+
+Alexa wertet die Playlist-/Albumsuche anhand des Namens aus. Eine angenommene HA-Serviceanfrage bestätigt weder hörbare Wiedergabe noch die exakte Auswahl; doppelte Playlistnamen und verzögerte Titel-/Covermeldungen müssen mit dem konkreten Account praktisch getestet werden. Das Add-on setzt bei einem manuellen Favoritenstart keine Lautstärken neu und sendet keine wiederholten Startbefehle. Eine automatisch geladene Mediathek wäre eine spätere zusätzliche MusicKit/Apple-Music-API-Erweiterung. Dokumentation: [Apple Music mit Alexa](https://support.apple.com/de-de/119922), [Alexa Media Player](https://github.com/alandtse/alexa_media_player/wiki).
 
 ## Installation
 

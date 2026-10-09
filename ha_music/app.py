@@ -5,6 +5,7 @@ from urllib.parse import unquote, urlsplit
 from urllib.request import Request, urlopen
 from http.client import HTTPException
 import json
+import hashlib
 from copy import deepcopy
 import os
 import re
@@ -44,6 +45,7 @@ CANCEL = threading.Event()
 NETWORK_ERRORS = (RuntimeError, OSError, ValueError, HTTPException)
 STANDBY_UNTIL = 0.0
 LAST_POWER = "off"
+ACTIVE_APPLE = None
 RADIO_PLAYERS = ("media_player.wohnung", "media_player.wohnzimmer", "media_player.kueche", "media_player.bad")
 LOCK = threading.Lock()
 CACHE_LOCK = threading.RLock()
@@ -577,6 +579,7 @@ def enter_standby(generation):
 
 def transition_power(on):
     global RESTORE_GENERATION, STARTED_AT, LAST_POWER, STANDBY_UNTIL, READY, PREPARING, STARTUP_ERROR, CANCEL
+    global ACTIVE_APPLE
     with STATE_LOCK:
         CANCEL.set()
         CANCEL = threading.Event()
@@ -586,6 +589,7 @@ def transition_power(on):
         READY = False
         PREPARING = on
         STARTUP_ERROR = None
+        ACTIVE_APPLE = None
         ROOM_TARGETS.clear()
         STARTED_AT = time.monotonic() if on else None
         STANDBY_UNTIL = 0 if on else time.monotonic() + 10
@@ -696,6 +700,61 @@ def last_selected_station():
         return ""
 
 
+def apple_music_selection():
+    """Local configured favorites; never accepts arbitrary browser commands."""
+    config = options()
+    target = config.get("apple_music_target", "media_player.wohnzimmer")
+    group = config.get("apple_music_group", "Wohnung")
+    target = target if isinstance(target, str) and ENTITY_RE.fullmatch(target) else ""
+    group = group.strip() if isinstance(group, str) else ""
+    if len(group) > 100 or any(ord(c) < 32 for c in group):
+        group = ""
+        target = ""
+    favorites = config.get("apple_music_favorites", [])
+    items = []
+    if isinstance(favorites, list):
+        for favorite in favorites:
+            if not isinstance(favorite, dict):
+                continue
+            name, kind = favorite.get("name"), favorite.get("kind")
+            search = favorite.get("search") or name
+            if kind not in ("Playlist", "Album") or not all(
+                isinstance(value, str) and value.strip() and len(value) <= 200
+                and not any(ord(c) < 32 for c in value) for value in (name, search)
+            ):
+                continue
+            item = {"name": name.strip(), "kind": kind, "search": search.strip()}
+            item["id"] = hashlib.sha256(json.dumps(item, sort_keys=True).encode()).hexdigest()[:24]
+            if not any(existing["id"] == item["id"] for existing in items):
+                items.append(item)
+    with STATE_LOCK:
+        active = deepcopy(ACTIVE_APPLE)
+        available = LAST_POWER == "on" and READY and not PREPARING and not STANDBY.is_set()
+    return {"items": items, "available": available and target in enabled_device_ids(),
+            "target": target, "group": group, "active": active}
+
+
+def play_apple_music(favorite_id, generation):
+    global ACTIVE_APPLE
+    selection = apple_music_selection()
+    favorite = next((item for item in selection["items"] if item["id"] == favorite_id), None)
+    if favorite is None:
+        raise ValueError("Unbekannter Apple-Music-Favorit")
+    if not selection["available"]:
+        raise ValueError("Apple-Music-Steuergerät ist nicht freigegeben oder HA Music ist noch nicht bereit")
+    phrase = ("spiele meine Playlist " if favorite["kind"] == "Playlist" else "spiele das Album ") + favorite["search"] + " auf Apple Music"
+    if selection["group"]:
+        phrase += " auf " + selection["group"]
+    result = startup_request(generation, "/services/media_player/play_media", {
+        "entity_id": selection["target"], "media": {
+            "media_content_type": "custom", "media_content_id": phrase, "metadata": {}}})
+    with STATE_LOCK:
+        check_generation(generation)
+        ACTIVE_APPLE = {**favorite, "target": selection["target"]}
+        MONITOR.select("")  # Apple playback no longer needs a radio metadata stream.
+    return result
+
+
 def save_selected_station(station):
     if station not in DIRECT_STATIONS:
         return
@@ -757,7 +816,7 @@ def state_snapshot():
 def radio_state():
     if STANDBY.is_set():
         return {"power":"off", "ready":"off", "standby":True, "last_station":last_selected_station(),
-                "selected_view":selected_view(), "startup_remaining":None,
+                "selected_view":selected_view(), "startup_remaining":None, "apple_music":apple_music_selection(),
                 "dashboard_card_installed":dashboard_card_installed(),
                 "show_dashboard_setup":options().get("show_dashboard_setup", False) is True,
                 "stations":[{"id":key,"name":item["name"],"available":False} for key,item in DIRECT_STATIONS.items()]}
@@ -769,6 +828,7 @@ def radio_state():
             "startup_error":STARTUP_ERROR,
             "last_station":last_selected_station(),
             "selected_view":selected_view(),
+            "apple_music":apple_music_selection(),
             "startup_remaining":startup_remaining(),
             "dashboard_card_installed":dashboard_card_installed(),
             "show_dashboard_setup":options().get("show_dashboard_setup", False) is True,
@@ -789,7 +849,9 @@ def group_transport_state(states):
 
 def playback_status():
     states = state_snapshot()
-    candidates = sorted(enabled_device_ids(), key=lambda entity: (entity != "media_player.wohnzimmer", entity))
+    with STATE_LOCK:
+        target = ACTIVE_APPLE["target"] if ACTIVE_APPLE else "media_player.wohnzimmer"
+    candidates = sorted(enabled_device_ids(), key=lambda entity: (entity != target, entity))
     observed = []
     for entity in candidates:
         state = states.get(entity)
@@ -812,6 +874,7 @@ def playback_status():
 
 
 def play_station(key, generation):
+    global ACTIVE_APPLE
     if not isinstance(key, str) or key not in DIRECT_STATIONS:
         raise ValueError("Unbekannter Sender")
     preset = DIRECT_STATIONS[key]
@@ -824,6 +887,7 @@ def play_station(key, generation):
             "media_content_type": preset["media_content_type"], "metadata": {}}})
     with STATE_LOCK:
         check_generation(generation)
+        ACTIVE_APPLE = None
         MONITOR.select(key)
         save_selected_station(key)
     return result
@@ -870,6 +934,8 @@ def perform(action, body):
             raise ValueError("Radio ist noch nicht bereit")
         if action == "radio_direct":
             return play_station(body.get("station"), generation)
+        if action == "apple_music":
+            return play_apple_music(body.get("favorite"), generation)
         return perform_control(action, body, generation)
 
 
@@ -1052,7 +1118,7 @@ class Handler(BaseHTTPRequestHandler):
         name = path.rsplit("/", 1)[-1]
         if name == "status" and "/api/" in path:
             return self.reply(200, {"radio": "direct_playback_pending",
-                                    "apple_music": "planned", "backend": "connected" if TOKEN else "unavailable"})
+                                    "apple_music": "alexa_favorites", "backend": "connected" if TOKEN else "unavailable"})
         if name == "events" and "/api/" in path:
             if STANDBY.is_set():
                 return self.reply(503, {"error":"Standby"})
@@ -1124,7 +1190,7 @@ class Handler(BaseHTTPRequestHandler):
             return self.reply(403, {"error": "Ingress only"})
         path = unquote(urlsplit(self.path).path)
         action = path.rsplit("/", 1)[-1]
-        if "/api/" not in path or action not in ("volume", "room_audio", "group_transport", "radio_direct", "radio_power", "selected_view", "dashboard_card_installed"):
+        if "/api/" not in path or action not in ("volume", "room_audio", "group_transport", "radio_direct", "apple_music", "radio_power", "selected_view", "dashboard_card_installed"):
             return self.reply(404, {"error": "Not found"})
         if self.headers.get("Sec-Fetch-Site") == "cross-site":
             return self.reply(403, {"error": "Cross-site request rejected"})

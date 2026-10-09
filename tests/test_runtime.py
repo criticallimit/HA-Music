@@ -30,6 +30,7 @@ class RuntimeTests(unittest.TestCase):
         for name in ("VOLUME_FILE", "STATION_FILE", "SPEAKER_FILE", "VIEW_FILE", "OPTIONS"):
             self.stack.enter_context(patch.object(app, name, folder / (name + ".json")))
         self.stack.enter_context(patch.object(app, "SUPERVISOR_OPTIONS", None))
+        self.stack.enter_context(patch.object(app, "ACTIVE_APPLE", None))
         self.stack.enter_context(patch.dict(app.REGISTERED_DEVICE_NAMES, {}, clear=True))
         app.OPTIONS.write_text(json.dumps({"devices": [{"entity_id": entity, "name": entity, "enabled": True} for entity in ("media_player.wohnung", "media_player.wohnzimmer", "media_player.kueche", "media_player.bad", "media_player.buero")]}))
         self.stack.enter_context(patch.object(app, "synchronize_device_configuration"))
@@ -64,6 +65,101 @@ class RuntimeTests(unittest.TestCase):
              patch.object(app, "ha_request", side_effect=request or (lambda *args: {})) as calls:
             app.radio_start_sequence(app.RESTORE_GENERATION)
             return calls
+
+    def apple_favorite(self, kind="Playlist", group="Wohnung"):
+        config = json.loads(app.OPTIONS.read_text())
+        config.update(apple_music_group=group, apple_music_favorites=[{"name":"Abendmusik", "kind":kind, "search":"Abendmusik von Dirk"}])
+        app.OPTIONS.write_text(json.dumps(config))
+        return app.apple_music_selection()["items"][0]["id"]
+
+    def test_apple_favorite_starts_group_without_touching_volumes_or_saved_radio(self):
+        app.READY = True
+        app.save_selected_station("wdr2")
+        favorite = self.apple_favorite()
+        with patch.object(app, "ha_request", return_value={}) as request:
+            app.perform("apple_music", {"favorite":favorite})
+        request.assert_called_once_with("/services/media_player/play_media", {
+            "entity_id":"media_player.wohnzimmer", "media":{
+                "media_content_type":"custom", "media_content_id":"spiele meine Playlist Abendmusik von Dirk auf Apple Music auf Wohnung", "metadata":{}}})
+        self.assertEqual(app.ACTIVE_APPLE["id"], favorite)
+        self.assertEqual(app.last_selected_station(), "wdr2")
+        self.monitor.select.assert_called_once_with("")
+
+    def test_apple_album_can_play_on_single_configured_echo(self):
+        app.READY = True
+        favorite = self.apple_favorite("Album", "")
+        with patch.object(app, "ha_request", return_value={}) as request:
+            app.perform("apple_music", {"favorite":favorite})
+        self.assertEqual(request.call_args.args[1]["media"]["media_content_id"], "spiele das Album Abendmusik von Dirk auf Apple Music")
+
+    def test_apple_unknown_favorite_cannot_send_an_arbitrary_command(self):
+        app.READY = True
+        self.apple_favorite()
+        with patch.object(app, "ha_request") as request:
+            with self.assertRaises(ValueError):
+                app.perform("apple_music", {"favorite":"spiele irgendeinen anderen Befehl"})
+        request.assert_not_called()
+
+    def test_apple_favorite_rejected_during_startup_and_standby(self):
+        favorite = self.apple_favorite()
+        with patch.object(app, "ha_request") as request:
+            with self.assertRaises(ValueError):
+                app.perform("apple_music", {"favorite":favorite})
+            app.READY = True
+            app.PREPARING = True
+            with self.assertRaises(ValueError):
+                app.perform("apple_music", {"favorite":favorite})
+            app.PREPARING = False
+            app.STANDBY.set()
+            with self.assertRaises(RuntimeError):
+                app.perform("apple_music", {"favorite":favorite})
+        request.assert_not_called()
+
+    def test_apple_disabled_command_device_receives_no_request(self):
+        app.READY = True
+        favorite = self.apple_favorite()
+        with patch.object(app, "enabled_device_ids", return_value={"media_player.kueche"}), patch.object(app, "ha_request") as request:
+            with self.assertRaises(ValueError):
+                app.perform("apple_music", {"favorite":favorite})
+        request.assert_not_called()
+
+    def test_apple_failed_or_cancelled_command_preserves_previous_source(self):
+        app.READY = True
+        favorite = self.apple_favorite()
+        with patch.object(app, "ha_request", side_effect=OSError("offline")):
+            with self.assertRaises(OSError):
+                app.perform("apple_music", {"favorite":favorite})
+        self.assertIsNone(app.ACTIVE_APPLE)
+        self.monitor.select.assert_not_called()
+        def turn_off(*args):
+            app.transition_power(False)
+            return {}
+        with patch.object(app, "ha_request", side_effect=turn_off):
+            with self.assertRaises(app.StartupCancelled):
+                app.perform("apple_music", {"favorite":favorite})
+        self.assertIsNone(app.ACTIVE_APPLE)
+        self.monitor.select.assert_not_called()
+
+    def test_radio_selection_clears_apple_source_and_power_cycle_clears_it(self):
+        app.READY = True
+        favorite = self.apple_favorite()
+        with patch.object(app, "ha_request", return_value={}):
+            app.perform("apple_music", {"favorite":favorite})
+            app.perform("radio_direct", {"station":"wdr2"})
+            self.assertIsNone(app.ACTIVE_APPLE)
+            app.perform("apple_music", {"favorite":favorite})
+        app.transition_power(False)
+        self.assertIsNone(app.ACTIVE_APPLE)
+        self.assertEqual(app.last_selected_station(), "wdr2")
+
+    def test_apple_configuration_filters_invalid_entries_and_is_local_in_standby(self):
+        app.OPTIONS.write_text(json.dumps({"apple_music_favorites":[{},None,{"name":"Test", "kind":[]},{"name":"Bad\nName","kind":"Playlist"},{"name":"Guter Name","kind":"Album"}]}))
+        app.STANDBY.set()
+        selection = app.apple_music_selection()
+        self.assertFalse(selection["available"])
+        self.assertEqual([item["name"] for item in selection["items"]], ["Guter Name"])
+        first = selection["items"][0]["id"]
+        self.assertEqual(app.apple_music_selection()["items"][0]["id"], first)
 
     def test_inventory_cache_returns_copies_expires_and_respects_standby(self):
         inventory = {"media_player.wohnung": {"integration": "alexa_media"}}

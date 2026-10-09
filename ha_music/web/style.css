@@ -55,6 +55,7 @@ nav button.active{background:#275276;border-color:#4d8bb8;color:#fff}
 .apple-library-section h2{font-size:14px;font-weight:600;margin:4px 0 10px;color:var(--text)}
 .apple-empty{grid-column:1/-1;margin:0;min-height:82px;padding:20px 16px;display:flex;align-items:center;border:1px solid var(--border);border-radius:18px;background:var(--surface);color:var(--muted);font-size:14px;line-height:1.4}
 .apple-library-note{margin:0;color:var(--muted);font-size:12px;line-height:1.5}
+.apple-favorite{white-space:normal;overflow-wrap:anywhere;text-align:center}
 .station{min-height:108px;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:10px;padding:10px 5px;font-size:14px;font-weight:600;white-space:nowrap}
 .station:hover:not(:disabled){background:#293441;border-color:#61768b}
 .station.active,.station.active:disabled{background:#254d6a;border-color:#60b6f2;opacity:1}

@@ -234,6 +234,63 @@ test('Lovelace errors are rendered as text rather than HTML', () => {
   assert.equal(shadowRoot.innerHTML.includes(message),false);
 });
 
+test('Apple favorites are plain text tiles and disabled during standby', () => {
+  const h = harness();
+  h.run('radioReadyForViews=true; renderAppleSelection({available:true,items:[{id:"one",name:"<img src=x>",kind:"Playlist"}]})');
+  const button = h.get('apple-playlist-list').children[0];
+  assert.equal(button.children[1].textContent,'<img src=x>');
+  assert.equal(button.disabled,false);
+  h.run('strictStandby=true; renderAppleSelection(appleSelection)');
+  assert.equal(button.disabled,true);
+});
+
+test('Apple playback sends configured favorite id and suppresses old radio logo restoration', async () => {
+  const h = harness();
+  const calls = [];
+  h.context.reply = async (action,body) => {
+    calls.push({action,body});
+    if (action === 'apple_music') return {ok:true};
+    return {stations:[{id:'wdr2',available:true}],power:'on',ready:'on',last_station:'wdr2',selected_view:'apple',
+      apple_music:{available:true,items:[{id:'one',name:'Abendmusik',kind:'Playlist'}],active:{id:'one',name:'Abendmusik',kind:'Playlist'}}};
+  };
+  h.run('radioReadyForViews=true; selectedStation="wdr2"; api=reply; refreshPlayers=async()=>{}; updateSong=async()=>{}; renderAppleSelection({available:true,items:[{id:"one",name:"Abendmusik",kind:"Playlist"}]})');
+  await h.get('apple-playlist-list').children[0].listeners.click();
+  assert.equal(calls[0].action,'apple_music');
+  assert.equal(calls[0].body.favorite,'one');
+  assert.equal(h.run('activeApple.id'),'one');
+  assert.equal(h.run('selectedStation'),'');
+  assert.equal(h.get('current-title').textContent,'Abendmusik');
+  assert.equal(h.get('current-cover').hidden,true);
+});
+
+test('Apple favorite commands coalesce and cannot wake standby', async () => {
+  const h = harness();
+  let resolve, count=0;
+  h.context.reply=()=>{count++;return new Promise(r=>{resolve=r;});};
+  h.run('radioReadyForViews=true; api=reply; renderAppleSelection({available:true,items:[{id:"one",name:"Test",kind:"Album"}]}); strictStandby=true');
+  await h.run('startAppleFavorite("one")');
+  assert.equal(count,0);
+  h.run('strictStandby=false; loadRadioState=async()=>{}; updateSong=async()=>{}');
+  const first=h.run('startAppleFavorite("one")');
+  await h.run('startAppleFavorite("one")');
+  assert.equal(count,1);
+  h.run('uiGeneration++; radioReadyForViews=false');
+  resolve({ok:true});
+  await first;
+  assert.equal(h.run('activeApple'),null);
+});
+
+test('Apple title and cover use Alexa metadata without changing radio selection', async () => {
+  const h = harness();
+  h.context.reply=async()=>({playing:true,details:{title:'Mein Titel',artist:'Mein Interpret',image:'https://example.com/cover.jpg'}});
+  h.run('api=reply; radioReadyForViews=true; activeApple={id:"one",name:"Abendmusik"}; selectedStation=""');
+  await h.run('updateSong()');
+  assert.equal(h.get('current-title').textContent,'Mein Titel');
+  assert.equal(h.get('now-ticker-text').textContent,'Mein Interpret – Mein Titel');
+  assert.equal(h.get('current-cover').src,'https://example.com/cover.jpg');
+  assert.equal(h.get('current-cover').hidden,false);
+});
+
 test('regular playback reply restores radiotext after missing event delivery', async () => {
   const h = harness();
   h.context.reply=async()=>({playing:true,radio_metadata:{station:'wdr2',metadata:{status:'available',title:'Track',artist:'Artist'}}});

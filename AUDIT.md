@@ -1,5 +1,11 @@
 # Codeprüfung HA Music – 9. Oktober 2026
 
+## Apple-Music-Favoriten über Alexa
+
+Konfigurierbare persönliche Playlists und Alben, Echo-Steuergerät und Alexa-Gruppenname ergänzt. Die Kacheln senden ausschließlich IDs bekannter Favoriten; der Server baut den Apple-Music-Textbefehl aus der Add-on-Konfiguration. Gemeinsamer aktiver Apple-Zustand verhindert, dass der gespeicherte Radiosender beim nächsten Poll die Apple-Anzeige überschreibt. Radio-Metadatenstreams werden nach angenommener Apple-Anfrage beendet und beim Radiosenderwechsel wieder verwendet. Fehler und durch Ausschalten überholte Antworten ändern die aktive Quelle nicht. Der bisherige Startablauf, gespeicherte Radiosender, Version und manuelle Lautstärken bleiben erhalten. Kein zusätzlicher Mediathek-Poll, kein Apple-Passwort oder Apple-Login im Add-on.
+
+Validierung erfolgreich: 96 Python-Runtime-Tests einschließlich acht neuer Fälle für Playlist/Album, Gruppen-/Einzelstart, ungültige IDs, deaktivierte Geräte, Standby, Fehler und Abbruch; 25 Frontend-Tests einschließlich vier neuer Fälle für Apple-Metadaten, Favoriten, parallele Klicks und alte Radio-Logos; fünf Discovery-Template-Tests sowie Syntax-, Scaffold- und Smoke-Prüfungen. Ein realer Apple-Music-Account/Echo ist hier nicht angeschlossen: Namensauflösung, hörbare Wiedergabe und Coververzögerungen bleiben praktisch zu prüfen. Der konfigurierbare Alexa-Gruppenname richtet keine neue HA-Mastergruppe ein; bestehende Master-/Raumregler bleiben der bisherigen Wohnung-Konfiguration zugeordnet. Der unmittelbar folgende Abschnitt dokumentiert die vorherige reine Oberflächenvorbereitung und wird durch diese Erweiterung ergänzt.
+
 ## Apple-Music-Oberfläche vorbereitet
 
 Der Apple-Music-Reiter verwendet dieselben laufenden Cover- und Geräteelemente wie Radio. Nur die Senderauswahl wird gegen leere Bereiche für Playlists und Alben ausgetauscht. Keine zusätzlichen Netzwerkabfragen, keine Änderung von Startzeiten, Backend, Version oder Abspielverhalten. Die Kontoverknüpfung und eigentliche Apple-Music-Auswahl/Wiedergabe sind noch nicht implementiert. Frontend-Regressionen (21 Tests), Syntax- und Scaffold-Prüfung erfolgreich. Der geplante zusätzliche Browsertest für responsive Darstellung konnte nicht durchgeführt werden: Edge beendet sich beim Start im Ausführungssandbox. Visuelle Kontrolle im echten Ingress bleibt erforderlich.

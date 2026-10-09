@@ -1,4 +1,31 @@
 configuration:
+  apple_music_target:
+    name: Apple-Music-Steuergerät
+    description: >-
+      Entity-ID eines aktiven Echo-Geräts, an das der Abspielbefehl gesendet wird.
+      Das Gerät muss auch unter Alexa-Geräte auf Aktiv stehen. Standard ist Wohnzimmer.
+  apple_music_group:
+    name: Apple-Music-Lautsprechergruppe
+    description: >-
+      Exakter Name der Multiroom-Gruppe in der Alexa-App, zum Beispiel Wohnung.
+      Leer lassen für Wiedergabe direkt auf dem Steuergerät. Die Gerätauswahl unten
+      ändert die Alexa-Gruppenmitgliedschaft nicht.
+  apple_music_favorites:
+    name: Apple-Music-Favoriten
+    description: >-
+      Playlists und Alben für die Apple-Music-Seite. Apple Music muss zuvor in der
+      Alexa-App mit deinem Apple Account verknüpft werden. Speichern und das Add-on
+      neu starten. Es werden keine Zugangsdaten im Add-on benötigt.
+    fields:
+      name:
+        name: Anzeigename
+        description: Name der Kachel in HA Music; ohne Suchbegriff auch der an Alexa gesendete Name.
+      kind:
+        name: Art
+        description: Persönliche Playlist oder Album aus Apple Music.
+      search:
+        name: Suchbegriff (optional)
+        description: Exakter Playlistname oder Albumtitel mit Interpret; leer lassen, um den Anzeigenamen zu verwenden.
   show_dashboard_setup:
     name: Dashboard-Einrichtung anzeigen
     description: Zeigt die Einrichtung der Lovelace-Karte in HA Music an.
