@@ -478,20 +478,10 @@ def radio_start_sequence(generation):
             raise
         except NETWORK_ERRORS as exc:
             print(f"[HA Music] Ready helper reset failed: {exc}", flush=True)
-        print("[HA Music] Waiting 50 seconds before interface release", flush=True)
-        if not wait_for_start(generation, 50):
+        print("[HA Music] Waiting 40 seconds before Alexa reload", flush=True)
+        if not wait_for_start(generation, 40):
             return
-        with STATE_LOCK:
-            check_generation(generation)
-            READY = True
-            STARTED_AT = None
-        print("[HA Music] Interface released after 50-second wait", flush=True)
-        try:
-            startup_request(generation, "/services/input_boolean/turn_on", {"entity_id": RADIO_READY})
-        except StartupCancelled:
-            raise
-        except NETWORK_ERRORS as exc:
-            print(f"[HA Music] Ready helper update failed: {exc}", flush=True)
+        release_deadline = time.monotonic() + 10
         selected = enabled_device_ids()
         station = last_selected_station()
         preferred = DIRECT_STATIONS[station]["target"] if station else "media_player.wohnung"
@@ -507,10 +497,20 @@ def radio_start_sequence(generation):
                 print(f"[HA Music] Alexa integration reload failed: {exc}", flush=True)
             else:
                 print("[HA Music] Alexa integration reload completed", flush=True)
-        if reload_target:
-            print("[HA Music] Waiting 10 seconds after Alexa reload before media commands", flush=True)
-            if not wait_for_start(generation, 10):
-                return
+        remaining = max(0.0, release_deadline - time.monotonic())
+        if not wait_for_start(generation, remaining):
+            return
+        with STATE_LOCK:
+            check_generation(generation)
+            READY = True
+            STARTED_AT = None
+        print("[HA Music] Interface released after 50-second wait", flush=True)
+        try:
+            startup_request(generation, "/services/input_boolean/turn_on", {"entity_id": RADIO_READY})
+        except StartupCancelled:
+            raise
+        except NETWORK_ERRORS as exc:
+            print(f"[HA Music] Ready helper update failed: {exc}", flush=True)
         try:
             synchronize_device_configuration(generation)
         except StartupCancelled:

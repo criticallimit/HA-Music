@@ -159,16 +159,16 @@ class RuntimeTests(unittest.TestCase):
         def request(path, body=None):
             phases.append(path)
             if path.endswith("reload_config_entry"):
-                self.assertIn("wait:50", phases)
-                self.assertTrue(app.READY)
+                self.assertIn("wait:40", phases)
+                self.assertFalse(app.READY)
                 self.assertTrue(app.PREPARING)
                 self.assertEqual(body, {"entity_id": "media_player.wohnzimmer"})
                 self.states["media_player.wohnzimmer"]["state"] = "idle"
             return {}
         def wait(generation, seconds):
-            if seconds == 50:
+            if seconds == 40:
                 self.assertNotIn("/services/homeassistant/reload_config_entry", phases)
-            if seconds == 10:
+            if 2 < seconds <= 10:
                 self.assertEqual(phases[-1], "/services/homeassistant/reload_config_entry")
                 self.assertFalse(any(p.endswith("volume_set") for p in phases))
             phases.append(f"wait:{seconds}")
@@ -223,7 +223,7 @@ class RuntimeTests(unittest.TestCase):
         calls = self.startup(request).call_args_list
         self.assertFalse(app.READY)
         self.assertIsNone(app.STARTUP_ERROR)
-        self.assertEqual([c.args[0] for c in calls], ["/services/input_boolean/turn_off", "/services/input_boolean/turn_on", "/services/homeassistant/reload_config_entry"])
+        self.assertEqual([c.args[0] for c in calls], ["/services/input_boolean/turn_off", "/services/homeassistant/reload_config_entry"])
 
     def test_failed_station_restores_but_keeps_interface_visible(self):
         app.save_selected_station("wdr2")
@@ -246,7 +246,9 @@ class RuntimeTests(unittest.TestCase):
             app.radio_start_sequence(10)
         self.assertTrue(app.READY)
         self.assertFalse(app.PREPARING)
-        self.assertEqual([c.args[1] for c in wait.call_args_list], [50, 10, 2])
+        delays = [c.args[1] for c in wait.call_args_list]
+        self.assertEqual([delays[0], delays[2]], [40, 2])
+        self.assertTrue(9 <= delays[1] <= 10)
         self.assertEqual(sum(c.args[0].endswith("play_media") for c in calls.call_args_list), 0)
 
     def test_time_release_precedes_probe_and_manual_controls_wait_for_preparation(self):
@@ -264,7 +266,7 @@ class RuntimeTests(unittest.TestCase):
 
     def test_cancel_during_initial_wait_prevents_ready_and_media_commands(self):
         def cancel(generation, seconds):
-            self.assertEqual(seconds, 50)
+            self.assertEqual(seconds, 40)
             app.transition_power(False)
             return False
         with patch.object(app, "wait_for_start", side_effect=cancel), patch.object(app, "ha_request", return_value={}) as calls:
@@ -275,7 +277,7 @@ class RuntimeTests(unittest.TestCase):
 
     def test_cancel_after_late_reload_prevents_all_media_commands(self):
         def wait(generation, seconds):
-            if seconds == 10:
+            if seconds <= 10:
                 app.transition_power(False)
                 return False
             return True
@@ -283,7 +285,7 @@ class RuntimeTests(unittest.TestCase):
             app.radio_start_sequence(10)
         self.assertFalse(app.READY)
         self.assertFalse(app.PREPARING)
-        self.assertEqual([c.args[0] for c in calls.call_args_list], ["/services/input_boolean/turn_off", "/services/input_boolean/turn_on", "/services/homeassistant/reload_config_entry"])
+        self.assertEqual([c.args[0] for c in calls.call_args_list], ["/services/input_boolean/turn_off", "/services/homeassistant/reload_config_entry"])
 
     def test_restore_failure_is_logged_without_hiding_interface(self):
         def request(path, body=None):
@@ -321,7 +323,7 @@ class RuntimeTests(unittest.TestCase):
             if path.endswith("update_entity"):
                 app.transition_power(False)
         calls = self.startup(request).call_args_list
-        self.assertEqual([c.args[0] for c in calls], ["/services/input_boolean/turn_off", "/services/input_boolean/turn_on", "/services/homeassistant/reload_config_entry", "/services/homeassistant/update_entity"])
+        self.assertEqual([c.args[0] for c in calls], ["/services/input_boolean/turn_off", "/services/homeassistant/reload_config_entry", "/services/input_boolean/turn_on", "/services/homeassistant/update_entity"])
         self.assertFalse(app.READY)
 
     def test_no_stored_station_does_not_play(self):
@@ -391,10 +393,17 @@ class RuntimeTests(unittest.TestCase):
         app.CANCEL.set()
         self.assertFalse(app.wait_for_start(10, 50))
 
-    def test_delays_are_power_50_reload_10_probe_2_seconds(self):
+    def test_reload_duration_counts_towards_fifty_second_release(self):
         with patch.object(app, "wait_for_start", return_value=True) as wait, patch.object(app, "state_snapshot", return_value=self.states), patch.object(app, "allowed_entities", return_value=set()), patch.object(app, "ha_request"):
             app.radio_start_sequence(10)
-        self.assertEqual([c.args for c in wait.call_args_list], [(10, 50), (10, 10), (10, 2)])
+        delays = [c.args[1] for c in wait.call_args_list]
+        self.assertEqual([delays[0], delays[2]], [40, 2])
+        self.assertTrue(9 <= delays[1] <= 10)
+
+    def test_seven_second_reload_leaves_only_three_seconds_of_wait(self):
+        with patch.object(app.time, "monotonic", side_effect=[100, 107]), patch.object(app, "wait_for_start", return_value=True) as wait, patch.object(app, "state_snapshot", return_value=self.states), patch.object(app, "allowed_entities", return_value=set()), patch.object(app, "ha_request"):
+            app.radio_start_sequence(10)
+        self.assertEqual([c.args[1] for c in wait.call_args_list], [40, 3, 2])
 
     def test_verification_cancellation_does_not_poll(self):
         with patch.object(app, "wait_for_start", return_value=False), patch.object(app, "state_snapshot") as states:
