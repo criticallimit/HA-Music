@@ -8,8 +8,9 @@ function harness() {
   const elements = new Map();
   const timers = [];
   function element() {
+    const classes = new Set();
     return {hidden:false, disabled:false, textContent:'', value:'', children:[], attributes:{}, listeners:{},
-      classList:{toggle(){},add(){}}, style:{setProperty(){}},
+      classList:{toggle(name,on){if(on) classes.add(name); else classes.delete(name);},add(name){classes.add(name);},contains(name){return classes.has(name);}}, style:{setProperty(){}},
       addEventListener(name,handler){this.listeners[name]=handler;}, appendChild(e){this.children.push(e);},
       append(...items){this.children.push(...items);}, replaceChildren(...items){this.children = items;},
       setAttribute(k,v){this.attributes[k]=v;}, getAttribute(k){return this.attributes[k];},
@@ -176,10 +177,19 @@ test('cover controls reflect reported capabilities and confirmed shuffle state',
   assert.equal(h.get('track-shuffle').disabled,true);
   h.run('trackTransport.can_shuffle=true; trackTransport.shuffle=true; renderTrackTransport()');
   assert.equal(h.get('track-shuffle').attributes['aria-pressed'],'true');
-  assert.equal(h.get('track-shuffle').attributes['aria-label'],'Shuffle ausschalten');
+  assert.equal(h.get('track-shuffle').attributes['aria-label'],'Zufällige Wiedergabe aktiv – auf Reihenfolge umschalten');
+  assert.equal(h.get('track-shuffle').attributes['data-shuffle-state'],'on');
+  assert.equal(h.get('track-shuffle').classList.contains('active'),true);
+  h.run('trackTransport.shuffle=false; renderTrackTransport()');
+  assert.equal(h.get('track-shuffle').disabled,false);
+  assert.equal(h.get('track-shuffle').attributes['aria-pressed'],'false');
+  assert.equal(h.get('track-shuffle').attributes['data-shuffle-state'],'off');
+  assert.equal(h.get('track-shuffle').classList.contains('active'),false);
+  assert.equal(h.get('track-shuffle').attributes['aria-label'],'Wiedergabe in Reihenfolge – Shuffle einschalten');
   h.run('radioReadyForViews=false; displayRadioReadiness(false)');
   assert.equal(h.get('track-next').disabled,true);
   assert.equal(h.get('track-shuffle').attributes['aria-pressed'],'false');
+  assert.equal(h.get('track-shuffle').attributes['data-shuffle-state'],'unknown');
 });
 
 test('track commands coalesce, include selected target and cannot wake standby', async () => {
@@ -228,6 +238,28 @@ test('old playback reply cannot re-enable cover controls after power off', async
   await request;
   assert.equal(h.get('track-next').disabled,true);
   assert.equal(h.run('trackTransport'),null);
+});
+
+test('active shuffle sends false and only becomes dim when HA reports ordered playback', async () => {
+  const h = harness();
+  const calls=[];
+  h.context.reply=async(action,body)=>{calls.push({action,body});return {ok:true};};
+  h.context.playback=async()=>({playing:true,track_transport:{entity_id:'media_player.wohnung',can_shuffle:true,shuffle:false}});
+  h.run('const originalUpdateSong = updateSong');
+  h.run('api=reply; radioReadyForViews=true; trackTransport={entity_id:"media_player.wohnung",can_shuffle:true,shuffle:true}; renderTrackTransport(); loadRadioState=async()=>{}; updateSong=async()=>{}');
+  assert.equal(h.get('track-shuffle').classList.contains('active'),true);
+  await h.run('controlTrack("shuffle")');
+  assert.equal(calls.length,1);
+  assert.equal(calls[0].action,'track_transport');
+  assert.equal(calls[0].body.shuffle,false);
+  assert.equal(h.get('track-shuffle').attributes['data-shuffle-state'],'unknown');
+  h.run('api=playback');
+  // Call the original polling function again after the request has settled.
+  h.run('updateSong = originalUpdateSong');
+  await h.run('updateSong()');
+  assert.equal(h.get('track-shuffle').attributes['data-shuffle-state'],'off');
+  assert.equal(h.get('track-shuffle').classList.contains('active'),false);
+  assert.equal(h.get('track-shuffle').disabled,false);
 });
 
 test('playback polling renders cover controls for an active queue', async () => {

@@ -86,12 +86,14 @@ function renderTrackTransport() {
     const shuffle = command === "shuffle";
     const confirmed = shuffle && trackTransport?.shuffle === true;
     if (shuffle) {
+      const state = typeof trackTransport?.shuffle === "boolean" ? (confirmed ? "on" : "off") : "unknown";
+      button.setAttribute("data-shuffle-state", state);
       button.setAttribute("aria-pressed", String(confirmed));
       button.classList.toggle("active", confirmed);
     }
     const description = transportPending ? "Befehl wird gesendet …" :
       button.disabled ? label + " derzeit nicht verfügbar" :
-      shuffle ? (confirmed ? "Shuffle ausschalten" : "Shuffle einschalten") : label;
+      shuffle ? (confirmed ? "Zufällige Wiedergabe aktiv – auf Reihenfolge umschalten" : "Wiedergabe in Reihenfolge – Shuffle einschalten") : label;
     button.title = description;
     button.setAttribute("aria-label", description);
   }

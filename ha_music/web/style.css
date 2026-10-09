@@ -43,7 +43,8 @@ nav button.active{background:#275276;border-color:#4d8bb8;color:#fff}
 .track-controls button{display:flex;align-items:center;justify-content:center;width:36px;height:36px;padding:7px;border-radius:9px;background:rgba(255,255,255,.08);color:#e8eef5}
 .track-controls svg{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
 .track-controls button:hover:not(:disabled){background:rgba(255,255,255,.18)}
-.track-controls button.active{color:#79c8ff;background:#254d6a}
+#track-shuffle{color:#758293}
+.track-controls #track-shuffle.active{color:#e8f7ff;background:#254d6a}
 .track-controls button:focus-visible{outline:2px solid #79c8ff;outline-offset:2px}
 .dashboard-right{min-width:0;min-height:720px;display:flex;flex-direction:column;gap:11px}
 .players{display:flex;flex-direction:column;gap:10px}

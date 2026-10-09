@@ -87,6 +87,22 @@ class RuntimeTests(unittest.TestCase):
                 request.assert_called_once_with("/services/media_player/" + service, expected)
                 snapshot.assert_called_once_with(fresh=True)
 
+    def test_apple_playlist_shuffle_on_and_off_only_changes_playback_order(self):
+        app.READY = True
+        app.ACTIVE_APPLE = {"target":"media_player.wohnzimmer", "type":"playlist"}
+        for playback_state in ("playing", "paused"):
+            for current in (False, True):
+                self.states["media_player.wohnung"] = {"state":playback_state, "attributes":{
+                    "supported_features":32768, "shuffle":current, "media_content_type":"music"}}
+                with self.subTest(state=playback_state, shuffle=current), \
+                     patch.object(app, "state_snapshot", return_value=self.states), \
+                     patch.object(app, "allowed_entities", return_value=app.enabled_device_ids()), \
+                     patch.object(app, "ha_request", return_value={}) as request:
+                    self.assertEqual(app.track_transport_state(self.states)["shuffle"], current)
+                    app.perform("track_transport", {"command":"shuffle", "entity_id":"media_player.wohnung", "shuffle":not current})
+                    request.assert_called_once_with("/services/media_player/shuffle_set", {
+                        "entity_id":"media_player.wohnung", "shuffle":not current})
+
     def test_track_capabilities_handle_official_alexa_without_shuffle(self):
         self.states["media_player.wohnung"] = {"state":"paused", "attributes":{"supported_features":16 | 32}}
         result = app.track_transport_state(self.states)
