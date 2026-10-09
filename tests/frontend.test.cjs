@@ -78,6 +78,33 @@ test('saved Apple view survives off state and is restored when ready', async () 
   assert.equal(h.get('apple-page').hidden,false);
 });
 
+test('automatic recovery shows a check in progress without permitting a premature power command', async () => {
+  const h = harness();
+  h.context.reply=async()=>({stations:[],power:'off',ready:'off',standby:true,recovering:true,
+    recovery_message:'Bestehenden Wiedergabestatus prüfen …'});
+  h.run('api=reply');
+  await h.run('loadRadioState()');
+  assert.match(h.get('radio-standby-text').textContent,/prüfen/);
+  assert.equal(h.get('power-on').disabled,true);
+  assert.equal(h.get('power-off').disabled,true);
+  assert.equal(h.run('radioReadyForViews'),false);
+});
+
+test('reattached Apple session clears old radio branding and immediately reads playback', async () => {
+  const h = harness();
+  let reads=0;
+  h.context.reply=async()=>({stations:[{id:'wdr2',available:true}],power:'on',ready:'on',
+    recovered_session:true,last_station:'',selected_view:'apple',apple_music:{items:[],available:true,active:null}});
+  h.context.readPlayback=()=>{reads++;};
+  h.run('api=reply; selectedStation="wdr2"; updateSong=readPlayback; refreshPlayers=async()=>{}');
+  await h.run('loadRadioState()');
+  assert.equal(h.get('apple-page').hidden,false);
+  assert.equal(h.run('selectedStation'),'');
+  assert.equal(h.get('current-cover').hidden,true);
+  assert.equal(h.run('radioReadyForViews'),true);
+  assert.equal(reads,1);
+});
+
 test('device errors replace perpetual loading placeholders', async () => {
   const h = harness();
   h.run('radioReadyForViews=true; api=async()=>{throw new Error("offline")}');
@@ -309,3 +336,4 @@ test('cached radio snapshot cannot overwrite another station or wake standby', a
   h.run('radioReadyForViews=false; applyRadioMetadata({station:"wdr2",metadata:{status:"available",title:"Wrong",artist:"Artist"}})');
   assert.equal(h.get('now-ticker-text').textContent,'');
 });
+

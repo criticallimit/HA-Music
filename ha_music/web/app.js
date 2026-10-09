@@ -470,6 +470,16 @@ async function loadRadioState() {
       if (radioReadyForViews) uiGeneration++;
     }
     radioReadyForViews = radioReady;
+    if (data.recovered_session && (selectedStation || activeApple)) {
+      selectedStation = "";
+      activeApple = null;
+      stationEpoch++;
+      songRequestEpoch++;
+      updateStationLogo("");
+      setActiveStation("");
+      $("now-ticker").hidden = true;
+      $("now-ticker-text").textContent = "";
+    }
     const nextApple = data.apple_music?.active || null;
     if (activeApple?.id !== nextApple?.id) {
       activeApple = nextApple;
@@ -513,9 +523,17 @@ async function loadRadioState() {
       data.power === "on" ? "Radio eingeschaltet" :
       data.power === "off" ? "Radio ausgeschaltet" : "Radio nicht verfügbar";
     $("radio-standby-text").textContent = label;
+    if (data.recovering || data.recovery_message) {
+      countdownEndsAt = null;
+      $("radio-standby-text").textContent = data.recovery_message || "Bestehenden Wiedergabestatus prüfen …";
+    }
     renderCountdown();
-    $("power-on").disabled = data.power === "on" || data.power === "unavailable";
-    $("power-off").disabled = data.power === "off" || data.power === "unavailable";
+    $("power-on").disabled = data.recovering === true || data.power === "on" || data.power === "unavailable";
+    $("power-off").disabled = data.recovering === true || data.power === "off" || data.power === "unavailable";
+    if (becameReady && !selectedStation) {
+      $("current-title").textContent = "Bestehende Wiedergabe";
+      updateSong();
+    }
   } catch(e) {
     if (generation !== uiGeneration) return;
     countdownEndsAt = null;
@@ -694,3 +712,4 @@ async function refreshPlayers() {
 }
 refresh();
 setInterval(() => { if (!strictStandby && radioReadyForViews && !document.querySelector("input[type=range]:active")) refreshPlayers(); }, 30000);
+
