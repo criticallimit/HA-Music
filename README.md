@@ -211,3 +211,10 @@ Der Vergleich vor und nach der Oberflächenverwaltung zeigt denselben Abspieltex
 
 Sicherung davor: [backup/main-2026-10-09-before-local-artwork-8e93376](https://github.com/criticallimit/HA-Music/tree/backup/main-2026-10-09-before-local-artwork-8e93376), Commit 8e93376fd8eae18d76ab3e26ccf683ae61a4e63a.
 
+
+### Gespeicherte Cover ohne Warteschlange anzeigen
+
+Lokale Coveradressen werden direkt in der Albumliste der normalen Zustandsantwort geliefert. Sie erscheinen beim Aufbau der Kacheln, ohne zusätzlichen album-covers-Aufruf oder die bisherigen 4,5 Sekunden Pause pro Album. Lokale Bilder werden sofort geladen, auch wenn der Apple-Bereich noch verborgen ist; Browsercache und Ingress liefern die vorhandenen Dateien. Frühere externe Coveradressen im Browser haben keinen Vorrang vor der lokalen Datei. Der Server prüft dafür nur Dateigröße und Bildsignatur statt bei jeder Zustandsabfrage alle Bilder vollständig einzulesen. Die Warteschlange bleibt für fehlende, erstmalig zu suchende bzw. herunterzuladende Cover bestehen. Favoriten-IDs, Playback und Standby bleiben unverändert.
+
+Sicherung davor: [backup/main-2026-10-09-before-immediate-covers-9b51d91](https://github.com/criticallimit/HA-Music/tree/backup/main-2026-10-09-before-immediate-covers-9b51d91), Commit 9b51d91fec4ff6179a05d120c93c76e0a9e33744.
+

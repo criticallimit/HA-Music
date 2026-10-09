@@ -361,7 +361,11 @@ def stored_album(identity):
         album = json.loads((ARTWORK_DIR / f"{identity}.json").read_text(encoding="utf-8"))
         if not isinstance(album, dict) or album.get("album_id") != identity:
             return None
-        local_album_image(identity)
+        image = ARTWORK_DIR / f"{identity}.image"
+        if not 0 < image.stat().st_size <= 3 * 1024 * 1024:
+            return None
+        with image.open("rb") as stream:
+            image_mime(stream.read(12))
         return {**album, "image":f"api/album-art/{identity}", "fallback_image":""}
     except (OSError, ValueError):
         return None
@@ -1169,6 +1173,10 @@ def apple_music_selection():
         item = dict(favorite)
         identity = {key:item[key] for key in ("name", "kind", "search")}
         item["id"] = hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()[:24]
+        if item.get("album_id"):
+            saved = stored_album(item["album_id"])
+            if saved:
+                item["artwork"] = saved
         items.append(item)
     with STATE_LOCK:
         active = deepcopy(ACTIVE_APPLE)

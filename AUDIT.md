@@ -86,3 +86,11 @@ Kein Release, Versionssprung oder Installation. Eine Rückkehr erfolgt über ein
 - Historische Playlistbefehle vor/nach Konfigurationsmigration identisch. Dirk / Dirk Favoriten als tatsächliches Beispiel regressionsgeprüft. Ursache der Alexa-Suchantwort noch offen; nur gezielte Anforderungsdiagnose ergänzt, keine unbestätigte Änderung am Playback oder Shuffle.
 - Regressionen prüfen Wiederverwendung ohne Internet nach Cacheablauf, lokale HTTP-Bilder, Pfadabwehr, ungültige Downloads, Abbruch und exakten Playlistnamen. Kein Live-Echo-Zugriff; Version bleibt 0.0.6.
 
+
+## 2026-10-09: Lokale Cover sofort anzeigen
+
+- Ursache der Anzeigeverzögerung: vorhandene lokale Cover durchliefen dieselbe 4,5-Sekunden-Warteschlange wie Katalogsuchen; lazy loading verzögerte Bilder in der anfangs versteckten Apple-Ansicht zusätzlich.
+- Albumzustand liefert vorhandene lokale Cover direkt, Browser rendert sie sofort mit eager loading und überspringt die Coverwarteschlange. Lokale Zuordnung hat Vorrang vor externen Browsercache-Ergebnissen.
+- Prüfung gespeicherter Cover liest nur Header und Metadaten; kein vollständiges Bildlesen pro Zustandsantwort. Fehlende Cover behalten begrenzte Suche/Download und Standby-Schutz.
+- Regressionen: mehrere lokale Cover sofort ohne Timer, lokale Adresse vor alter externer Adresse und Backend ohne Netzwerk/Vollbildlesen bei stabiler Favoriten-ID.
+

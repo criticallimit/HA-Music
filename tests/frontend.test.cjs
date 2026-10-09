@@ -834,3 +834,19 @@ test('confirmed album image accepts only the local numeric artwork route', () =>
   assert.equal(h.run('appleButtons.get("a").coverImage.src'),'api/album-art/12');
 });
 
+test('saved album pictures render immediately without timers or cover API calls', () => {
+  const h=harness();
+  h.run('radioReadyForViews=true;renderAppleSelection({items:[{id:"a",kind:"Album",album_id:12,name:"Album",artwork:{image:"api/album-art/12"}},{id:"b",kind:"Album",album_id:13,name:"Album 2",artwork:{image:"api/album-art/13"}}],available:true})');
+  assert.equal(h.run('appleButtons.get("a").coverImage.src'),'api/album-art/12');
+  assert.equal(h.run('appleButtons.get("b").coverImage.src'),'api/album-art/13');
+  assert.equal(h.run('appleButtons.get("a").coverImage.loading'),'eager');
+  assert.equal(h.timers.some(timer=>timer.delay===4500),false);
+});
+
+test('saved covers take priority over old remote browser results', () => {
+  const h=harness();
+  h.run('radioReadyForViews=true;albumCoverResults.set("a:12",{album:{image:"https://is1.mzstatic.com/old.jpg"}});renderAppleSelection({items:[{id:"a",kind:"Album",album_id:12,name:"Album",artwork:{image:"api/album-art/12"}}],available:true})');
+  assert.equal(h.run('appleButtons.get("a").coverImage.src'),'api/album-art/12');
+  assert.equal(h.timers.some(timer=>timer.delay===4500),false);
+});
+

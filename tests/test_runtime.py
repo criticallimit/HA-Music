@@ -1098,6 +1098,21 @@ class RuntimeTests(unittest.TestCase):
                          "spiele meine Playlist Dirk Favoriten auf Apple Music in zufälliger Reihenfolge auf Wohnung")
         self.assertIn("Dirk Favoriten", log.call_args.args[0])
 
+    def test_album_selection_includes_saved_artwork_without_cover_query_or_full_image_read(self):
+        favorite = self.apple_favorite("Album")
+        snapshot = app.library_snapshot()
+        snapshot["items"][0]["album_id"] = 12
+        app.save_library(snapshot)
+        app.ARTWORK_DIR.mkdir()
+        (app.ARTWORK_DIR / "12.image").write_bytes(b"\xff\xd8\xffjpeg")
+        (app.ARTWORK_DIR / "12.json").write_text(json.dumps({"album_id":12, "name":"Album", "artist":"Singer"}))
+        with patch.object(app, "album_cover_search", side_effect=AssertionError("No cover query")), \
+             patch.object(app.Path, "read_bytes", side_effect=AssertionError("No full picture read")), \
+             patch.object(app, "urlopen", side_effect=AssertionError("No Internet")):
+            selection = app.apple_music_selection()
+        self.assertEqual(selection["items"][0]["artwork"]["image"], "api/album-art/12")
+        self.assertEqual(selection["items"][0]["id"], favorite)
+
     def test_apple_configuration_filters_invalid_entries_and_is_local_in_standby(self):
         app.OPTIONS.write_text(json.dumps({"apple_music_favorites":[{},None,{"name":"Test", "kind":[]},{"name":"Bad\nName","kind":"Playlist"},{"name":"Guter Name","kind":"Album"}]}))
         app.STANDBY.set()

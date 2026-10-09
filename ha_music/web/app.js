@@ -407,6 +407,9 @@ function validAppleImage(value) {
   catch (_) { return ""; }
 }
 function coverKey(item) { return item.id + ":" + (item.album_id || "auto"); }
+function savedAlbumCover(item) {
+  return /^api\/album-art\/[1-9][0-9]{0,15}$/.test(item?.artwork?.image || "") ? item.artwork : null;
+}
 function applyAlbumCover(button, album) {
   const imageUrl = validAppleImage(album?.image);
   if (!imageUrl || !button || button.coverApplied === imageUrl) return;
@@ -414,7 +417,7 @@ function applyAlbumCover(button, album) {
   if (button.coverImage) button.coverImage.remove();
   const image = document.createElement("img"); image.className = "apple-album-cover";
   button.coverImage = image;
-  image.alt = ""; image.loading = "lazy"; image.referrerPolicy = "no-referrer";
+  image.alt = ""; image.loading = imageUrl.startsWith("api/album-art/") ? "eager" : "lazy"; image.referrerPolicy = "no-referrer";
   const fallback = validAppleImage(album.fallback_image);
   let retried = false;
   image.addEventListener("error", () => {
@@ -434,13 +437,14 @@ function applyAlbumCover(button, album) {
 }
 function queueAlbumCovers() {
   if (albumCoverTimer || albumCoverPending || !radioReadyForViews || mediaPreparing || strictStandby) return;
-  const candidate = appleSelection?.items?.find(item => item.kind === "Album" &&
+  const candidate = appleSelection?.items?.find(item => item.kind === "Album" && !savedAlbumCover(item) &&
     (!albumCoverResults.has(coverKey(item)) || albumCoverResults.get(coverKey(item)).retryAt <= Date.now()));
   if (!candidate) return;
   albumCoverTimer = true;
   setTimeout(async () => {
     albumCoverTimer = false;
     if (!radioReadyForViews || mediaPreparing || strictStandby || !appleButtons.has(candidate.id)) return;
+    if (appleSelection.items.some(item => item.id === candidate.id && savedAlbumCover(item))) { queueAlbumCovers(); return; }
     albumCoverPending = true;
     const generation = uiGeneration, key = coverKey(candidate);
     try {
@@ -601,7 +605,7 @@ function renderAppleSelection(selection) {
           const link = document.createElement("a"); link.className = "album-store-link"; link.textContent = "Apple Music ↗";
           link.hidden = true; link.target = "_blank"; link.rel = "noopener noreferrer";
           button.artworkLink = link; entry.append(button,link); container.appendChild(entry);
-          if (radioReadyForViews && !strictStandby) applyAlbumCover(button, albumCoverResults.get(coverKey(favorite))?.album);
+          if (radioReadyForViews && !strictStandby) applyAlbumCover(button, savedAlbumCover(favorite) || albumCoverResults.get(coverKey(favorite))?.album);
         } else container.appendChild(button);
       }
     }
@@ -612,7 +616,7 @@ function renderAppleSelection(selection) {
     button.setAttribute("aria-pressed", String(activeApple?.id === id));
     const item = items.find(item => item.id === id);
     if (item?.kind === "Album" && radioReadyForViews && !strictStandby && !mediaPreparing)
-      applyAlbumCover(button, albumCoverResults.get(coverKey(item))?.album);
+      applyAlbumCover(button, savedAlbumCover(item) || albumCoverResults.get(coverKey(item))?.album);
   }
   $("apple-library-note").textContent = items.length && !appleSelection.available && radioReadyForViews && !mediaPreparing
     ? "Apple-Music-Steuergerät unter Add-on → Konfiguration auswählen und unter Alexa-Geräte auf Aktiv setzen."
