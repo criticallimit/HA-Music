@@ -5,6 +5,8 @@ Geprüft: sämtliche Python-Module, Ingress-Frontend (HTML/CSS/JS), Lovelace-Kar
 
 ## Abschließende Ablaufprüfung und neue Startvorgabe
 
+Neueste Anzeigevorgabe: Hinweis-/Fehlerbanner sind auf Nutzerwunsch vollständig entfernt, einschließlich Meldungselement, Styles, Timer und Lautstärkehinweis. Detaillierte Startfehler werden nicht mehr zentral eingeblendet; normale Zustände wie Countdown und „nicht verfügbar“ bleiben als Bedienzustand erhalten. Browserfehler werden nur in die Konsole geschrieben, fehlgeschlagene oder abgelehnte Steueranfragen zusätzlich im Add-on-Protokoll erfasst. Der Start-/Reload-/Lautstärkeablauf ist davon unverändert. Die drei Banner-Timertests entfallen mit dieser Funktion; es bleiben 19 Frontend-Tests. Frühere Aussagen zu eingeblendeten Meldungen und deren Laufzeit gelten damit nicht mehr.
+
 ### Korrektur nach echtem Startprotokoll: Reload nach Einschaltzeit
 
 Das Nutzerprotokoll zeigt den Reload unmittelbar nach Einschalten (10:27:18/19), erst danach die 50-Sekunden-Wartezeit und die Freigabe um 10:28:14. Geräte bleiben laut Screenshot unverfügbar und erholen sich nach einem späteren manuellen Integrationsreload. Die frühere Reihenfolge war für einen Reload nach dem Hochfahren ungeeignet; die konkrete Ursache innerhalb der Alexa-Integration ist damit noch nicht bewiesen. Aktuell gilt: **50 Sekunden Einschaltzeit → Anzeige freigeben → einmal Reload → feste zehn Sekunden Pause → update_entity → Startlautstärke → zwei Sekunden → Sender → Restore**. Die Oberfläche bleibt unabhängig von Playerzuständen. Die zehn Sekunden sind eine feste zeitliche Entkopplung, keine neue Geräteprüfung und keine Garantie für erfolgreiche Integrationserholung. Alle Wartephasen bleiben abbrechbar, es gibt keinen zusätzlichen Reload oder Senderretry.

@@ -100,9 +100,8 @@ async function controlGroup(command) {
     await api("group_transport", {command});
     if (generation !== uiGeneration || !radioReadyForViews) return;
     groupTransport = null;
-    status("");
   } catch (e) {
-    if (generation === uiGeneration) status("Gruppensteuerung fehlgeschlagen: " + e.message);
+    if (generation === uiGeneration) reportError("Gruppensteuerung fehlgeschlagen: " + e.message);
   } finally {
     transportPending = false;
     renderGroupTransport();
@@ -127,7 +126,7 @@ async function selectView(page) {
     preferredView = page;
     show(page);
   } catch (e) {
-    if (generation === uiGeneration && radioReadyForViews) status("Ansicht konnte nicht gespeichert werden: " + e.message);
+    if (generation === uiGeneration && radioReadyForViews) reportError("Ansicht konnte nicht gespeichert werden: " + e.message);
   }
   finally { viewPending = false; }
 }
@@ -318,29 +317,9 @@ function closeRadioEvents() {
 // Alexa is the authoritative source for Amazon song and cover changes.
 setInterval(updateSong, 6000);
 const previous = new Map();
-let errorNoticeEpoch = 0;
-let lastNoticeText = "";
-let pendingVolumeSignature = "";
-function status(text) {
-  // Repeated polling must not restart the lifetime of the same message.
-  if (text && text === lastNoticeText) return;
-  lastNoticeText = text;
-  const epoch = ++errorNoticeEpoch;
-  $("error-text").textContent = text;
-  $("error-notice").hidden = !text;
-  if (text) setTimeout(() => {
-    if (epoch === errorNoticeEpoch) $("error-notice").hidden = true;
-  }, 30000);
+function reportError(text) {
+  if (text) console.warn("[HA Music] " + text);
 }
-function showVolumeNotice(players, saved) {
-  const signature = players.filter(p => roomView(p, saved).pending)
-    .map(p => p.entity_id).sort().join("|");
-  if (signature && signature !== pendingVolumeSignature && $("error-notice").hidden)
-    status("* Gespeicherter Sollwert; von Home Assistant noch nicht bestätigt.");
-  if (!signature && pendingVolumeSignature && lastNoticeText.startsWith("* Gespeicherter Sollwert")) status("");
-  pendingVolumeSignature = signature;
-}
-$("error-close").addEventListener("click", () => status(""));
 const stationButtons = new Map();
 for (const [id,name] of STATIONS) {
   const button = document.createElement("button");
@@ -378,9 +357,8 @@ for (const [id,name] of STATIONS) {
       if (!["wdr2","1live","swr3"].includes(id)) {
         for (const delay of [5000, 9000, 15000, 22000]) setTimeout(updateSong, delay);
       }
-      status("");
     } catch(e) {
-      if (generation === uiGeneration) status("Direkte Wiedergabe fehlgeschlagen: " + e.message);
+      if (generation === uiGeneration) reportError("Direkte Wiedergabe fehlgeschlagen: " + e.message);
     }
     finally { stationPending = false; await loadRadioState(); }
   });
@@ -438,7 +416,7 @@ async function loadRadioState() {
     }
 
     for (const [key,button] of stationButtons) button.disabled = stationPending || mediaPreparing || !radioReady || !state.get(key)?.available;
-    const label = data.startup_error ? "Start fehlgeschlagen: " + data.startup_error + " – aus- und erneut einschalten." : data.power === "on" && data.ready !== "on" ? "Radio startet …" :
+    const label = data.startup_error ? "Radio nicht verfügbar" : data.power === "on" && data.ready !== "on" ? "Radio startet …" :
       data.power === "on" ? "Radio eingeschaltet" :
       data.power === "off" ? "Radio ausgeschaltet" : "Radio nicht verfügbar";
     $("radio-standby-text").textContent = label;
@@ -477,8 +455,8 @@ for (const [id,on] of [["power-on",true],["power-off",false]]) {
       $("radio-standby-text").textContent = "Radio ausgeschaltet";
     }
     try { await api("radio_power",{on});
-      if (on) strictStandby = false; status(""); }
-    catch(e){countdownEndsAt = null; status(e.message);}
+      if (on) strictStandby = false; }
+    catch(e){countdownEndsAt = null; reportError(e.message);}
     finally{powerPending = false; await loadRadioState();}
   });
 }
@@ -548,7 +526,7 @@ function volumeRow(p, remembered, master) {
         volumeRequests++;
         slider.disabled = mute.disabled = true;
         try { await api("volume",{entity_id:p.entity_id,volume}); if(generation !== uiGeneration) return; if(volume>0)previous.set(p.entity_id,volume);label.textContent=slider.value+"%";renderAudioButton(); }
-        catch(e){if(generation === uiGeneration)status(e.message);}
+        catch(e){if(generation === uiGeneration)reportError(e.message);}
         finally { volumeRequests--; slider.disabled = mute.disabled = !radioReadyForViews || mediaPreparing; refreshPlayers(); }
       });
       mute.addEventListener("click",async () => {
@@ -566,7 +544,7 @@ function volumeRow(p, remembered, master) {
           label.textContent=slider.value+"%";
           renderAudioButton();
         }
-        catch(e){if(generation === uiGeneration)status(e.message);}
+        catch(e){if(generation === uiGeneration)reportError(e.message);}
         finally { volumeRequests--; slider.disabled = mute.disabled = !radioReadyForViews || mediaPreparing; refreshPlayers(); }
       });
 
@@ -589,8 +567,8 @@ async function refresh() {
   try {
     const config = await api("status"); ready = config.backend === "connected";
     await loadRadioState();
-    status(ready ? "" : "Home-Assistant-Verbindung nicht verfügbar.");
-  } catch(e) { status(e.message); }
+    reportError(ready ? "" : "Home-Assistant-Verbindung nicht verfügbar.");
+  } catch(e) { reportError(e.message); }
   await refreshPlayers();
   await updateSong();
 }
@@ -610,13 +588,12 @@ async function refreshPlayers() {
     $("groups").textContent = groups.length ? "Gruppe: " + groups.map(p => p.name).join(", ") + " · Alexa-Multiroom" : "Master-Gruppe Wohnung ist nicht aktiviert oder nicht verfügbar.";
     const wrap = $("players"); wrap.replaceChildren();
     if (!players.length) wrap.textContent = "Keine Raumgeräte aktiviert. Bitte Geräte in der Add-on-Konfiguration auswählen.";
-    showVolumeNotice(players, saved_levels);
     for (const p of players) wrap.appendChild(volumeRow(roomView(p, saved_levels), remembered, false));
   } catch (e) {
     if (generation === uiGeneration) {
       $("players").textContent = "Lautsprecher derzeit nicht verfügbar.";
       $("master-volume").textContent = "Master-Lautstärke nicht verfügbar";
-      status("Lautsprecher konnten nicht geladen werden: " + e.message);
+      reportError("Lautsprecher konnten nicht geladen werden: " + e.message);
     }
   } finally { playersRequestRunning = false; }
 }

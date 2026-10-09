@@ -233,37 +233,3 @@ test('Lovelace errors are rendered as text rather than HTML', () => {
   assert.equal(loading.textContent,message);
   assert.equal(shadowRoot.innerHTML.includes(message),false);
 });
-
-test('messages expire after thirty seconds without repeated polls extending them', () => {
-  const h = harness();
-  h.run('status("Fehler"); status("Fehler")');
-  assert.equal(h.get('error-notice').hidden,false);
-  const timers = h.timers.filter(t => t.delay === 30000);
-  assert.equal(timers.length,1);
-  timers[0].callback();
-  assert.equal(h.get('error-notice').hidden,true);
-  h.run('status("Fehler")');
-  assert.equal(h.get('error-notice').hidden,true);
-});
-
-test('old message timeout cannot hide a newer error', () => {
-  const h = harness();
-  h.run('status("Erster Fehler"); status("Zweiter Fehler")');
-  const timers = h.timers.filter(t => t.delay === 30000);
-  timers[0].callback();
-  assert.equal(h.get('error-notice').hidden,false);
-  assert.equal(h.get('error-text').textContent,'Zweiter Fehler');
-  timers[1].callback();
-  assert.equal(h.get('error-notice').hidden,true);
-});
-
-test('pending volume hint uses transient notice and cannot reappear each poll', () => {
-  const h = harness();
-  h.run('status(""); const pendingRooms=[{entity_id:"media_player.kueche",volume:0.5}]; const saved={"media_player.kueche":0.1}; showVolumeNotice(pendingRooms,saved)');
-  assert.match(h.get('error-text').textContent,/Gespeicherter Sollwert/);
-  h.timers.find(t => t.delay === 30000).callback();
-  h.run('showVolumeNotice(pendingRooms,saved)');
-  assert.equal(h.get('error-notice').hidden,true);
-  h.run('showVolumeNotice([],saved); showVolumeNotice(pendingRooms,saved)');
-  assert.equal(h.get('error-notice').hidden,false);
-});

@@ -1141,8 +1141,10 @@ class Handler(BaseHTTPRequestHandler):
                     return self.reply(200, {"ok": True, "volume": result["volume"]})
             return self.reply(200, {"ok": True})
         except (ValueError, TypeError, json.JSONDecodeError) as exc:
+            print(f"[HA Music] Request {action} rejected: {exc}", flush=True)
             return self.reply(400, {"error": str(exc)})
         except (RuntimeError, OSError, HTTPException) as exc:
+            print(f"[HA Music] Request {action} failed: {exc}", flush=True)
             return self.reply(502, {"error": str(exc)})
 
 if __name__ == "__main__":
