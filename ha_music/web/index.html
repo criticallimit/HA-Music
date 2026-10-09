@@ -2,7 +2,6 @@
 <html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>HA Music</title><link rel="stylesheet" href="style.css"></head>
 <body><main class="shell">
 <header><nav aria-label="Musikquelle"><button id="radio-tab" class="active" type="button">Radio</button><button id="apple-tab" type="button">Apple Music</button></nav><div class="header-actions"><button id="settings-open" class="settings-toggle" type="button" aria-label="Dashboard-Karte konfigurieren" title="Dashboard-Karte konfigurieren">⚙</button><div class="power-buttons"><button type="button" id="power-on" aria-label="Radio einschalten" title="Radio einschalten"><span class="power-icon" aria-hidden="true">I</span></button><button type="button" id="power-off" aria-label="Radio ausschalten" title="Radio ausschalten"><span class="power-icon" aria-hidden="true">O</span></button></div></div></header>
-<div id="message" class="notice" role="status" hidden></div>
 <section id="radio-page" class="dashboard">
 <div id="radio-standby" class="radio-standby" aria-label="Radio nicht bereit">
   <svg viewBox="0 0 96 96" width="120" height="120" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"><path d="M17 31 77 12"/><rect x="13" y="32" width="70" height="47" rx="10"/><circle cx="34" cy="57" r="12"/><path d="M60 51h12M60 59h12M60 67h12"/></svg>
@@ -32,4 +31,4 @@
   <div class="resource-line"><input id="card-yaml" readonly value="type: custom:ha-music-card"><button type="button" id="copy-card-yaml">Kopieren</button></div>
   <p id="settings-feedback" role="status"></p>
 </dialog>
-</main><script src="app.js"></script></body></html>
+</main><div id="error-notice" class="error-notice" role="alert" hidden><span id="error-text"></span><button id="error-close" type="button" aria-label="Fehlermeldung schließen">×</button></div><script src="app.js"></script></body></html>

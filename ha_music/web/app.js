@@ -99,7 +99,7 @@ async function controlGroup(command) {
     await api("group_transport", {command});
     if (generation !== uiGeneration || !radioReadyForViews) return;
     groupTransport = null;
-    status(command === "pause" ? "Pause für die gesamte Gruppe angefordert." : "Fortsetzen für die gesamte Gruppe angefordert.");
+    status("");
   } catch (e) {
     if (generation === uiGeneration) status("Gruppensteuerung fehlgeschlagen: " + e.message);
   } finally {
@@ -307,10 +307,16 @@ function closeRadioEvents() {
 // Alexa is the authoritative source for Amazon song and cover changes.
 setInterval(updateSong, 6000);
 const previous = new Map();
+let errorNoticeEpoch = 0;
 function status(text) {
-  $("message").textContent = text;
-  $("message").hidden = !text;
+  const epoch = ++errorNoticeEpoch;
+  $("error-text").textContent = text;
+  $("error-notice").hidden = !text;
+  if (text) setTimeout(() => {
+    if (epoch === errorNoticeEpoch) $("error-notice").hidden = true;
+  }, 12000);
 }
+$("error-close").addEventListener("click", () => status(""));
 const stationButtons = new Map();
 for (const [id,name] of STATIONS) {
   const button = document.createElement("button");
@@ -348,7 +354,7 @@ for (const [id,name] of STATIONS) {
       if (!["wdr2","1live","swr3"].includes(id)) {
         for (const delay of [5000, 9000, 15000, 22000]) setTimeout(updateSong, delay);
       }
-      status(name + " direkt über den Alexa-Media-Player angefordert. Bitte Wiedergabe prüfen.");
+      status("");
     } catch(e) { status("Direkte Wiedergabe fehlgeschlagen: " + e.message); }
     finally { stationPending = false; await loadRadioState(); }
   });
@@ -443,7 +449,7 @@ for (const [id,on] of [["power-on",true],["power-off",false]]) {
       $("radio-standby-text").textContent = "Radio ausgeschaltet";
     }
     try { await api("radio_power",{on});
-      if (on) strictStandby = false; status(on ? "Radio-Einschaltbefehl gesendet." : "Radio-Ausschaltbefehl gesendet."); }
+      if (on) strictStandby = false; status(""); }
     catch(e){countdownEndsAt = null; status(e.message);}
     finally{powerPending = false; await loadRadioState();}
   });
@@ -463,11 +469,9 @@ function scheduleVolumeReconciliation(value) {
     slider.value = Math.round(value * 100);
     if (label) label.textContent = Math.round(value * 100) + "%*";
   }
-  status("Master-Lautstärke gesendet. Raumwerte vorläufig angezeigt (*); Bestätigung durch Alexa steht aus.");
   setTimeout(async () => {
     if (generation !== volumeReconcileGeneration) return;
     await refreshPlayers();
-    status("Lautsprecherwerte erneut aus Home Assistant eingelesen.");
   }, 3000);
   setTimeout(async () => {
     if (generation !== volumeReconcileGeneration) return;
