@@ -208,4 +208,21 @@ html.ha-dashboard-card .station.active,html.ha-dashboard-card nav button.active{
   .power-buttons .power-icon{font-size:clamp(25px,4.25vh,32px)}
   .settings-toggle{width:clamp(41px,5.75vh,51px);height:clamp(41px,5.75vh,51px)}
 }
+/* iPad landscape: 20% larger interactive controls with reserved master-button space.
+   Fixed control track prevents the pause button from encroaching on the slider. */
+@media (orientation:landscape) and (min-width:700px) and (max-height:950px) {
+  .player-row{grid-template-columns:clamp(44px,5.6vw,64px) minmax(0,1fr) 48px;column-gap:clamp(10px,1.4vw,17px)}
+  .player-row.master-row{grid-template-columns:110px minmax(0,1fr) 48px;column-gap:14px}
+  .master-controls{grid-column:1;grid-row:2;display:flex;align-items:center;justify-content:flex-start;gap:10px;width:100%;min-width:0}
+  .player-row button,.master-controls button{width:42px;height:42px;flex:0 0 42px}
+  .player-row button::after{width:26px;height:26px}
+  .master-transport svg{width:26px;height:26px}
+  .station{min-height:clamp(75px,12.4vh,109px);gap:6px;font-size:clamp(14px,1.44vw,18px)}
+  .station-icon{width:clamp(29px,4.8vw,41px);height:clamp(29px,4.8vw,41px)}
+  .player-row>span:first-child{font-size:clamp(14px,1.55vw,18px)}
+  .player-row>span:nth-of-type(2){font-size:16px}
+  .power-buttons button{width:clamp(48px,6.7vh,60px);height:clamp(48px,6.7vh,60px)}
+  .power-buttons .power-icon{font-size:clamp(30px,5vh,38px)}
+  .settings-toggle{width:clamp(48px,6.7vh,60px);height:clamp(48px,6.7vh,60px)}
+}
 /* Very narrow landscape views remain scrollable instead of making controls untappable. */
