@@ -7,7 +7,7 @@ configuration:
     description: Omit this option to use the Alexa group Wohnung, as radio does. Only for an intentionally different setup; specify the exact Alexa group name. An explicitly empty value plays directly on the command device. Device visibility does not change Alexa group membership.
   apple_music_favorites:
     name: Apple Music favorites
-    description: Link your Apple Music account in Alexa first. Add playlists or albums here, save and restart the add-on. No account credentials are needed in HA Music.
+    description: Link your Apple Music account in Alexa first. Save playlists or albums here; favorites are applied within a few seconds without restarting. Decline the restart suggestion for favorites-only edits. No account credentials are needed in HA Music.
     fields:
       name:
         name: Display name

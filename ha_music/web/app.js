@@ -428,7 +428,7 @@ function renderAppleSelection(selection) {
   }
   $("apple-library-note").textContent = items.length && !appleSelection.available && radioReadyForViews && !mediaPreparing
     ? "Apple-Music-Steuergerät unter Add-on → Konfiguration auswählen und unter Alexa-Geräte auf Aktiv setzen."
-    : "Playlists und Alben unter Add-on → Konfiguration → Apple-Music-Favoriten hinzufügen. Dein Apple-Music-Konto muss in Alexa verknüpft sein.";
+    : "Playlists und Alben unter Add-on → Konfiguration → Apple-Music-Favoriten hinzufügen und speichern. Favoriten werden ohne Neustart übernommen. Dein Apple-Music-Konto muss in Alexa verknüpft sein.";
 }
 async function startAppleFavorite(id) {
   if (stationPending || transportPending || !radioReadyForViews || mediaPreparing || strictStandby || !appleSelection.available || !appleButtons.has(id)) return;

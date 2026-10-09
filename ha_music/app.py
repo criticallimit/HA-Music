@@ -161,10 +161,14 @@ def merge_discovered_devices(config, found):
     return merged
 
 
-def supervisor_request(path, payload=None, *, bootstrap=False):
+def supervisor_request(path, payload=None, *, bootstrap=False, favorites_read=False):
     if path not in ("/addons/self/info", "/addons/self/options"):
         raise ValueError("Supervisor-Endpunkt nicht freigegeben")
     kwargs = {"startup_configuration": True} if bootstrap else {}
+    if favorites_read:
+        if path != "/addons/self/info" or payload is not None:
+            raise ValueError("Favoritenübernahme erlaubt nur das Lesen der eigenen Konfiguration")
+        kwargs["favorites_read"] = True
     response = ha_request(path, payload, supervisor=True, **kwargs)
     if not isinstance(response, dict) or response.get("result") != "ok":
         raise RuntimeError("Supervisor-Konfiguration konnte nicht gelesen/gespeichert werden")
@@ -210,6 +214,40 @@ def synchronize_device_configuration(generation, *, migrate_only=False, bootstra
         if migrate_only:
             print("[HA Music] Configuration migration completed", flush=True)
         print(f"[HA Music] Device configuration: {len(merged.get('devices', []))} entries", flush=True)
+def refresh_saved_favorites():
+    """Read saved favorites only; never change routing, devices or playback."""
+    global SUPERVISOR_OPTIONS
+    with DEVICE_SYNC_LOCK:
+        saved = supervisor_request("/addons/self/info", favorites_read=True).get("options")
+        if not isinstance(saved, dict):
+            raise ValueError("Gespeicherte Favoritenkonfiguration fehlt")
+        favorites = saved.get("apple_music_favorites", [])
+        if not isinstance(favorites, list) or any(not isinstance(item, dict) for item in favorites):
+            raise ValueError("Ungültige gespeicherte Favoritenliste")
+        with CONFIG_LOCK:
+            current = options()
+            if current.get("apple_music_favorites", []) == favorites:
+                return False
+            current["apple_music_favorites"] = deepcopy(favorites)
+            SUPERVISOR_OPTIONS = current
+        print("[HA Music] Saved Apple Music favorites applied without restart", flush=True)
+        return True
+
+
+def watch_saved_favorites(stop_event=None):
+    stop_event = stop_event if stop_event is not None else threading.Event()
+    last_error = None
+    while not stop_event.wait(5):
+        try:
+            refresh_saved_favorites()
+            last_error = None
+        except NETWORK_ERRORS as exc:
+            message = str(exc)
+            if message != last_error:
+                print(f"[HA Music] Favorites refresh pending; existing favorites retained: {message}", flush=True)
+            last_error = message
+
+
 def integration_inventory():
     """Coalesce registry reads; never serve the cache as a standby wake-up."""
     global INVENTORY_CACHE
@@ -812,7 +850,7 @@ def options():
     except (OSError, ValueError):
         return {}
 
-def ha_request(path, payload=None, *, supervisor=False, startup_configuration=False, recovery_read=False):
+def ha_request(path, payload=None, *, supervisor=False, startup_configuration=False, recovery_read=False, favorites_read=False):
     global STATE_CACHE, INVENTORY_CACHE
     configuration_access = startup_configuration and supervisor and path in ("/addons/self/info", "/addons/self/options")
     if startup_configuration and not configuration_access:
@@ -820,7 +858,10 @@ def ha_request(path, payload=None, *, supervisor=False, startup_configuration=Fa
     recovery_access = recovery_read and RECOVERING and path == "/states" and payload is None and not supervisor
     if recovery_read and not recovery_access:
         raise ValueError("Wiederanbindung erlaubt nur das Lesen der HA-Zustände")
-    if STANDBY.is_set() and not (configuration_access or recovery_access):
+    favorites_access = favorites_read and supervisor and path == "/addons/self/info" and payload is None
+    if favorites_read and not favorites_access:
+        raise ValueError("Favoritenübernahme erlaubt nur das Lesen der eigenen Supervisor-Konfiguration")
+    if STANDBY.is_set() and not (configuration_access or recovery_access or favorites_access):
         raise RuntimeError("HA Music standby: outbound network disabled")
     if not TOKEN:
         raise RuntimeError("Home Assistant API token unavailable")
@@ -832,7 +873,7 @@ def ha_request(path, payload=None, *, supervisor=False, startup_configuration=Fa
     timeout = 30 if path == "/services/homeassistant/reload_config_entry" else 8
     with urlopen(req, timeout=timeout) as response:
         with RESPONSE_LOCK:
-            if STANDBY.is_set() and not (configuration_access or (recovery_access and RECOVERING)):
+            if STANDBY.is_set() and not (configuration_access or (recovery_access and RECOVERING) or favorites_access):
                 raise RuntimeError("HA Music standby: response cancelled")
             ACTIVE_RESPONSES.add(response)
         try:
@@ -1560,6 +1601,7 @@ if __name__ == "__main__":
     except NETWORK_ERRORS as exc:
         print(f"[HA Music] Device status migration pending: {exc}", flush=True)
     threading.Thread(target=radio_switch_monitor, daemon=True).start()
+    threading.Thread(target=watch_saved_favorites, daemon=True).start()
     start_session_recovery()
     ThreadingHTTPServer(("0.0.0.0", PORT), Handler).serve_forever()
 

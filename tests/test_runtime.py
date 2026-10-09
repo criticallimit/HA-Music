@@ -861,6 +861,79 @@ class RuntimeTests(unittest.TestCase):
         self.assertIsNone(app.ACTIVE_APPLE)
         self.assertEqual(app.last_selected_station(), "wdr2")
 
+    def test_saved_favorites_add_edit_remove_without_replacing_other_settings(self):
+        original = app.options()
+        original.update(apple_music_target="media_player.wohnzimmer", apple_music_group="Wohnung", show_dashboard_setup=False)
+        app.SUPERVISOR_OPTIONS = original
+        for favorites in ([{"name":"Neu", "kind":"Playlist"}], [{"name":"Album", "kind":"Album", "search":"Artist Album"}], []):
+            saved = {"devices":[], "apple_music_target":"media_player.bad", "apple_music_group":"Andere Gruppe", "show_dashboard_setup":True, "apple_music_favorites":favorites}
+            with patch.object(app, "supervisor_request", return_value={"options":saved}) as request:
+                self.assertTrue(app.refresh_saved_favorites())
+                self.assertFalse(app.refresh_saved_favorites())
+            self.assertTrue(all(c.args == ("/addons/self/info",) and c.kwargs == {"favorites_read":True} for c in request.call_args_list))
+            self.assertEqual(app.options(), {**original, "apple_music_favorites":favorites})
+            self.assertEqual(len(app.apple_music_selection()["items"]), len(favorites))
+
+    def test_favorites_refresh_in_standby_does_not_wake_or_touch_playback(self):
+        app.STANDBY.set()
+        app.LAST_POWER, app.READY = "off", False
+        app.ACTIVE_APPLE = {"id":"old", "target":"media_player.wohnzimmer", "name":"Playing"}
+        app.save_selected_source("apple", "a"*24)
+        with patch.object(app, "supervisor_request", return_value={"options":{"apple_music_favorites":[{"name":"Neu", "kind":"Playlist"}]}}) as request:
+            app.refresh_saved_favorites()
+        request.assert_called_once_with("/addons/self/info", favorites_read=True)
+        self.assertTrue(app.STANDBY.is_set())
+        self.assertEqual(app.LAST_POWER, "off")
+        self.assertFalse(app.READY)
+        self.assertEqual(app.ACTIVE_APPLE["id"], "old")
+        self.assertEqual(app.last_selected_source(), {"kind":"apple", "id":"a"*24})
+        self.monitor.select.assert_not_called()
+
+    def test_invalid_or_unavailable_saved_favorites_retain_previous_config(self):
+        app.SUPERVISOR_OPTIONS = {**app.options(), "apple_music_favorites":[{"name":"Alt", "kind":"Playlist"}]}
+        original = app.options()
+        for response in ({}, {"options":None}, {"options":{"apple_music_favorites":None}}, {"options":{"apple_music_favorites":["invalid"]}}):
+            with self.subTest(response=response), patch.object(app, "supervisor_request", return_value=response), self.assertRaises(ValueError):
+                app.refresh_saved_favorites()
+            self.assertEqual(app.options(), original)
+        with patch.object(app, "supervisor_request", side_effect=OSError("offline")), self.assertRaises(OSError):
+            app.refresh_saved_favorites()
+        self.assertEqual(app.options(), original)
+
+    def test_favorites_watcher_retries_failure_and_logs_repeated_error_once(self):
+        stop = Mock()
+        stop.wait.side_effect = [False, False, False, True]
+        with patch.object(app, "refresh_saved_favorites", side_effect=[OSError("offline"), OSError("offline"), True]) as refresh, patch("builtins.print") as log:
+            app.watch_saved_favorites(stop)
+        self.assertEqual(refresh.call_count, 3)
+        log.assert_called_once()
+        self.assertTrue(all(call.args == (5,) for call in stop.wait.call_args_list))
+
+    def test_favorites_access_only_reads_own_supervisor_info_even_in_standby(self):
+        app.STANDBY.set()
+        for path, payload, supervisor in (("/states",None,False), ("/addons/self/options",{},True),
+                                          ("/addons/other/info",None,True), ("/addons/self/info",{},True),
+                                          ("/services/media_player/play_media",{},False)):
+            with self.subTest(path=path), self.assertRaises(ValueError):
+                app.ha_request(path, payload, supervisor=supervisor, favorites_read=True)
+        with patch.object(app, "TOKEN", "test"), patch.object(app, "urlopen") as opened:
+            opened.return_value.__enter__.return_value.read.return_value = b'{"result":"ok","data":{"options":{}}}'
+            self.assertEqual(app.supervisor_request("/addons/self/info", favorites_read=True), {"options":{}})
+            request = opened.call_args.args[0]
+            self.assertEqual(request.get_method(), "GET")
+            self.assertEqual(request.full_url, app.SUPERVISOR_API + "/addons/self/info")
+        self.assertTrue(app.STANDBY.is_set())
+        with self.assertRaises(ValueError):
+            app.supervisor_request("/addons/self/options", {"options":{}}, favorites_read=True)
+
+    def test_favorites_refresh_preserves_local_config_change_during_read(self):
+        def saved(*args, **kwargs):
+            app.SUPERVISOR_OPTIONS = {**app.options(), "apple_music_group":"New local group"}
+            return {"options":{"apple_music_favorites":[{"name":"New", "kind":"Album"}]}}
+        with patch.object(app, "supervisor_request", side_effect=saved):
+            app.refresh_saved_favorites()
+        self.assertEqual(app.options()["apple_music_group"], "New local group")
+
     def test_apple_configuration_filters_invalid_entries_and_is_local_in_standby(self):
         app.OPTIONS.write_text(json.dumps({"apple_music_favorites":[{},None,{"name":"Test", "kind":[]},{"name":"Bad\nName","kind":"Playlist"},{"name":"Guter Name","kind":"Album"}]}))
         app.STANDBY.set()

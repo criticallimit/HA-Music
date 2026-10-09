@@ -16,8 +16,10 @@ configuration:
     name: Apple-Music-Favoriten
     description: >-
       Playlists und Alben für die Apple-Music-Seite. Apple Music muss zuvor in der
-      Alexa-App mit deinem Apple Account verknüpft werden. Speichern und das Add-on
-      neu starten. Es werden keine Zugangsdaten im Add-on benötigt.
+      Alexa-App mit deinem Apple Account verknüpft werden. Nach Speichern werden
+      Favoriten innerhalb weniger Sekunden übernommen, ohne Add-on-Neustart.
+      Den Neustartvorschlag für reine Favoritenänderungen ablehnen.
+      Es werden keine Zugangsdaten im Add-on benötigt.
     fields:
       name:
         name: Anzeigename

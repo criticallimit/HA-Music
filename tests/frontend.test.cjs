@@ -541,6 +541,27 @@ test('Lovelace errors are rendered as text rather than HTML', () => {
   assert.equal(shadowRoot.innerHTML.includes(message),false);
 });
 
+test('saved favorites appear and disappear on state polls without restarting playback', async () => {
+  const h=harness();
+  const calls=[];
+  const active={id:'playing',name:'Current playlist',target:'media_player.wohnzimmer'};
+  let items=[{id:'playing',name:'Current playlist',kind:'Playlist'}];
+  h.context.reply=async(action)=>{calls.push(action);return {stations:[],power:'on',ready:'on',selected_view:'apple',apple_music:{items,available:true,active}};};
+  h.context.active=active;
+  h.run('api=reply; activeApple=active; radioReadyForViews=true; refreshPlayers=async()=>{}; updateSong=async()=>{}');
+  await h.run('loadRadioState()');
+  items=[{id:'new',name:'New playlist',kind:'Playlist'},{id:'album',name:'New album',kind:'Album'}];
+  await h.run('loadRadioState()');
+  assert.equal(h.get('apple-playlist-list').children[0].title,'New playlist');
+  assert.equal(h.get('apple-album-list').children[0].title,'New album');
+  assert.equal(h.run('activeApple.id'),'playing');
+  items=[];
+  await h.run('loadRadioState()');
+  assert.match(h.get('apple-playlist-list').children[0].textContent,/Noch keine Playlists/);
+  assert.equal(h.run('activeApple.id'),'playing');
+  assert.deepEqual(calls,['radio-state','radio-state','radio-state']);
+});
+
 test('Apple favorites are plain text tiles and disabled during standby', () => {
   const h = harness();
   h.run('radioReadyForViews=true; renderAppleSelection({available:true,items:[{id:"one",name:"<img src=x>",kind:"Playlist"}]})');
