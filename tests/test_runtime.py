@@ -284,6 +284,84 @@ class RuntimeTests(unittest.TestCase):
                 app.perform("volume", {"entity_id": entity, "volume": volume})
 
 
+class RoomAndGroupControlTests(unittest.TestCase):
+    def setUp(self):
+        RuntimeTests.setUp(self)
+        app.READY = True
+        self.devices = {"players": [{"entity_id": "media_player.wohnzimmer", "state": "playing", "volume": 0.45}],
+                        "groups": [{"entity_id": "media_player.wohnung", "state": "playing", "volume": 0.4}]}
+        self.stack.enter_context(patch.object(app, "classify_devices", return_value=self.devices))
+        self.stack.enter_context(patch.object(app, "state_snapshot", return_value=self.states))
+        self.request = self.stack.enter_context(patch.object(app, "ha_request", return_value={}))
+
+    def test_room_mute_restore_persists_without_playback_commands(self):
+        app.perform("room_audio", {"entity_id": "media_player.wohnzimmer", "on": False})
+        self.assertEqual(app.remembered()["media_player.wohnzimmer"], 0.45)
+        app.ROOM_TARGETS.clear()  # Simulate a restart; HA still reports stale volume.
+        result = app.perform("room_audio", {"entity_id": "media_player.wohnzimmer", "on": True})
+        self.assertEqual(result["volume"], 0.45)
+        self.assertEqual([call.args[1]["volume_level"] for call in self.request.call_args_list], [0, 0.45])
+        self.assertTrue(all(call.args[0].endswith("volume_set") for call in self.request.call_args_list))
+
+    def test_room_switch_is_idempotent_and_prefers_latest_target(self):
+        app.ROOM_TARGETS["media_player.wohnzimmer"] = 0.25
+        app.perform("room_audio", {"entity_id": "media_player.wohnzimmer", "on": True})
+        self.request.assert_not_called()
+        app.perform("room_audio", {"entity_id": "media_player.wohnzimmer", "on": False})
+        app.perform("room_audio", {"entity_id": "media_player.wohnzimmer", "on": False})
+        self.assertEqual(self.request.call_count, 1)
+        self.assertEqual(app.remembered()["media_player.wohnzimmer"], 0.25)
+
+    def test_room_switch_rejects_master_unknown_targets_and_non_bool(self):
+        for body in ({"entity_id": "media_player.wohnung", "on": False},
+                     {"entity_id": "media_player.hidden", "on": False},
+                     {"entity_id": "media_player.wohnzimmer", "on": 1}):
+            with self.assertRaises(ValueError):
+                app.perform("room_audio", body)
+        self.request.assert_not_called()
+
+    def test_room_failure_keeps_saved_volume_and_intent(self):
+        app.save_speaker_levels({"media_player.wohnzimmer": 0.45})
+        self.request.side_effect = OSError("offline")
+        with self.assertRaises(OSError):
+            app.perform("room_audio", {"entity_id": "media_player.wohnzimmer", "on": False})
+        self.assertEqual(app.speaker_levels()["media_player.wohnzimmer"], 0.45)
+        self.assertNotIn("media_player.wohnzimmer", app.ROOM_TARGETS)
+
+    def test_group_transport_targets_only_group_and_does_not_change_volumes(self):
+        for state, command in (("playing", "pause"), ("paused", "play")):
+            self.states["media_player.wohnung"] = {"state": state, "attributes": {"supported_features": 16385}}
+            app.perform("group_transport", {"command": command, "entity_id": "media_player.wohnzimmer"})
+            self.request.assert_called_with("/services/media_player/media_" + command, {"entity_id": "media_player.wohnung"})
+        self.assertEqual(app.speaker_levels(), {})
+
+    def test_group_transport_rejects_missing_features_and_idle(self):
+        for state, features, command in (("idle", 16385, "play"), ("playing", 0, "pause"), ("paused", 1, "play")):
+            self.states["media_player.wohnung"] = {"state": state, "attributes": {"supported_features": features}}
+            with self.assertRaises(ValueError):
+                app.perform("group_transport", {"command": command})
+        self.request.assert_not_called()
+
+    def test_controls_cannot_wake_standby_or_run_during_startup(self):
+        for action, body in (("room_audio", {"entity_id": "media_player.wohnzimmer", "on": True}), ("group_transport", {"command": "play"})):
+            app.READY = False
+            with self.assertRaises(ValueError):
+                app.perform(action, body)
+            app.READY = True
+            app.STANDBY.set()
+            with self.assertRaises(app.StartupCancelled):
+                app.perform(action, body)
+            app.STANDBY.clear()
+        self.request.assert_not_called()
+
+    def test_disabled_group_cannot_receive_transport(self):
+        app.OPTIONS.write_text(json.dumps({"devices": []}))
+        self.states["media_player.wohnung"] = {"state": "playing", "attributes": {"supported_features": 16385}}
+        with self.assertRaises(ValueError):
+            app.perform("group_transport", {"command": "pause"})
+        self.request.assert_not_called()
+
+
 class DeviceConfigurationTests(unittest.TestCase):
     def setUp(self):
         RuntimeTests.setUp(self)
@@ -485,6 +563,20 @@ class MetadataTests(unittest.TestCase):
 
 
 class SecurityTests(unittest.TestCase):
+    def test_room_post_returns_restored_volume_to_browser(self):
+        handler = object.__new__(app.Handler)
+        handler.client_address = ("172.30.32.2", 1)
+        handler.path = "/api/room_audio"
+        body = json.dumps({"entity_id": "media_player.kueche", "on": True}).encode()
+        handler.headers = Message()
+        handler.headers["Content-Type"] = "application/json"
+        handler.headers["Content-Length"] = str(len(body))
+        handler.rfile = io.BytesIO(body)
+        handler.reply = Mock()
+        with patch.object(app, "perform", return_value={"ok": True, "volume": 0.45}):
+            handler.do_POST()
+        handler.reply.assert_called_once_with(200, {"ok": True, "volume": 0.45})
+
     def test_ingress_peer(self):
         handler = object.__new__(app.Handler)
         handler.client_address = ("172.30.33.8", 1234)

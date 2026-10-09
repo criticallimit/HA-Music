@@ -53,6 +53,8 @@ ACTIVE_RESPONSES = set()
 CONFIG_LOCK = threading.RLock()
 DEVICE_SYNC_LOCK = threading.Lock()
 SUPERVISOR_OPTIONS = None
+MEDIA_FEATURE_PAUSE = 1
+MEDIA_FEATURE_PLAY = 16384
 
 
 def configured_devices(config=None):
@@ -245,7 +247,7 @@ def startup_request(generation, path, payload=None):
     # Serialize commands; recheck after acquiring the lock and after slow I/O.
     with COMMAND_LOCK:
         check_generation(generation)
-        if path in ("/services/media_player/volume_set", "/services/media_player/play_media", "/services/homeassistant/update_entity"):
+        if path in ("/services/media_player/volume_set", "/services/media_player/play_media", "/services/media_player/media_play", "/services/media_player/media_pause", "/services/homeassistant/update_entity"):
             targets = payload.get("entity_id", [])
             targets = [targets] if isinstance(targets, str) else targets
             selected = enabled_device_ids()
@@ -617,6 +619,16 @@ def radio_state():
                         for key,item in DIRECT_STATIONS.items()]}
 
 
+def group_transport_state(states):
+    group = states.get("media_player.wohnung", {}) if "media_player.wohnung" in enabled_device_ids() else {}
+    state = group.get("state", "unavailable")
+    features = (group.get("attributes") or {}).get("supported_features", 0)
+    features = features if type(features) is int else 0
+    return {"state": state,
+            "can_play": state == "paused" and bool(features & MEDIA_FEATURE_PLAY),
+            "can_pause": state == "playing" and bool(features & MEDIA_FEATURE_PAUSE)}
+
+
 def playback_status():
     states = state_snapshot()
     candidates = sorted(enabled_device_ids(), key=lambda entity: (entity != "media_player.wohnzimmer", entity))
@@ -635,6 +647,7 @@ def playback_status():
     active = next((p for p in observed if p["state"] == "playing"), None)
     details = next((p for p in observed if p["title"] or p["artist"]), None)
     return {"playing": active is not None, "players": observed,
+            "transport": group_transport_state(states),
             "details": active if active and (active["title"] or active["artist"]) else details}
 
 
@@ -704,6 +717,38 @@ def perform(action, body):
 
 
 def perform_control(action, body, generation):
+    if action == "group_transport":
+        command = body.get("command")
+        if command not in ("play", "pause"):
+            raise ValueError("Ungültiger Gruppenbefehl")
+        if "media_player.wohnung" not in allowed_entities():
+            raise ValueError("Gruppe Wohnung ist nicht freigegeben")
+        transport = group_transport_state(state_snapshot())
+        if not transport["can_" + command]:
+            raise ValueError("Gruppenwiedergabe kann derzeit nicht " + ("fortgesetzt" if command == "play" else "pausiert") + " werden")
+        return startup_request(generation, "/services/media_player/media_" + command,
+                               {"entity_id": "media_player.wohnung"})
+    if action == "room_audio":
+        entity, on = body.get("entity_id"), body.get("on")
+        if type(on) is not bool:
+            raise ValueError("Ungültiger Raum-Schaltzustand")
+        player = next((p for p in classify_devices()["players"] if p["entity_id"] == entity), None)
+        if player is None or player["state"] in ("unknown", "unavailable"):
+            raise ValueError("Raumgerät ist nicht freigegeben oder nicht verfügbar")
+        level = displayed_speaker_levels().get(entity, player.get("volume"))
+        if type(level) not in (int, float) or not 0 <= level <= 1:
+            raise ValueError("Raumlautstärke ist nicht verfügbar")
+        if on == (level > 0):
+            return {"ok": True, "volume": level}
+        restore = remembered().get(entity)
+        if type(restore) not in (int, float) or not 0 < restore <= 1:
+            restore = speaker_levels().get("media_player.wohnung", 0.3)
+        if type(restore) not in (int, float) or not 0 < restore <= 1:
+            restore = 0.3
+        perform_control("volume", {"entity_id": entity, "volume": restore if on else 0}, generation)
+        if not on:
+            save_remembered(entity, level)
+        return {"ok": True, "volume": restore if on else 0}
     if action == "volume":
         entity = body.get("entity_id", "")
         level = body.get("volume")
@@ -854,7 +899,7 @@ class Handler(BaseHTTPRequestHandler):
             return self.reply(403, {"error": "Ingress only"})
         path = unquote(urlsplit(self.path).path)
         action = path.rsplit("/", 1)[-1]
-        if "/api/" not in path or action not in ("volume", "radio_direct", "radio_power", "selected_view", "dashboard_card_installed"):
+        if "/api/" not in path or action not in ("volume", "room_audio", "group_transport", "radio_direct", "radio_power", "selected_view", "dashboard_card_installed"):
             return self.reply(404, {"error": "Not found"})
         if self.headers.get("Sec-Fetch-Site") == "cross-site":
             return self.reply(403, {"error": "Cross-site request rejected"})
@@ -872,7 +917,9 @@ class Handler(BaseHTTPRequestHandler):
             elif action == "selected_view":
                 save_selected_view(body.get("view"))
             else:
-                perform(action, body)
+                result = perform(action, body)
+                if action == "room_audio":
+                    return self.reply(200, {"ok": True, "volume": result["volume"]})
             return self.reply(200, {"ok": True})
         except (ValueError, TypeError, json.JSONDecodeError) as exc:
             return self.reply(400, {"error": str(exc)})

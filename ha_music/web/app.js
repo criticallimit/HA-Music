@@ -73,6 +73,37 @@ let stationPending = false;
 let viewPending = false;
 let powerPending = false;
 let volumeRequests = 0;
+let transportPending = false;
+let transportEpoch = 0;
+let groupTransport = null;
+function renderGroupTransport() {
+  $("group-play").disabled = !radioReadyForViews || transportPending || !groupTransport?.can_play;
+  $("group-pause").disabled = !radioReadyForViews || transportPending || !groupTransport?.can_pause;
+  $("group-transport-state").textContent = transportPending ? "Gruppenbefehl wird gesendet …" :
+    groupTransport?.state === "playing" ? "Gruppe spielt" :
+    groupTransport?.state === "paused" ? "Gruppe pausiert" : "Gruppensteuerung derzeit nicht verfügbar";
+}
+async function controlGroup(command) {
+  if (strictStandby || !radioReadyForViews || transportPending || !groupTransport?.["can_" + command]) return;
+  transportPending = true;
+  transportEpoch++;
+  const generation = uiGeneration;
+  renderGroupTransport();
+  try {
+    await api("group_transport", {command});
+    if (generation !== uiGeneration || !radioReadyForViews) return;
+    groupTransport = null;
+    status(command === "pause" ? "Pause für die gesamte Gruppe angefordert." : "Fortsetzen für die gesamte Gruppe angefordert.");
+  } catch (e) {
+    if (generation === uiGeneration) status("Gruppensteuerung fehlgeschlagen: " + e.message);
+  } finally {
+    transportPending = false;
+    renderGroupTransport();
+    if (generation === uiGeneration && radioReadyForViews) updateSong();
+  }
+}
+$("group-play").addEventListener("click", () => controlGroup("play"));
+$("group-pause").addEventListener("click", () => controlGroup("pause"));
 let radioEventSource = null;
 function show(page) {
   const radio = page === "radio";
@@ -183,14 +214,19 @@ function renderRadioMetadata(station, external) {
   }
 }
 async function updateSong() {
-  if (strictStandby || !radioReadyForViews || songRequestRunning) return;
+  if (strictStandby || !radioReadyForViews || songRequestRunning || transportPending) return;
   songRequestRunning = true;
   const station = selectedStation;
   const epoch = stationEpoch;
+  const transportRequestEpoch = transportEpoch;
   const generation = uiGeneration;
   try {
     const info = await api("playback-status");
-    if (generation !== uiGeneration || !radioReadyForViews || stationEpoch !== epoch || station !== selectedStation) return;
+    if (generation !== uiGeneration || !radioReadyForViews || stationEpoch !== epoch || station !== selectedStation || transportRequestEpoch !== transportEpoch) return;
+    if (!transportPending) {
+      groupTransport = info.transport || null;
+      renderGroupTransport();
+    }
     const details = info.details;
     const isRadio = ["wdr2","1live","swr3"].includes(station);
     $("current-title").textContent = STATIONS.find(s => s[0] === station)?.[1] || details?.title || "Kein Sender ausgewählt";
@@ -216,7 +252,11 @@ async function updateSong() {
     }
     $("playback-state").textContent = info.playing ? "Wiedergabe aktiv" : "Alexa meldet derzeit keine aktive Wiedergabe";
   } catch(e) {
-    if (generation === uiGeneration && stationEpoch === epoch) $("playback-state").textContent = "Wiedergabestatus nicht verfügbar: " + e.message;
+    if (generation === uiGeneration && stationEpoch === epoch && transportRequestEpoch === transportEpoch) {
+      $("playback-state").textContent = "Wiedergabestatus nicht verfügbar: " + e.message;
+      groupTransport = null;
+      renderGroupTransport();
+    }
   } finally { songRequestRunning = false; }
 }
 // One backend monitor polls radio metadata, all open clients receive changes.
@@ -309,6 +349,8 @@ for (const [id,name] of STATIONS) {
   $("station-list").appendChild(button);
 }
 function displayRadioReadiness(isReady) {
+  if (!isReady) groupTransport = null;
+  renderGroupTransport();
   document.querySelector(".now").hidden = !isReady;
   document.querySelector(".dashboard-right").hidden = !isReady;
   $("radio-standby").hidden = isReady;
@@ -448,9 +490,15 @@ function volumeRow(p, remembered, master) {
       slider.setAttribute("aria-label", (master ? "Master" : p.name) + " Lautstärke");
       slider.disabled = ["unavailable", "unknown"].includes(p.state) || p.volume === null || p.volume === undefined;
       mute.disabled = slider.disabled;
-      mute.textContent = Number(slider.value) === 0 ? "Ein" : "Stumm";
-      mute.classList.toggle("is-muted", Number(slider.value) === 0);
-      mute.setAttribute("aria-label", Number(slider.value) === 0 ? "Ton einschalten" : "Stummschalten");
+      function renderAudioButton() {
+        const audible = Number(slider.value) > 0;
+        mute.textContent = master ? (audible ? "Stumm" : "Ein") : (audible ? "Hörbar" : "Stumm");
+        mute.classList.toggle("is-muted", !audible);
+        mute.setAttribute("aria-pressed", String(audible));
+        mute.setAttribute("aria-label", (master ? "Master" : p.name) + (audible ? " stummschalten" : " hörbar schalten"));
+        mute.title = master ? "Master-Lautstärke umschalten" : "Raum hörbar/stumm schalten. Die Gruppenwiedergabe läuft weiter.";
+      }
+      renderAudioButton();
       slider.addEventListener("input", () => {
         label.textContent = slider.value + "%";
       });
@@ -458,7 +506,7 @@ function volumeRow(p, remembered, master) {
         const volume = Number(slider.value)/100;
         volumeRequests++;
         slider.disabled = mute.disabled = true;
-        try { await api("volume",{entity_id:p.entity_id,volume}); if(volume>0)previous.set(p.entity_id,volume);label.textContent=slider.value+"%";mute.textContent=volume?"Stumm":"Ein";mute.classList.toggle("is-muted",volume===0);mute.setAttribute("aria-label",volume?"Stummschalten":"Ton einschalten"); if (master) refreshPlayers(); }
+        try { await api("volume",{entity_id:p.entity_id,volume}); if(volume>0)previous.set(p.entity_id,volume);label.textContent=slider.value+"%";renderAudioButton(); if (master) refreshPlayers(); }
         catch(e){status(e.message);}
         finally { volumeRequests--; slider.disabled = mute.disabled = false; refreshPlayers(); }
       });
@@ -468,7 +516,13 @@ function volumeRow(p, remembered, master) {
         if(current>0) previous.set(p.entity_id,current);
         volumeRequests++;
         slider.disabled = mute.disabled = true;
-        try { await api("volume",{entity_id:p.entity_id,volume:next});slider.value=Math.round(next*100);label.textContent=slider.value+"%";mute.textContent=next?"Stumm":"Ein";mute.classList.toggle("is-muted",next===0);mute.setAttribute("aria-label",next?"Stummschalten":"Ton einschalten");if(master) refreshPlayers(); }
+        try {
+          const response = await api(master ? "volume" : "room_audio", master ? {entity_id:p.entity_id,volume:next} : {entity_id:p.entity_id,on:current===0});
+          slider.value = Math.round((master ? next : response.volume)*100);
+          label.textContent=slider.value+"%";
+          renderAudioButton();
+          if(master) refreshPlayers();
+        }
         catch(e){status(e.message);}
         finally { volumeRequests--; slider.disabled = mute.disabled = false; refreshPlayers(); }
       });

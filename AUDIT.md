@@ -5,6 +5,14 @@ Geprüft: sämtliche Python-Module, Ingress-Frontend (HTML/CSS/JS), Lovelace-Kar
 
 ## Belegte Befunde und Korrekturen
 
+### Raum-Schalter und gemeinsame Wiedergabe
+
+Ingress zeigt pro Raum einen Schalter **Hörbar/Stumm**. Die letzte positive Raumlautstärke wird beim Stummschalten serverseitig dauerhaft gespeichert; ein erneuter Klick stellt sie wieder her. Befehle sind explizit und wiederholbar, keine blinden Toggles. Der Backend-Sollwert verhindert, dass eine verzögerte HA-Rückmeldung beim Entstummen den gespeicherten Wert ersetzt. Raum-Schalter senden ausschließlich `volume_set`, weder Play/Pause noch Power-Befehle.
+
+Die gemeinsamen Buttons **Fortsetzen/Pause** adressieren ausschließlich `media_player.wohnung`. Aktivierung erfordert ein freigegebenes Gruppengerät, passenden bestätigten HA-Zustand sowie gemeldete PLAY-/PAUSE-Funktion. Kein Fortsetzen aus `idle`, `unknown` oder `unavailable`; kein automatischer Ersatz durch einen neuen Senderstart. Start-/Standby-Sperren, Generationenprüfung und Befehlsserialisierung gelten auch für diese Aktionen. Verspätete Statusantworten vor einem Gruppenbefehl können die neuen Buttons nicht wieder auf den alten Stand setzen.
+
+Zusätzliche Tests prüfen gespeichertes Entstummen nach Neustart, wiederholte Raum-Schalter, falsche Ziele, Fehler ohne verlorene Raumabsicht, ausschließlich gruppenbezogene Play/Pause-Befehle, fehlende Funktionen/ungeeignete Zustände, Start-/Standby-Sperren, HTTP-Rückgabe des wiederhergestellten Werts und verspätete UI-Antworten. Reale Alexa-Gruppenfunktionen bleiben auf der Installation zu prüfen. Eine erfolgreiche Serviceantwort bestätigt die Annahme des Befehls, nicht dessen hörbare Ausführung. Ohne gemeldete Gruppenfunktionen bleiben die Buttons deaktiviert. Pause beendet den Add-on-Netzwerkverkehr nicht; dafür bleibt der zentrale Ausschaltbutton zuständig.
+
 | Priorität | Befund am Ausgangsstand | Korrektur / Nachweis |
 |---|---|---|
 | Hoch | Ein Fehler in `set_radio_ready(False)` verhinderte `enter_standby`; der 10-Sekunden-Abschluss hing an einer weiteren HA-Anfrage. | Eigenständiger Timer ab lokalem Ausschalten; Netzwerkzulassung wird vor dem Schließen gesperrt. Test mit Timeout beim Ausschalten. |
@@ -26,8 +34,8 @@ Ingress-Gegenstellenprüfung gemäß [Home-Assistant-Entwicklerdokumentation](ht
 ## Verifiziert
 
 - Python-Syntax aller vier Module, bestehende Scaffold-/Smoke-Prüfungen.
-- 47 Python-Regressionstests: Startreihenfolge, 45+2 Sekunden Warteparameter, Fehler, Abbruch, alte Timer, stumme Räume/Master, Persistenz, Cache, Verifikation, Ingress, ICY-Lebenszyklus, Angleichung an den Master ausschließlich beim Start und Geräteauswahl in der Add-on-Konfiguration.
-- 10 JavaScript-Verhaltenstests: Countdown, Fehlerzustände, parallele Polls, verspätete Antworten, gespeicherte Ansicht, Artwork-URL-Prüfung, Soll-/Ist-Lautstärke und unabhängige Raumregelung bei Master 0.
+- 56 Python-Regressionstests: Startreihenfolge, 45+2 Sekunden Warteparameter, Fehler, Abbruch, alte Timer, stumme Räume/Master, Persistenz, Cache, Verifikation, Ingress, ICY-Lebenszyklus, Angleichung an den Master ausschließlich beim Start, Geräteauswahl, Raum-Schalter und Gruppensteuerung.
+- 14 JavaScript-Verhaltenstests: Countdown, Fehlerzustände, parallele Polls, verspätete Antworten, gespeicherte Ansicht, Artwork-URL-Prüfung, Soll-/Ist-Lautstärke, unabhängige Raumregelung bei Master 0 sowie Raum-/Gruppensteuerung.
 - JavaScript-Syntax für Frontend, Lovelace-Karte und Loader; `git diff --check`.
 - Die Tests verwenden keine reale HA-/Alexa-Steuerung. Der Socket-Test verwendet ausschließlich eine lokale Verbindung. Unter Windows kann ein Reader erst nach seinem Socket-Timeout zurückkehren; der Standby-Pfad wartet darauf nicht mehr unbegrenzt.
 

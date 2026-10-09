@@ -7,9 +7,9 @@ const path = require('node:path');
 function harness() {
   const elements = new Map();
   function element() {
-    return {hidden:false, disabled:false, textContent:'', value:'', children:[], attributes:{},
+    return {hidden:false, disabled:false, textContent:'', value:'', children:[], attributes:{}, listeners:{},
       classList:{toggle(){},add(){}}, style:{setProperty(){}},
-      addEventListener(){}, appendChild(e){this.children.push(e);},
+      addEventListener(name,handler){this.listeners[name]=handler;}, appendChild(e){this.children.push(e);},
       append(...items){this.children.push(...items);}, replaceChildren(...items){this.children = items;},
       setAttribute(k,v){this.attributes[k]=v;}, getAttribute(k){return this.attributes[k];},
       removeAttribute(k){delete this.attributes[k];}};
@@ -109,4 +109,58 @@ test('room target supplied by backend renders startup mute', () => {
 test('individual volume remains independent of master zero after startup', () => {
   const h = harness();
   assert.equal(h.run('roomView({entity_id:"media_player.wohnzimmer",volume:0.3},{"media_player.wohnung":0,"media_player.wohnzimmer":0.3}).volume'),0.3);
+});
+
+test('room audio switch uses room action and server restored volume', async () => {
+  const h = harness();
+  const calls = [];
+  h.context.reply = async (action, body) => { calls.push({action,body}); return {volume:0.45}; };
+  h.run('api=reply; refreshPlayers=async()=>{}');
+  const row = h.run('volumeRow({entity_id:"media_player.kueche",name:"Küche",state:"playing",volume:0},{},false)');
+  assert.equal(row.children[3].textContent,'Stumm');
+  await row.children[3].listeners.click();
+  assert.equal(calls[0].action,'room_audio');
+  assert.equal(calls[0].body.on,true);
+  assert.equal(row.children[1].value,45);
+  assert.equal(row.children[3].textContent,'Hörbar');
+  assert.equal(row.children[3].attributes['aria-pressed'],'true');
+});
+
+test('group controls reflect confirmed group state and feature availability', () => {
+  const h = harness();
+  h.run('radioReadyForViews=true; groupTransport={state:"playing",can_pause:true,can_play:false}; renderGroupTransport()');
+  assert.equal(h.get('group-pause').disabled,false);
+  assert.equal(h.get('group-play').disabled,true);
+  h.run('radioReadyForViews=false; displayRadioReadiness(false)');
+  assert.equal(h.get('group-pause').disabled,true);
+  assert.equal(h.get('group-play').disabled,true);
+});
+
+test('group commands coalesce and cannot wake standby', async () => {
+  const h = harness();
+  let resolve, count = 0;
+  h.context.reply = () => { count++; return new Promise(r => {resolve=r;}); };
+  h.run('api=reply; updateSong=async()=>{}; radioReadyForViews=true; groupTransport={can_pause:true}; strictStandby=true');
+  await h.run('controlGroup("pause")');
+  assert.equal(count,0);
+  h.run('strictStandby=false');
+  const first = h.run('controlGroup("pause")');
+  await h.run('controlGroup("pause")');
+  assert.equal(count,1);
+  assert.equal(h.get('group-pause').disabled,true);
+  resolve({});
+  await first;
+  assert.equal(h.get('group-pause').disabled,true);
+});
+
+test('playback reply from before group command cannot restore old control state', async () => {
+  const h = harness();
+  let resolve;
+  h.context.reply = () => new Promise(r => {resolve=r;});
+  h.run('api=reply; radioReadyForViews=true');
+  const request = h.run('updateSong()');
+  h.run('transportEpoch++; groupTransport=null');
+  resolve({playing:true,transport:{state:'playing',can_pause:true}});
+  await request;
+  assert.equal(h.run('groupTransport'),null);
 });

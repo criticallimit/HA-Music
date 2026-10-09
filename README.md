@@ -18,6 +18,12 @@ Home-Assistant-Add-on für Alexa-Multiroom-Radio mit Ingress-Oberfläche und Lov
 
 Die konkrete Installation verwendet weiterhin `switch.alexa_alle`, `input_boolean.alexa_hochgefahren` und die Master-Gruppe `media_player.wohnung`. Senderbefehle werden über `media_player.wohnzimmer` an die vorhandene Alexa-Gruppe Wohnung geschickt. Für diese Sender muss das Wohnzimmer in der Geräteauswahl aktiviert bleiben. Zusätzliche Raumgeräte lassen sich über die Konfiguration einbeziehen; ihre Zugehörigkeit zur echten Alexa-Multiroom-Gruppe wird dadurch nicht geändert.
 
+## Räume und Gruppenwiedergabe steuern
+
+Die Raum-Schalter zeigen **Hörbar** oder **Stumm**. Ein Klick schaltet ausschließlich die Raumlautstärke um; die Alexa-Gruppenwiedergabe läuft weiter. Beim Stummschalten wird die zuletzt eingestellte positive Lautstärke dauerhaft gespeichert und beim erneuten Hörbarschalten wiederhergestellt. Ohne gespeicherten Wert wird eine positive Master-Lautstärke verwendet, andernfalls 30%. Lautstärkeregler bleiben unabhängig bedienbar.
+
+**Wohnung · gemeinsame Wiedergabe** bietet **Fortsetzen** und **Pause** für die gesamte Gruppe. Die Buttons sind nur aktiv, wenn Home Assistant einen pausierten bzw. spielenden Gruppenzustand und die passende Funktion meldet. Fortsetzen startet keinen neuen Sender aus einem inaktiven/ unbekannten Zustand. Raum-Schalter, Gruppen-Pause und das zentrale Ausschalten sind unterschiedliche Funktionen: Nur der zentrale HA-Music-Ausschaltbutton startet den Netzwerk-Standby. Ein Pausebefehl an ein einzelnes Alexa-Gruppenmitglied könnte die gesamte Gruppe pausieren; deshalb gibt es keine individuellen Pausebuttons.
+
 ## Geräte auswählen
 
 1. Nach dieser Änderung das Add-on-Repository aktualisieren und HA Music **neu aufbauen**.
