@@ -1,6 +1,7 @@
 """Regression tests for lifecycle, delayed operations and stream cancellation."""
 from contextlib import ExitStack
 import io
+import json
 from http.client import HTTPResponse
 from email.message import Message
 import socket
@@ -18,6 +19,7 @@ import app
 import metadata
 import metadata_feed
 VERIFY = app.verify_restored_volumes
+SYNCHRONIZE = app.synchronize_device_configuration
 
 
 class RuntimeTests(unittest.TestCase):
@@ -25,8 +27,11 @@ class RuntimeTests(unittest.TestCase):
         self.stack = ExitStack()
         self.addCleanup(self.stack.close)
         folder = Path(self.stack.enter_context(tempfile.TemporaryDirectory(dir=ROOT)))
-        for name in ("VOLUME_FILE", "STATION_FILE", "SPEAKER_FILE", "VIEW_FILE"):
+        for name in ("VOLUME_FILE", "STATION_FILE", "SPEAKER_FILE", "VIEW_FILE", "OPTIONS"):
             self.stack.enter_context(patch.object(app, name, folder / (name + ".json")))
+        self.stack.enter_context(patch.object(app, "SUPERVISOR_OPTIONS", None))
+        app.OPTIONS.write_text(json.dumps({"devices": [{"entity_id": entity, "name": entity, "enabled": True} for entity in ("media_player.wohnung", "media_player.wohnzimmer", "media_player.kueche", "media_player.bad", "media_player.buero")]}))
+        self.stack.enter_context(patch.object(app, "synchronize_device_configuration"))
         self.monitor = self.stack.enter_context(patch.object(app, "MONITOR"))
         self.timer = self.stack.enter_context(patch.object(app.threading, "Timer"))
         self.stack.enter_context(patch.object(app, "urlopen", side_effect=AssertionError("Unexpected network")))
@@ -51,7 +56,7 @@ class RuntimeTests(unittest.TestCase):
     def startup(self, request=None):
         with patch.object(app, "wait_for_start", return_value=True), \
              patch.object(app, "state_snapshot", return_value=self.states), \
-             patch.object(app, "allowed_entities", return_value=set(self.states)), \
+             patch.object(app, "allowed_entities", return_value={entity for entity in self.states if entity.startswith("media_player.")}), \
              patch.object(app, "ha_request", side_effect=request or (lambda *args: {})) as calls:
             app.radio_start_sequence(app.RESTORE_GENERATION)
             return calls
@@ -277,6 +282,128 @@ class RuntimeTests(unittest.TestCase):
         for entity, volume in [("media_player.x", float("nan")), ("media_player.x", True), ("../x", 0.5)]:
             with self.assertRaises(ValueError):
                 app.perform("volume", {"entity_id": entity, "volume": volume})
+
+
+class DeviceConfigurationTests(unittest.TestCase):
+    def setUp(self):
+        RuntimeTests.setUp(self)
+        self.found = [
+            {"entity_id": "media_player.wohnung", "name": "Wohnung", "state": "idle", "volume": 0.4},
+            {"entity_id": "media_player.wohnzimmer", "name": "Wohnzimmer", "state": "idle", "volume": 0.4},
+            {"entity_id": "media_player.bad", "name": "Bad", "state": "off", "volume": 0.7},
+            {"entity_id": "media_player.reserve", "name": "Reserve", "state": "unavailable", "volume": None},
+        ]
+
+    def config(self, entries):
+        app.OPTIONS.write_text(json.dumps({"show_dashboard_setup": True, "devices": entries}))
+
+    def test_disabled_rooms_are_hidden_and_enabled_names_are_preserved(self):
+        self.config([{"entity_id": "media_player.wohnzimmer", "name": "Mein Wohnzimmer", "enabled": True},
+                     {"entity_id": "media_player.bad", "name": "Bad", "enabled": False},
+                     {"entity_id": "media_player.reserve", "name": "Reserve", "enabled": True}])
+        with patch.object(app, "detected_devices", return_value=self.found):
+            classified = app.classify_devices()
+            self.assertEqual({p["entity_id"] for p in classified["players"]}, {"media_player.wohnzimmer", "media_player.reserve"})
+            self.assertEqual(classified["players"][0]["name"], "Mein Wohnzimmer")
+            self.assertEqual(app.allowed_entities(), {"media_player.wohnzimmer", "media_player.reserve"})
+
+    def test_discovery_includes_registered_devices_without_states(self):
+        inventory = {"alexa_devices": ["media_player.bad", "media_player.reserve"], "alexa_media": []}
+        with patch.object(app, "state_snapshot", return_value={"media_player.bad": {"state": "off", "attributes": {"friendly_name": "Bad"}}}):
+            devices = {p["entity_id"]: p for p in app.detected_devices(inventory)}
+        self.assertEqual(devices["media_player.reserve"]["state"], "unavailable")
+        self.assertEqual(devices["media_player.bad"]["state"], "off")
+
+    def test_new_devices_are_disabled_and_existing_settings_unchanged(self):
+        initial = {"show_dashboard_setup": True, "devices": [
+            {"entity_id": "media_player.wohnzimmer", "name": "Mein Name", "enabled": False},
+            {"entity_id": "media_player.altes_geraet", "name": "Später wieder da", "enabled": True}]}
+        merged = app.merge_discovered_devices(initial, self.found)
+        self.assertEqual(merged["devices"][:2], initial["devices"])
+        self.assertTrue(all(not entry["enabled"] for entry in merged["devices"][2:]))
+        self.assertEqual(len(initial["devices"]), 2)
+        self.assertTrue(merged["show_dashboard_setup"])
+
+    def test_sync_preserves_latest_user_edit_before_post(self):
+        initial = {"show_dashboard_setup": False, "devices": [{"entity_id": "media_player.wohnzimmer", "name": "Wohnzimmer", "enabled": True}]}
+        latest = {"show_dashboard_setup": True, "devices": [{"entity_id": "media_player.wohnzimmer", "name": "Neu", "enabled": False}]}
+        with patch.object(app, "detected_devices", return_value=self.found), patch.object(app, "supervisor_request", side_effect=[{"options": initial}, {"options": latest}, {}]) as request:
+            SYNCHRONIZE(10)
+        posted = request.call_args_list[-1].args[1]["options"]
+        self.assertEqual(posted["devices"][0], latest["devices"][0])
+        self.assertTrue(posted["show_dashboard_setup"])
+        self.assertEqual(app.options(), posted)
+
+    def test_unchanged_inventory_does_not_write_options(self):
+        config = app.merge_discovered_devices({"show_dashboard_setup": False, "devices": []}, self.found)
+        with patch.object(app, "detected_devices", return_value=self.found), patch.object(app, "supervisor_request", return_value={"options": config}) as request:
+            SYNCHRONIZE(10)
+        self.assertEqual(request.call_count, 1)
+
+    def test_sync_never_uses_network_in_standby(self):
+        app.STANDBY.set()
+        with patch.object(app, "supervisor_request") as request:
+            with self.assertRaises(app.StartupCancelled):
+                SYNCHRONIZE(10)
+        request.assert_not_called()
+
+    def test_failed_config_write_does_not_enable_new_rooms(self):
+        original = app.options()
+        with patch.object(app, "detected_devices", return_value=self.found), patch.object(app, "supervisor_request", side_effect=[{"options": original}, {"options": original}, OSError("write failed")]):
+            with self.assertRaises(OSError):
+                SYNCHRONIZE(10)
+        self.assertIsNone(app.SUPERVISOR_OPTIONS)
+        self.assertNotIn("media_player.reserve", app.enabled_device_ids())
+
+    def test_disabled_device_cannot_receive_manual_commands(self):
+        self.config([{"entity_id": "media_player.bad", "name": "Bad", "enabled": False}])
+        app.READY = True
+        with patch.object(app, "detected_devices", return_value=self.found), patch.object(app, "ha_request") as request:
+            with self.assertRaises(ValueError):
+                app.perform("volume", {"entity_id": "media_player.bad", "volume": 0.5})
+        request.assert_not_called()
+
+    def test_disabled_room_is_skipped_by_probe_restore_and_update(self):
+        self.config([{"entity_id": "media_player.wohnung", "name": "Wohnung", "enabled": True},
+                     {"entity_id": "media_player.wohnzimmer", "name": "Wohnzimmer", "enabled": True},
+                     {"entity_id": "media_player.bad", "name": "Bad", "enabled": False}])
+        self.states["media_player.bad"] = {"state": "idle", "attributes": {"volume_level": 0.7}}
+        app.save_speaker_levels({"media_player.wohnung": 0.25, "media_player.wohnzimmer": 0.4, "media_player.bad": 0.7})
+        with patch.object(app, "detected_devices", return_value=self.found), patch.object(app, "state_snapshot", return_value=self.states), patch.object(app, "wait_for_start", return_value=True), patch.object(app, "ha_request", return_value={}) as request:
+            app.radio_start_sequence(10)
+        self.assertTrue(app.READY)
+        for call in request.call_args_list:
+            target = call.args[1].get("entity_id", [])
+            self.assertNotIn("media_player.bad", [target] if isinstance(target, str) else target)
+        self.assertEqual(app.speaker_levels()["media_player.bad"], 0.7)
+
+    def test_registered_fire_tv_can_be_enabled_explicitly(self):
+        self.config([{"entity_id": "media_player.fire_tv", "name": "Fire TV", "enabled": True}])
+        with patch.object(app, "detected_devices", return_value=[{"entity_id": "media_player.fire_tv", "name": "Fire TV", "state": "idle", "volume": 0.2}]):
+            self.assertEqual(app.allowed_entities(), {"media_player.fire_tv"})
+
+    def test_disabled_station_target_cannot_play(self):
+        self.config([])
+        with patch.object(app, "ha_request") as request, patch.object(app, "state_snapshot", return_value=self.states):
+            with self.assertRaises(ValueError):
+                app.play_station("wdr2", 10)
+        request.assert_not_called()
+
+    def test_invalid_config_and_duplicate_entities_are_rejected(self):
+        entry = {"entity_id": "media_player.bad", "name": "Bad", "enabled": True}
+        for config in ({"devices": [entry, entry]}, {"devices": [{**entry, "enabled": "false"}]}, {"devices": [{**entry, "entity_id": "switch.x"}]}):
+            with self.assertRaises(ValueError):
+                app.configured_devices(config)
+
+    def test_supervisor_uses_self_endpoint_and_validates_envelope(self):
+        with patch.object(app, "ha_request", return_value={"result": "ok", "data": {"options": {}}}) as request:
+            self.assertEqual(app.supervisor_request("/addons/self/info"), {"options": {}})
+            self.assertTrue(request.call_args.kwargs["supervisor"])
+        with self.assertRaises(ValueError):
+            app.supervisor_request("/addons/other/options")
+        with patch.object(app, "ha_request", return_value={"result": "error"}):
+            with self.assertRaises(RuntimeError):
+                app.supervisor_request("/addons/self/info")
 
 
 class MetadataTests(unittest.TestCase):

@@ -21,5 +21,22 @@ map:
     read_only: false
 options:
   show_dashboard_setup: false
+  devices:
+    - entity_id: media_player.wohnung
+      name: Wohnung
+      enabled: true
+    - entity_id: media_player.wohnzimmer
+      name: Wohnzimmer
+      enabled: true
+    - entity_id: media_player.kueche
+      name: Küche
+      enabled: true
+    - entity_id: media_player.bad
+      name: Bad
+      enabled: true
 schema:
   show_dashboard_setup: bool
+  devices:
+    - entity_id: "match(^media_player\\.[a-z0-9_]+$)"
+      name: str
+      enabled: bool

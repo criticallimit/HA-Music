@@ -1,0 +1,20 @@
+configuration:
+  show_dashboard_setup:
+    name: Show dashboard setup
+    description: Show Lovelace card setup in HA Music.
+  devices:
+    name: Alexa devices
+    description: >-
+      Detected devices are added when you turn on HA Music, including unavailable devices.
+      Only enabled devices appear in HA Music and receive volume commands.
+      Additional devices are disabled initially. Save changes and restart the add-on.
+    fields:
+      entity_id:
+        name: Entity ID
+        description: The media_player entity registered by the Alexa integration.
+      name:
+        name: Device name
+        description: Display name in the device list and HA Music.
+      enabled:
+        name: Enable in HA Music
+        description: Show this device and allow volume control.

@@ -14,6 +14,12 @@ with tempfile.TemporaryDirectory(dir=ROOT) as temp:
     app.LAST_POWER = "on"
     app.READY = True
     app.SPEAKER_FILE = Path(temp) / "speakers.json"
+    app.OPTIONS = Path(temp) / "options.json"
+    app.OPTIONS.write_text(json.dumps({"devices": [
+        {"entity_id": "media_player.kueche", "name": "Küche", "enabled": True},
+        {"entity_id": "media_player.wohnung", "name": "Wohnung", "enabled": True},
+        {"entity_id": "media_player.fire_tv", "name": "Dirks Fire TV", "enabled": False},
+    ]}))
     states = [
         {"entity_id": "media_player.kueche", "state": "playing", "attributes": {"friendly_name": "Küche", "volume_level": 0.4}},
         {"entity_id": "media_player.wohnung", "state": "idle", "attributes": {"friendly_name": "Wohnung", "volume_level": 0.3}},
@@ -28,7 +34,8 @@ with tempfile.TemporaryDirectory(dir=ROOT) as temp:
         assert [p["entity_id"] for p in app.players()] == ["media_player.kueche"]
         assert app.allowed_entities() == {"media_player.kueche", "media_player.wohnung"}
         assert [x["name"] for x in app.classify_devices()["groups"]] == ["Wohnung"]
-        assert [x["name"] for x in app.classify_devices()["excluded"]] == ["Dirks Fire TV"]
+        assert app.classify_devices()["excluded"] == []
+        assert "media_player.fire_tv" in {p["entity_id"] for p in app.detected_devices()}
         try:
             app.perform("radio", {"station": "wdr2"})
             raise AssertionError("Voice commands must not be enabled")
@@ -44,7 +51,7 @@ with tempfile.TemporaryDirectory(dir=ROOT) as temp:
     assert app.remembered()["media_player.kueche"] == 0.4
 print("HA Music smoke checks passed")
 
-with patch.object(app, "ha_request", return_value=[
+with patch.object(app, "enabled_device_ids", return_value={"media_player.wohnzimmer", "media_player.wohnung"}), patch.object(app, "ha_request", return_value=[
     {"entity_id":"media_player.wohnzimmer","state":"playing",
      "attributes":{"media_title":"Testtitel","media_artist":"Künstler","entity_picture":"/api/media_player_proxy/test"}},
     {"entity_id":"media_player.wohnung","state":"idle","attributes":{}}

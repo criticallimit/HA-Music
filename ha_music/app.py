@@ -5,6 +5,7 @@ from urllib.parse import unquote, urlsplit
 from urllib.request import Request, urlopen
 from http.client import HTTPException
 import json
+from copy import deepcopy
 import os
 import re
 import threading
@@ -16,6 +17,7 @@ WEB = (Path(__file__).parent / "web").resolve()
 PORT = int(os.environ.get("PORT", "8099"))
 OPTIONS = Path(os.environ.get("OPTIONS_FILE", "/data/options.json"))
 HA_API = os.environ.get("HA_API", "http://supervisor/core/api").rstrip("/")
+SUPERVISOR_API = os.environ.get("SUPERVISOR_API", "http://supervisor").rstrip("/")
 TOKEN = os.environ.get("SUPERVISOR_TOKEN", "") or os.environ.get("HASSIO_TOKEN", "")
 STATIONS = {"wdr2": "WDR 2", "1live": "1LIVE", "wdr4": "WDR 4",
             "80s80s": "80s80s", "ndr2": "NDR 2", "radiobob": "Radio BOB!"}
@@ -48,6 +50,79 @@ STATE_CACHE = (0.0, None)
 SSE_SLOTS = threading.BoundedSemaphore(16)
 RESPONSE_LOCK = threading.Lock()
 ACTIVE_RESPONSES = set()
+CONFIG_LOCK = threading.RLock()
+DEVICE_SYNC_LOCK = threading.Lock()
+SUPERVISOR_OPTIONS = None
+
+
+def configured_devices(config=None):
+    config = options() if config is None else config
+    result = {}
+    entries = config.get("devices", [])
+    if not isinstance(entries, list):
+        raise ValueError("Ungültige Geräteliste in der Add-on-Konfiguration")
+    for entry in entries:
+        if not isinstance(entry, dict):
+            raise ValueError("Ungültiger Geräteeintrag")
+        entity = entry.get("entity_id")
+        if not isinstance(entity, str) or not ENTITY_RE.fullmatch(entity) or entity in result or type(entry.get("enabled")) is not bool:
+            raise ValueError("Ungültige oder doppelte Geräte-Entity")
+        result[entity] = entry
+    return result
+
+
+def enabled_device_ids():
+    return {entity for entity, entry in configured_devices().items() if entry["enabled"]}
+
+
+def merge_discovered_devices(config, found):
+    """Append discoveries; keep user labels, toggles and unavailable entries."""
+    merged = deepcopy(config)
+    known = configured_devices(config)
+    entries = merged.setdefault("devices", [])
+    for device in sorted(found, key=lambda item: item["entity_id"]):
+        entity = device["entity_id"]
+        if entity not in known:
+            entries.append({"entity_id": entity, "name": device["name"], "enabled": False})
+            known[entity] = entries[-1]
+    return merged
+
+
+def supervisor_request(path, payload=None):
+    if path not in ("/addons/self/info", "/addons/self/options"):
+        raise ValueError("Supervisor-Endpunkt nicht freigegeben")
+    response = ha_request(path, payload, supervisor=True)
+    if not isinstance(response, dict) or response.get("result") != "ok":
+        raise RuntimeError("Supervisor-Konfiguration konnte nicht gelesen/gespeichert werden")
+    data = response.get("data") or {}
+    if not isinstance(data, dict):
+        raise ValueError("Ungültige Supervisor-Konfigurationsantwort")
+    return data
+
+
+def synchronize_device_configuration(generation):
+    global SUPERVISOR_OPTIONS
+    with DEVICE_SYNC_LOCK:
+        check_generation(generation)
+        current = supervisor_request("/addons/self/info").get("options")
+        if not isinstance(current, dict):
+            raise ValueError("Supervisor-Gerätekonfiguration fehlt")
+        found = detected_devices()
+        check_generation(generation)
+        merged = merge_discovered_devices(current, found)
+        if merged != current:
+            # Read again immediately before the write; preserve intervening edits.
+            latest = supervisor_request("/addons/self/info").get("options")
+            if not isinstance(latest, dict):
+                raise ValueError("Supervisor-Gerätekonfiguration fehlt")
+            merged = merge_discovered_devices(latest, found)
+            check_generation(generation)
+            if merged != latest:
+                supervisor_request("/addons/self/options", {"options": merged})
+        check_generation(generation)
+        with CONFIG_LOCK:
+            SUPERVISOR_OPTIONS = deepcopy(merged)
+        print(f"[HA Music] Device configuration: {len(merged.get('devices', []))} entries", flush=True)
 def integration_inventory():
     """Discover registered Alexa entities from both supported integration domains."""
     response = ha_request("/template", {
@@ -71,31 +146,31 @@ def integration_player_ids():
 def detected_devices(inventory=None):
     inventory = inventory if inventory is not None else integration_inventory()
     ids = {eid for values in inventory.values() for eid in values if ENTITY_RE.fullmatch(eid)}
-    states = state_snapshot().values()
+    states = state_snapshot()
     found = []
-    for state in states:
-        entity = state.get("entity_id")
-        if entity not in ids:
-            continue
+    for entity in ids:
+        state = states.get(entity, {})
         attributes = state.get("attributes") or {}
         name = str(attributes.get("friendly_name") or entity)
         found.append({"entity_id": entity, "name": name,
-                      "state": state.get("state", "unknown"),
+                      "state": state.get("state", "unavailable"),
                       "volume": attributes.get("volume_level"),
                       "features": attributes.get("supported_features", 0),
                       "possible_group": False})
     return sorted(found, key=lambda item: item["name"].casefold())
 
 def classify_devices(inventory=None):
-    """Separate user-confirmed Wohnung group and non-room endpoint types."""
+    """Show only enabled registered devices; Wohnung is the virtual master."""
     group, rooms, excluded = [], [], []
+    selected = configured_devices()
     for player in detected_devices(inventory):
-        name = player["name"].strip().casefold()
+        entry = selected.get(player["entity_id"])
+        if not entry or not entry["enabled"]:
+            continue
+        player["name"] = str(entry.get("name") or player["name"])
         entity = player["entity_id"].casefold()
-        if name == "wohnung" or entity == "media_player.wohnung":
+        if entity == "media_player.wohnung":
             group.append(player)
-        elif "fire tv" in name or name == "this device" or "fire_tv" in entity:
-            excluded.append(player)
         else:
             rooms.append(player)
     return {"groups": group, "players": rooms, "excluded": excluded}
@@ -170,6 +245,12 @@ def startup_request(generation, path, payload=None):
     # Serialize commands; recheck after acquiring the lock and after slow I/O.
     with COMMAND_LOCK:
         check_generation(generation)
+        if path in ("/services/media_player/volume_set", "/services/media_player/play_media", "/services/homeassistant/update_entity"):
+            targets = payload.get("entity_id", [])
+            targets = [targets] if isinstance(targets, str) else targets
+            selected = enabled_device_ids()
+            if any(entity not in selected for entity in targets):
+                raise ValueError("Gerät ist in der Add-on-Konfiguration deaktiviert")
         result = ha_request(path, payload)
         check_generation(generation)
         return result
@@ -294,15 +375,18 @@ def radio_start_sequence(generation):
             return
         if state_snapshot().get(RADIO_SWITCH, {}).get("state") != "on":
             raise RuntimeError("Radioschalter bestätigt Einschalten nicht")
-        startup_request(generation, "/services/homeassistant/update_entity",
-                        {"entity_id": list(RADIO_PLAYERS)})
+        synchronize_device_configuration(generation)
+        refresh_entities = sorted(allowed_entities())
+        if refresh_entities:
+            startup_request(generation, "/services/homeassistant/update_entity",
+                            {"entity_id": refresh_entities})
         startup_completed = False
         try:
             set_probe_volume(generation)
             if not wait_for_start(generation, 2):
                 return
             station = last_selected_station()
-            if station:
+            if station and DIRECT_STATIONS[station]["target"] in enabled_device_ids():
                 play_station(station, generation)
             startup_completed = True
         finally:
@@ -388,20 +472,23 @@ def radio_switch_monitor():
 
 
 def options():
+    with CONFIG_LOCK:
+        if SUPERVISOR_OPTIONS is not None:
+            return deepcopy(SUPERVISOR_OPTIONS)
     try:
         data = json.loads(OPTIONS.read_text())
         return data if isinstance(data, dict) else {}
     except (OSError, ValueError):
         return {}
 
-def ha_request(path, payload=None):
+def ha_request(path, payload=None, *, supervisor=False):
     global STATE_CACHE
     if STANDBY.is_set():
         raise RuntimeError("HA Music standby: outbound network disabled")
     if not TOKEN:
         raise RuntimeError("Home Assistant API token unavailable")
     data = json.dumps(payload).encode() if payload is not None else None
-    req = Request(HA_API + path, data=data, headers={
+    req = Request((SUPERVISOR_API if supervisor else HA_API) + path, data=data, headers={
         "Authorization": "Bearer " + TOKEN,
         "Content-Type": "application/json",
     }, method="POST" if payload is not None else "GET")
@@ -415,13 +502,13 @@ def ha_request(path, payload=None):
         finally:
             with RESPONSE_LOCK:
                 ACTIVE_RESPONSES.discard(response)
-        if payload is not None:
+        if payload is not None and not supervisor:
             with CACHE_LOCK:
                 STATE_CACHE = (0.0, None)
         # Some Home Assistant service responses are empty on success.
         if not raw.strip():
             return {}
-        if path == "/template":
+        if path == "/template" and not supervisor:
             return raw.decode("utf-8")
         return json.loads(raw)
 
@@ -515,6 +602,7 @@ def radio_state():
                 "show_dashboard_setup":options().get("show_dashboard_setup", False) is True,
                 "stations":[{"id":key,"name":item["name"],"available":False} for key,item in DIRECT_STATIONS.items()]}
     states = state_snapshot()
+    selected = enabled_device_ids()
     return {"power":LAST_POWER if STARTED_AT is not None else states.get(RADIO_SWITCH,{}).get("state","unavailable"),
             "ready":"on" if READY and states.get(RADIO_READY,{}).get("state") == "on" else "off",
             "startup_error":STARTUP_ERROR,
@@ -524,15 +612,14 @@ def radio_state():
             "dashboard_card_installed":dashboard_card_installed(),
             "show_dashboard_setup":options().get("show_dashboard_setup", False) is True,
             "stations":[{"id":key, "name":item["name"],
-                         "available":item["target"] in states and
+                         "available":item["target"] in selected and item["target"] in states and
                             states[item["target"]].get("state") not in ("unknown","unavailable")}
                         for key,item in DIRECT_STATIONS.items()]}
 
 
 def playback_status():
     states = state_snapshot()
-    candidates = ("media_player.wohnzimmer", "media_player.wohnung",
-                  "media_player.kueche", "media_player.bad")
+    candidates = sorted(enabled_device_ids(), key=lambda entity: (entity != "media_player.wohnzimmer", entity))
     observed = []
     for entity in candidates:
         state = states.get(entity)
@@ -557,6 +644,8 @@ def play_station(key, generation):
     preset = DIRECT_STATIONS[key]
     states = state_snapshot()
     target = preset["target"]
+    if target not in enabled_device_ids():
+        raise ValueError("Alexa-Senderziel ist in der Add-on-Konfiguration deaktiviert")
     if states.get(target, {}).get("state") in (None, "unknown", "unavailable"):
         raise ValueError("Alexa-Zielgerät nicht verfügbar")
     result = startup_request(generation, "/services/media_player/play_media", {

@@ -1,0 +1,20 @@
+configuration:
+  show_dashboard_setup:
+    name: Dashboard-Einrichtung anzeigen
+    description: Zeigt die Einrichtung der Lovelace-Karte in HA Music an.
+  devices:
+    name: Alexa-Geräte
+    description: >-
+      Erkannte Geräte werden beim Einschalten von HA Music ergänzt, auch wenn sie nicht verfügbar sind.
+      Nur aktivierte Geräte erscheinen in HA Music und erhalten Lautstärkebefehle.
+      Weitere Geräte sind zunächst deaktiviert. Nach Änderungen speichern und das Add-on neu starten.
+    fields:
+      entity_id:
+        name: Entity-ID
+        description: Die media_player-Entity aus der Alexa-Integration.
+      name:
+        name: Gerätename
+        description: Angezeigter Name in der Geräteliste und in HA Music.
+      enabled:
+        name: In HA Music aktivieren
+        description: Zeigt dieses Gerät an und erlaubt seine Lautstärkesteuerung.

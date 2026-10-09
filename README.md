@@ -14,9 +14,22 @@ Home-Assistant-Add-on für Alexa-Multiroom-Radio mit Ingress-Oberfläche und Lov
 - Beim Ausschalten werden Startabläufe und Metadaten abgebrochen. Nach zehn Sekunden sperrt das Add-on neue HA-Anfragen. Grenzen bereits laufender Netzwerk-/Alexa-Aufträge: [Prüfbericht](AUDIT.md).
 - Raumregler speichern ihre Sollwerte. `*` bedeutet: HA meldet noch einen anderen Wert. Stummschaltung setzt die Lautstärke auf 0, ohne Räume aus einer Alexa-Gruppe zu entfernen.
 - Sender, Radio-/Apple-Ansicht und Lautstärkewünsche liegen dauerhaft unter `/data`. Die Radioansicht während Standby überschreibt die gespeicherte Ansicht nicht.
-- Alexa-Entities werden über `integration_entities` der Integrationen `alexa_devices` und `alexa_media` erkannt. `Wohnung` wird als Gruppe, Fire TV / This Device werden separat behandelt.
+- Alexa-Entities werden über `integration_entities` der Integrationen `alexa_devices` und `alexa_media` erkannt. Auch ausgeschaltete oder nicht verfügbare Geräte werden erfasst. Unter **Add-on → Konfiguration → Alexa-Geräte** entscheidet der Schalter **In HA Music aktivieren**, welche Geräte angezeigt und gesteuert werden.
 
-Die konkrete Installation verwendet weiterhin `switch.alexa_alle`, `input_boolean.alexa_hochgefahren`, `media_player.wohnung`, `media_player.wohnzimmer`, `media_player.kueche` und `media_player.bad`. Diese Namen sind derzeit nicht konfigurierbar. Die Sender-Phrasen setzen die vorhandene Alexa-Gruppe Wohnung voraus.
+Die konkrete Installation verwendet weiterhin `switch.alexa_alle`, `input_boolean.alexa_hochgefahren` und die Master-Gruppe `media_player.wohnung`. Senderbefehle werden über `media_player.wohnzimmer` an die vorhandene Alexa-Gruppe Wohnung geschickt. Für diese Sender muss das Wohnzimmer in der Geräteauswahl aktiviert bleiben. Zusätzliche Raumgeräte lassen sich über die Konfiguration einbeziehen; ihre Zugehörigkeit zur echten Alexa-Multiroom-Gruppe wird dadurch nicht geändert.
+
+## Geräte auswählen
+
+1. Nach dieser Änderung das Add-on-Repository aktualisieren und HA Music **neu aufbauen**.
+2. HA Music einmal über den lokalen Einschaltbutton starten. Nach der 45-Sekunden-Wartezeit werden alle registrierten Alexa-Media-Player in der Add-on-Konfiguration ergänzt.
+3. **Add-on → Konfiguration** neu öffnen. Unter **Alexa-Geräte** das gewünschte Gerät über **In HA Music aktivieren** ein-/ausschalten. Bei Bedarf sind Entity-ID und Anzeigename editierbar; die Entity muss in einer unterstützten Alexa-Integration registriert sein.
+4. **Speichern** und das Add-on **neu starten**. Anschließend HA Music wieder lokal einschalten.
+
+Wohnung, Wohnzimmer, Küche und Bad bleiben als bisherige Geräte standardmäßig aktiviert. Weitere neu gefundene Geräte sind zunächst deaktiviert. Gespeicherte Ein-/Aus-Schalter, Anzeigenamen und zeitweise nicht gefundene Geräte bleiben erhalten. Eine leere Geräteauswahl aktiviert keine Geräte automatisch.
+
+Deaktivierte Geräte erscheinen weder als Raumregler noch als Gruppe in Ingress. Sie erhalten keine 1%-Probe, Master-Angleichung, `update_entity`- oder manuellen Lautstärkebefehle durch HA Music. Das Einschalten eines Eintrags schaltet das physische Gerät nicht ein: Ein nicht verfügbares Gerät wird als nicht verfügbar angezeigt. Der gemeinsame Radioschalter und die tatsächliche Alexa-Gruppenmitgliedschaft bleiben eigenständig.
+
+Neue Geräte werden beim nächsten lokalen HA-Music-Start ergänzt. Im Netzwerk-Standby findet keine Geräteerkennung statt. Einstellungen werden über die eigenen Supervisor-Endpunkte gespeichert; HA Music benötigt dafür keine zusätzliche Manager-/Admin-Rolle.
 
 ## Entwicklung und Prüfung
 

@@ -497,9 +497,9 @@ async function refreshPlayers() {
     $("master-volume").replaceChildren();
     if (master) $("master-volume").appendChild(volumeRow(master, remembered, true));
     else $("master-volume").textContent = "Master-Lautstärke nicht verfügbar";
-    $("groups").textContent = groups.length ? "Gruppe: " + groups.map(p => p.name).join(", ") + " · Alexa-Multiroom" : "Multiroom-Gruppe Wohnung derzeit nicht erkannt.";
+    $("groups").textContent = groups.length ? "Gruppe: " + groups.map(p => p.name).join(", ") + " · Alexa-Multiroom" : "Master-Gruppe Wohnung ist nicht aktiviert oder nicht verfügbar.";
     const wrap = $("players"); wrap.replaceChildren();
-    if (!players.length) wrap.textContent = "Keine verfügbaren Alexa-Raumlautsprecher gefunden.";
+    if (!players.length) wrap.textContent = "Keine Raumgeräte aktiviert. Bitte Geräte in der Add-on-Konfiguration auswählen.";
     $("volume-hint").hidden = !players.some(p => roomView(p, saved_levels).pending);
     for (const p of players) wrap.appendChild(volumeRow(roomView(p, saved_levels), remembered, false));
   } catch (e) {
