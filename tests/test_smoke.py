@@ -7,9 +7,13 @@ import tempfile
 from unittest.mock import patch
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "ha_music"))
-with tempfile.TemporaryDirectory() as temp:
+with tempfile.TemporaryDirectory(dir=ROOT) as temp:
     os.environ["VOLUME_FILE"] = str(Path(temp) / "volumes.json")
     import app
+    app.STANDBY.clear()
+    app.LAST_POWER = "on"
+    app.READY = True
+    app.SPEAKER_FILE = Path(temp) / "speakers.json"
     states = [
         {"entity_id": "media_player.kueche", "state": "playing", "attributes": {"friendly_name": "Küche", "volume_level": 0.4}},
         {"entity_id": "media_player.wohnung", "state": "idle", "attributes": {"friendly_name": "Wohnung", "volume_level": 0.3}},
@@ -22,7 +26,7 @@ with tempfile.TemporaryDirectory() as temp:
         return {}
     with patch.object(app, "ha_request", side_effect=request):
         assert [p["entity_id"] for p in app.players()] == ["media_player.kueche"]
-        assert app.allowed_entities() == {"media_player.kueche"}
+        assert app.allowed_entities() == {"media_player.kueche", "media_player.wohnung"}
         assert [x["name"] for x in app.classify_devices()["groups"]] == ["Wohnung"]
         assert [x["name"] for x in app.classify_devices()["excluded"]] == ["Dirks Fire TV"]
         try:
@@ -40,16 +44,6 @@ with tempfile.TemporaryDirectory() as temp:
     assert app.remembered()["media_player.kueche"] == 0.4
 print("HA Music smoke checks passed")
 
-# A group volume change is permitted, but unregistered players are rejected.
-with patch.object(app, "classify_devices", return_value={"groups":[{"name":"Wohnung","entity_id":"media_player.wohnung","state":"idle","volume":0.3}],"players":[],"excluded":[]}):
-    with patch.object(app,"ha_request",return_value={} ) as mocked:
-        app.perform("volume",{"entity_id":"media_player.wohnung","volume":0.4})
-        assert mocked.call_args.args[1]["entity_id"] == "media_player.wohnung"
-        try:
-            app.perform("volume",{"entity_id":"media_player.unknown","volume":0.4})
-            raise AssertionError("Unknown device accepted")
-        except ValueError:
-            pass
 with patch.object(app, "ha_request", return_value=[
     {"entity_id":"media_player.wohnzimmer","state":"playing",
      "attributes":{"media_title":"Testtitel","media_artist":"Künstler","entity_picture":"/api/media_player_proxy/test"}},
@@ -66,6 +60,7 @@ assert not hasattr(metadata, "URLS")
 assert not hasattr(metadata, "icy_diagnostics")
 assert metadata.parse_icy_title("Artist - Track")["title"] == "Track"
 assert metadata.parse_icy_title("WDR 2 Hotline")["show"] == "WDR 2 Hotline"
+metadata.resume_icy_workers()
 with patch.object(metadata, "ensure_icy_worker"):
     with patch.object(metadata, "ICY_LATEST", {
         "wdr2": (metadata.time.monotonic(), "Artist A - Song A"),

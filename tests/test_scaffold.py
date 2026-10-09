@@ -27,7 +27,8 @@ assert "metadata.py" in dockerfile
 assert (root / "ha_music/metadata.py").exists()
 
 # Supervisor injects its token through the s6 container environment.
-assert 'CMD ["/usr/bin/with-contenv", "python3", "/app/app.py"]' in dockerfile
+assert 'CMD ["/run.sh"]' in dockerfile
+assert (root / "ha_music/run.sh").read_text().startswith("#!/usr/bin/with-contenv sh")
 
 # The current radio UI shows live metadata and the selected station.
 assert 'id="current-title"' in html
@@ -44,7 +45,7 @@ assert "class MetadataMonitor" in backend
 assert "ensure_icy_worker(station)" in backend
 assert "self.sequence += 1" in backend
 assert 'name == "events"' in source
-assert "MONITOR.select(body" in source
+assert "MONITOR.select(key)" in source
 assert 'new EventSource("api/events")' in js
 assert "if (!isRadio)" in js and "details?.image" in js
 assert "metadata_feed.py" in dockerfile

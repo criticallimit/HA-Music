@@ -3,15 +3,14 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
 from urllib.request import Request, urlopen
-from urllib.error import HTTPError, URLError
+from http.client import HTTPException
 import json
 import os
 import re
 import threading
 import time
-from datetime import datetime, timezone
-from metadata import now_playing
 from metadata_feed import MONITOR
+from metadata import close_stream
 
 WEB = (Path(__file__).parent / "web").resolve()
 PORT = int(os.environ.get("PORT", "8099"))
@@ -31,10 +30,23 @@ STARTED_AT = None
 RESTORE_GENERATION = 0
 RADIO_MONITOR_STOP = threading.Event()
 STANDBY = threading.Event()
+STANDBY.set()  # Only an explicit local power-on permits network/startup.
+READY = False
+STARTUP_ERROR = None
+STATE_LOCK = threading.RLock()
+COMMAND_LOCK = threading.RLock()
+POWER_LOCK = threading.Lock()
+CANCEL = threading.Event()
+NETWORK_ERRORS = (RuntimeError, OSError, ValueError, HTTPException)
 STANDBY_UNTIL = 0.0
 LAST_POWER = "off"
 RADIO_PLAYERS = ("media_player.wohnung", "media_player.wohnzimmer", "media_player.kueche", "media_player.bad")
 LOCK = threading.Lock()
+CACHE_LOCK = threading.RLock()
+STATE_CACHE = (0.0, None)
+SSE_SLOTS = threading.BoundedSemaphore(16)
+RESPONSE_LOCK = threading.Lock()
+ACTIVE_RESPONSES = set()
 def integration_inventory():
     """Discover registered Alexa entities from both supported integration domains."""
     response = ha_request("/template", {
@@ -45,6 +57,8 @@ def integration_inventory():
     data = json.loads(response)
     if not isinstance(data, dict):
         raise ValueError("Ungültiges Alexa-Inventar")
+    if any(not isinstance(data.get(domain, []), list) for domain in ("alexa_devices", "alexa_media")):
+        raise ValueError("Ungültige Alexa-Entity-Liste")
     return {domain: [eid for eid in data.get(domain, []) if isinstance(eid, str)]
             for domain in ("alexa_devices", "alexa_media")}
 
@@ -53,9 +67,10 @@ def integration_player_ids():
     return {entity for values in inventory.values() for entity in values
             if ENTITY_RE.fullmatch(entity)}
 
-def detected_devices():
-    ids = integration_player_ids()
-    states = ha_request("/states")
+def detected_devices(inventory=None):
+    inventory = inventory if inventory is not None else integration_inventory()
+    ids = {eid for values in inventory.values() for eid in values if ENTITY_RE.fullmatch(eid)}
+    states = state_snapshot().values()
     found = []
     for state in states:
         entity = state.get("entity_id")
@@ -70,10 +85,10 @@ def detected_devices():
                       "possible_group": False})
     return sorted(found, key=lambda item: item["name"].casefold())
 
-def classify_devices():
+def classify_devices(inventory=None):
     """Separate user-confirmed Wohnung group and non-room endpoint types."""
     group, rooms, excluded = [], [], []
-    for player in detected_devices():
+    for player in detected_devices(inventory):
         name = player["name"].strip().casefold()
         entity = player["entity_id"].casefold()
         if name == "wohnung" or entity == "media_player.wohnung":
@@ -136,51 +151,71 @@ def capture_speaker_levels(states):
         save_speaker_levels(saved)
 
 
+class StartupCancelled(RuntimeError):
+    pass
+
+
+def check_generation(generation):
+    if generation != RESTORE_GENERATION or LAST_POWER != "on" or STANDBY.is_set():
+        raise StartupCancelled("Start abgebrochen")
+
+
+def startup_request(generation, path, payload=None):
+    # Serialize commands; recheck after acquiring the lock and after slow I/O.
+    with COMMAND_LOCK:
+        check_generation(generation)
+        result = ha_request(path, payload)
+        check_generation(generation)
+        return result
+
+
 def verify_restored_volumes(generation, expected):
-    """Log HA confirmations asynchronously, without delaying the radio UI."""
-    for attempt in range(3):
-        if generation != RESTORE_GENERATION:
+    expected = dict(expected)
+    for _ in range(3):
+        if not wait_for_start(generation, 2):
             return
-        time.sleep(2)
         try:
             states = state_snapshot()
-        except (RuntimeError, HTTPError, URLError, ValueError) as exc:
+            check_generation(generation)
+        except StartupCancelled:
+            return
+        except NETWORK_ERRORS as exc:
             print(f"[HA Music] Volume verification retry: {exc}", flush=True)
             continue
         for entity, level in list(expected.items()):
-            observed = (states.get(entity, {}).get("attributes") or {}).get("volume_level")
-            if isinstance(observed, (float, int)) and abs(observed - level) <= 0.011:
-                print(f"[HA Music] HA confirmed {entity}: {round(level*100)}%", flush=True)
+            entry = states.get(entity, {})
+            observed = (entry.get("attributes") or {}).get("volume_level")
+            if entry.get("state") not in ("unknown", "unavailable") and type(observed) in (float, int) and abs(observed - level) <= 0.011:
                 expected.pop(entity)
         if not expected:
             return
     for entity in expected:
-        print(f"[HA Music] WARNING: {entity} did not confirm restored volume; "
-              "Echo may not have applied the command", flush=True)
+        print(f"[HA Music] WARNING: {entity} has not confirmed its restored volume", flush=True)
 
 
 def restore_speakers(generation):
-    """Send stored room levels, then verify without blocking readiness."""
     levels = speaker_levels()
-    print(f"[HA Music] Restoring {len(levels)} stored speaker levels", flush=True)
     available = allowed_entities()
-    sent = {}
+    sent, failed = {}, []
     for entity in sorted(e for e in levels if e != "media_player.wohnung"):
-        if generation != RESTORE_GENERATION:
-            return
+        check_generation(generation)
         if entity not in available:
             continue
-        level = levels[entity]
+        # A muted virtual master must remain silent across power cycles.
+        level = 0.0 if levels.get("media_player.wohnung") == 0 else levels[entity]
         try:
-            ha_request("/services/media_player/volume_set",
-                       {"entity_id": entity, "volume_level": level})
+            startup_request(generation, "/services/media_player/volume_set",
+                            {"entity_id": entity, "volume_level": level})
             sent[entity] = level
-            print(f"[HA Music] Volume command sent to {entity}: {round(level*100)}%", flush=True)
-        except (RuntimeError, HTTPError, URLError, ValueError) as exc:
-            print(f"[HA Music] Restore failed for {entity}: {exc}", flush=True)
+        except StartupCancelled:
+            raise
+        except NETWORK_ERRORS:
+            failed.append(entity)
     if sent:
         threading.Thread(target=verify_restored_volumes,
                          args=(generation, sent), daemon=True).start()
+    if failed:
+        raise RuntimeError("Lautstärke nicht wiederhergestellt: " + ", ".join(failed))
 
 
 def set_radio_ready(enabled):
@@ -189,131 +224,141 @@ def set_radio_ready(enabled):
 
 
 def wait_for_start(generation, seconds):
-    """Cancel promptly when the radio is switched off during startup."""
-    for _ in range(seconds):
-        if generation != RESTORE_GENERATION:
+    with STATE_LOCK:
+        if generation != RESTORE_GENERATION or LAST_POWER != "on" or STANDBY.is_set():
             return False
-        time.sleep(1)
-    if generation != RESTORE_GENERATION:
+        cancellation = CANCEL
+    if cancellation.wait(seconds):
         return False
-    return state_snapshot().get(RADIO_SWITCH, {}).get("state") == "on"
+    try:
+        check_generation(generation)
+        return True
+    except StartupCancelled:
+        return False
 
 
 def set_probe_volume(generation):
-    """Apply temporary 1% to non-muted speakers; do not persist test values."""
     saved = speaker_levels()
     states = state_snapshot()
+    permitted = allowed_entities()
+    # Preserve known pre-probe levels on first use; never guess a restore value.
+    missing = {}
     for entity in RADIO_PLAYERS:
-        if generation != RESTORE_GENERATION:
-            return
-        if entity == "media_player.wohnung":
+        entry = states.get(entity, {})
+        value = (entry.get("attributes") or {}).get("volume_level")
+        if entity != "media_player.wohnung" and entity in permitted and entity not in saved and entry.get("state") not in (None, "unknown", "unavailable") and type(value) in (int, float) and 0 <= value <= 1:
+            missing[entity] = value
+    check_generation(generation)
+    if missing:
+        save_speaker_levels(missing)
+        saved.update(missing)
+    for entity in RADIO_PLAYERS:
+        check_generation(generation)
+        if entity == "media_player.wohnung" or entity not in permitted or entity not in saved:
             continue
         if states.get(entity, {}).get("state") in (None, "unknown", "unavailable"):
             continue
-        if saved.get(entity) == 0:
-            continue
-        try:
-            ha_request("/services/media_player/volume_set",
-                       {"entity_id": entity, "volume_level": 0.01})
-        except (RuntimeError, HTTPError, URLError, ValueError) as exc:
-            print(f"[HA Music] 1% startup volume failed for {entity}: {exc}", flush=True)
+        level = 0.0 if saved[entity] == 0 or saved.get("media_player.wohnung") == 0 else 0.01
+        startup_request(generation, "/services/media_player/volume_set",
+                        {"entity_id": entity, "volume_level": level})
 
 
 def radio_start_sequence(generation):
-    """Use the former automation's fixed boot period before enabling the radio."""
+    global READY, STARTUP_ERROR, STARTED_AT
     try:
-        print("[HA Music] Echo startup: waiting 45 seconds", flush=True)
+        startup_request(generation, "/services/input_boolean/turn_off", {"entity_id": RADIO_READY})
         if not wait_for_start(generation, 45):
             return
-        print("[HA Music] Refreshing Alexa media players", flush=True)
-        ha_request("/services/homeassistant/update_entity",
-                   {"entity_id": list(RADIO_PLAYERS)})
-        if generation != RESTORE_GENERATION:
-            return
-        set_probe_volume(generation)
-        print("[HA Music] Startup volume set to 1%; waiting 2 seconds", flush=True)
-        if not wait_for_start(generation, 2):
-            return
-        # Keep the start screen visible until station command and saved
-        # speaker levels have actually been sent.
-        print("[HA Music] Echo boot completed; starting radio", flush=True)
-        station = last_selected_station()
-        if station:
-            try:
-                perform("radio_direct", {"station": station})
-                MONITOR.select(station)
-                print(f"[HA Music] Resumed station {station}", flush=True)
-            except (RuntimeError, HTTPError, URLError, ValueError) as exc:
-                print(f"[HA Music] Radio start failed: {exc}", flush=True)
-        else:
-            print("[HA Music] No saved station to resume", flush=True)
-        if generation != RESTORE_GENERATION:
-            return
-        restore_speakers(generation)
-        if generation != RESTORE_GENERATION:
-            return
-        print("[HA Music] Saved speaker levels restored", flush=True)
-        set_radio_ready(True)
-        print("[HA Music] Radio interface released after startup commands", flush=True)
-    except (RuntimeError, HTTPError, URLError, ValueError) as exc:
-        print(f"[HA Music] Startup sequence failed: {exc}", flush=True)
+        if state_snapshot().get(RADIO_SWITCH, {}).get("state") != "on":
+            raise RuntimeError("Radioschalter bestätigt Einschalten nicht")
+        startup_request(generation, "/services/homeassistant/update_entity",
+                        {"entity_id": list(RADIO_PLAYERS)})
+        try:
+            set_probe_volume(generation)
+            if not wait_for_start(generation, 2):
+                return
+            station = last_selected_station()
+            if station:
+                play_station(station, generation)
+        finally:
+            # Even a failed station/probe command must not leave rooms at 1%.
+            check_generation(generation)
+            restore_speakers(generation)
+        startup_request(generation, "/services/input_boolean/turn_on", {"entity_id": RADIO_READY})
+        with STATE_LOCK:
+            check_generation(generation)
+            READY = True
+            STARTED_AT = None
+        print("[HA Music] Startup commands completed; audible playback is not guaranteed", flush=True)
+    except StartupCancelled:
+        return
+    except NETWORK_ERRORS as exc:
+        with STATE_LOCK:
+            if generation == RESTORE_GENERATION:
+                READY = False
+                STARTED_AT = None
+                STARTUP_ERROR = str(exc)
+        print(f"[HA Music] Startup failed: {exc}", flush=True)
 
 
 def enter_standby(generation):
-    """Gracefully stop all outgoing traffic 10 seconds after switch-off."""
-    global LAST_POWER
-    if generation != RESTORE_GENERATION or LAST_POWER != "off":
-        return
-    MONITOR.stop()
-    STANDBY.set()
+    with STATE_LOCK:
+        if generation != RESTORE_GENERATION or LAST_POWER != "off":
+            return
+        STANDBY.set()  # Close admission before stopping streams.
+        with RESPONSE_LOCK:
+            responses = list(ACTIVE_RESPONSES)
+        for response in responses:
+            close_stream(response)
+        MONITOR.stop()
     print("[HA Music] Standby active: outgoing requests disabled", flush=True)
 
 
+def transition_power(on):
+    global RESTORE_GENERATION, STARTED_AT, LAST_POWER, STANDBY_UNTIL, READY, STARTUP_ERROR, CANCEL
+    with STATE_LOCK:
+        CANCEL.set()
+        CANCEL = threading.Event()
+        RESTORE_GENERATION += 1
+        generation = RESTORE_GENERATION
+        LAST_POWER = "on" if on else "off"
+        READY = False
+        STARTUP_ERROR = None
+        STARTED_AT = time.monotonic() if on else None
+        STANDBY_UNTIL = 0 if on else time.monotonic() + 10
+        if on:
+            MONITOR.resume()
+        else:
+            MONITOR.stop()
+            timer = threading.Timer(10, enter_standby, args=(generation,))
+            timer.daemon = True
+            timer.start()
+        return generation
+
+
 def radio_switch_monitor():
-    """Only poll switch while active; no external wake-up in strict standby."""
-    global RESTORE_GENERATION, STARTED_AT, LAST_POWER, STANDBY_UNTIL
-    last_power = None
-    while not RADIO_MONITOR_STOP.is_set():
-        if STANDBY.is_set():
-            RADIO_MONITOR_STOP.wait(1)
+    # External off cancels startup; external on never initiates playback/wake.
+    observed_generation, seen_on = None, False
+    while not RADIO_MONITOR_STOP.wait(3):
+        if STANDBY.is_set() or LAST_POWER != "on":
             continue
         try:
-            state = state_snapshot().get(RADIO_SWITCH, {}).get("state")
-            if state in ("on", "off") and state != last_power:
-                last_power = state
-                LAST_POWER = state
-                with LOCK:
-                    RESTORE_GENERATION += 1
-                    generation = RESTORE_GENERATION
+            with POWER_LOCK:
+                generation = RESTORE_GENERATION
+                if generation != observed_generation:
+                    observed_generation, seen_on = generation, False
+                state = state_snapshot().get(RADIO_SWITCH, {}).get("state")
                 if state == "on":
-                    STANDBY_UNTIL = 0
-                    STARTED_AT = time.monotonic()
+                    seen_on = True
+                switched_off = False
+                with STATE_LOCK:
+                    if generation == RESTORE_GENERATION and seen_on and state == "off":
+                        transition_power(False)
+                        switched_off = True
+                if switched_off:
                     set_radio_ready(False)
-                    threading.Thread(target=radio_start_sequence,
-                                     args=(generation,), daemon=True).start()
-                else:
-                    STARTED_AT = None
-                    STANDBY_UNTIL = time.monotonic() + 10
-                    MONITOR.select("")
-                    # Clear HA ready state after the old ten-second grace period.
-                    def finish_off():
-                        if not wait_for_off(generation, 10):
-                            return
-                        set_radio_ready(False)
-                        enter_standby(generation)
-                    threading.Thread(target=finish_off, daemon=True).start()
-                print(f"[HA Music] Radio switch detected: {state}", flush=True)
-        except (RuntimeError, HTTPError, URLError, ValueError) as exc:
+        except NETWORK_ERRORS as exc:
             print(f"[HA Music] Radio monitor retry: {exc}", flush=True)
-        RADIO_MONITOR_STOP.wait(3)
-
-
-def wait_for_off(generation, seconds):
-    for _ in range(seconds):
-        if generation != RESTORE_GENERATION or LAST_POWER != "off":
-            return False
-        time.sleep(1)
-    return generation == RESTORE_GENERATION and LAST_POWER == "off"
 
 
 def options():
@@ -324,6 +369,7 @@ def options():
         return {}
 
 def ha_request(path, payload=None):
+    global STATE_CACHE
     if STANDBY.is_set():
         raise RuntimeError("HA Music standby: outbound network disabled")
     if not TOKEN:
@@ -333,8 +379,19 @@ def ha_request(path, payload=None):
         "Authorization": "Bearer " + TOKEN,
         "Content-Type": "application/json",
     }, method="POST" if payload is not None else "GET")
-    with urlopen(req, timeout=12) as response:
-        raw = response.read()
+    with urlopen(req, timeout=8) as response:
+        with RESPONSE_LOCK:
+            if STANDBY.is_set():
+                raise RuntimeError("HA Music standby: response cancelled")
+            ACTIVE_RESPONSES.add(response)
+        try:
+            raw = response.read()
+        finally:
+            with RESPONSE_LOCK:
+                ACTIVE_RESPONSES.discard(response)
+        if payload is not None:
+            with CACHE_LOCK:
+                STATE_CACHE = (0.0, None)
         # Some Home Assistant service responses are empty on success.
         if not raw.strip():
             return {}
@@ -410,8 +467,19 @@ def startup_remaining():
 
 
 def state_snapshot():
-    states = ha_request("/states")
-    return {s["entity_id"]:s for s in states if isinstance(s,dict) and isinstance(s.get("entity_id"),str)}
+    global STATE_CACHE
+    with CACHE_LOCK:
+        if STANDBY.is_set():
+            raise RuntimeError("HA Music standby: outbound network disabled")
+        at, cached = STATE_CACHE
+        if cached is not None and time.monotonic() - at < 2:
+            return cached
+        states = ha_request("/states")
+        if not isinstance(states, list):
+            raise ValueError("Ungültige Home-Assistant-Zustände")
+        result = {s["entity_id"]:s for s in states if isinstance(s,dict) and isinstance(s.get("entity_id"),str)}
+        STATE_CACHE = (time.monotonic(), result)
+        return result
 
 def radio_state():
     if STANDBY.is_set():
@@ -421,8 +489,9 @@ def radio_state():
                 "show_dashboard_setup":options().get("show_dashboard_setup", False) is True,
                 "stations":[{"id":key,"name":item["name"],"available":False} for key,item in DIRECT_STATIONS.items()]}
     states = state_snapshot()
-    return {"power":states.get(RADIO_SWITCH,{}).get("state","unavailable"),
-            "ready":states.get(RADIO_READY,{}).get("state","unavailable"),
+    return {"power":LAST_POWER if STARTED_AT is not None else states.get(RADIO_SWITCH,{}).get("state","unavailable"),
+            "ready":"on" if READY and states.get(RADIO_READY,{}).get("state") == "on" else "off",
+            "startup_error":STARTUP_ERROR,
             "last_station":last_selected_station(),
             "selected_view":selected_view(),
             "startup_remaining":startup_remaining(),
@@ -456,43 +525,85 @@ def playback_status():
             "details": active if active and (active["title"] or active["artist"]) else details}
 
 
+def play_station(key, generation):
+    if not isinstance(key, str) or key not in DIRECT_STATIONS:
+        raise ValueError("Unbekannter Sender")
+    preset = DIRECT_STATIONS[key]
+    states = state_snapshot()
+    target = preset["target"]
+    if states.get(target, {}).get("state") in (None, "unknown", "unavailable"):
+        raise ValueError("Alexa-Zielgerät nicht verfügbar")
+    result = startup_request(generation, "/services/media_player/play_media", {
+        "entity_id": target, "media": {
+            "media_content_id": preset["media_content_id"],
+            "media_content_type": preset["media_content_type"], "metadata": {}}})
+    with STATE_LOCK:
+        check_generation(generation)
+        MONITOR.select(key)
+        save_selected_station(key)
+    return result
+
+
+def power_command(on):
+    if not isinstance(on, bool):
+        raise ValueError("Ungültiger Schaltzustand")
+    with POWER_LOCK:
+        if on:
+            if LAST_POWER == "on" and not STANDBY.is_set():
+                return
+            with STATE_LOCK:
+                STANDBY.clear()
+                generation = transition_power(True)
+            try:
+                with COMMAND_LOCK:
+                    ha_request("/services/switch/turn_on", {"entity_id": RADIO_SWITCH})
+                threading.Thread(target=radio_start_sequence, args=(generation,), daemon=True).start()
+            except NETWORK_ERRORS:
+                generation = transition_power(False)
+                enter_standby(generation)
+                raise
+        else:
+            if STANDBY.is_set():
+                return
+            if LAST_POWER != "off":
+                transition_power(False)
+            # Power-off must not queue behind slow discovery/media commands.
+            try:
+                ha_request("/services/switch/turn_off", {"entity_id": RADIO_SWITCH})
+            finally:
+                if not STANDBY.is_set():
+                    set_radio_ready(False)
+
+
 def perform(action, body):
-    if action == "radio_direct":
-        key = body.get("station")
-        if not isinstance(key,str) or key not in DIRECT_STATIONS:
-            raise ValueError("Sender noch nicht für die direkte Wiedergabe bestätigt")
-        preset = DIRECT_STATIONS[key]
-        states = state_snapshot()
-        target = preset["target"]
-        if target not in states or states[target].get("state") in ("unknown","unavailable"):
-            raise ValueError("Alexa-Zielgerät nicht verfügbar")
-        return ha_request("/services/media_player/play_media", {
-            "entity_id":target, "media": {
-                "media_content_id":preset["media_content_id"],
-                "media_content_type":preset["media_content_type"], "metadata":{}}})
     if action == "radio_power":
-        turn_on = body.get("on")
-        if not isinstance(turn_on, bool):
-            raise ValueError("Ungültiger Schaltzustand")
-        states = state_snapshot()
-        if states.get(RADIO_SWITCH, {}).get("state") in (None, "unavailable", "unknown"):
-            raise ValueError("Radioschalter nicht verfügbar")
-        # The background monitor handles every switch transition exactly once.
-        return ha_request("/services/switch/" + ("turn_on" if turn_on else "turn_off"),
-                          {"entity_id": RADIO_SWITCH})
+        return power_command(body.get("on"))
+    generation = RESTORE_GENERATION
+    with COMMAND_LOCK:
+        check_generation(generation)
+        if not READY:
+            raise ValueError("Radio ist noch nicht bereit")
+        if action == "radio_direct":
+            return play_station(body.get("station"), generation)
+        return perform_control(action, body, generation)
+
+
+def perform_control(action, body, generation):
     if action == "volume":
         entity = body.get("entity_id", "")
         level = body.get("volume")
         if not isinstance(entity, str) or not ENTITY_RE.fullmatch(entity) or type(level) not in (int, float) or not 0 <= level <= 1:
             raise ValueError("Ungültige Lautstärke oder Entity")
-        if entity not in allowed_entities():
+        classified = classify_devices()
+        permitted = classified["players"] + classified["groups"]
+        if entity not in {p["entity_id"] for p in permitted}:
             raise ValueError("Media Player nicht freigegeben")
-        found = next((x for x in players() if x["entity_id"] == entity), None)
-        if not found and not any(x["entity_id"] == entity for x in classify_devices()["groups"]):
-            raise ValueError("Media Player nicht gefunden")
+        found = next(x for x in permitted if x["entity_id"] == entity)
+        if found["state"] in ("unknown", "unavailable"):
+            raise ValueError("Media Player nicht verfügbar")
         if entity == "media_player.wohnung":
             # Independent virtual master: apply its absolute percentage to unmuted rooms.
-            room_players = players()
+            room_players = classified["players"]
             saved = speaker_levels()
             active = [p for p in room_players
                       if p["state"] not in ("unknown", "unavailable")
@@ -501,20 +612,24 @@ def perform(action, body):
             failed = []
             for p in active:
                 try:
-                    ha_request("/services/media_player/volume_set", {
+                    startup_request(generation, "/services/media_player/volume_set", {
                         "entity_id": p["entity_id"], "volume_level": level})
                     changed[p["entity_id"]] = float(level)
-                except (RuntimeError, HTTPError, URLError, ValueError) as exc:
+                except StartupCancelled:
+                    raise
+                except NETWORK_ERRORS as exc:
                     failed.append(f"{p['entity_id']}: {exc}")
             # At 0%, preserve each room's active/muted intent so raising master
             # can restore active rooms without reactivating explicitly muted ones.
             save_speaker_levels({"media_player.wohnung": float(level),
                                  **(changed if level > 0 else {})})
+            if level > 0:
+                save_remembered(entity, level)
             if failed:
                 print("[HA Music] Master partial failure: " + "; ".join(failed), flush=True)
                 raise RuntimeError("Master: " + "; ".join(failed))
             return {"ok": True, "updated": len(changed)}
-        result = ha_request("/services/media_player/volume_set", {"entity_id": entity, "volume_level": level})
+        result = startup_request(generation, "/services/media_player/volume_set", {"entity_id": entity, "volume_level": level})
         save_speaker_levels({entity: float(level)})
         print(f"[HA Music] Saved speaker {entity}: {round(level * 100)}%", flush=True)
         if level > 0: save_remembered(entity, level)
@@ -522,6 +637,14 @@ def perform(action, body):
     raise ValueError("Unbekannte Aktion")
 
 class Handler(BaseHTTPRequestHandler):
+    def ingress_allowed(self):
+        # Trust the TCP peer, never a spoofable X-Forwarded-For header.
+        return self.client_address[0] == "172.30.32.2"
+
+    def setup(self):
+        super().setup()
+        self.connection.settimeout(20)
+
     def reply(self, status, payload):
         encoded = json.dumps(payload, ensure_ascii=False).encode()
         self.send_response(status)
@@ -532,6 +655,8 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(encoded)
 
     def do_GET(self):
+        if not self.ingress_allowed():
+            return self.reply(403, {"error": "Ingress only"})
         path = unquote(urlsplit(self.path).path)
         name = path.rsplit("/", 1)[-1]
         if name == "status" and "/api/" in path:
@@ -540,15 +665,19 @@ class Handler(BaseHTTPRequestHandler):
         if name == "events" and "/api/" in path:
             if STANDBY.is_set():
                 return self.reply(503, {"error":"Standby"})
-            self.send_response(200)
-            self.send_header("Content-Type", "text/event-stream; charset=utf-8")
-            self.send_header("Cache-Control", "no-cache, no-transform")
-            self.send_header("X-Accel-Buffering", "no")
-            self.end_headers()
-            seq = -1
+            if not SSE_SLOTS.acquire(blocking=False):
+                return self.reply(503, {"error":"Too many event clients"})
             try:
-                while True:
+                self.send_response(200)
+                self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+                self.send_header("Cache-Control", "no-cache, no-transform")
+                self.send_header("X-Accel-Buffering", "no")
+                self.end_headers()
+                seq = -1
+                while not STANDBY.is_set():
                     next_seq, station, payload = MONITOR.await_change(seq, timeout=15)
+                    if STANDBY.is_set():
+                        break
                     if next_seq == seq:
                         self.wfile.write(b": keepalive\n\n")
                     else:
@@ -558,31 +687,33 @@ class Handler(BaseHTTPRequestHandler):
                     self.wfile.flush()
             except (BrokenPipeError, ConnectionResetError, OSError):
                 pass
+            finally:
+                SSE_SLOTS.release()
             return
         if name == "radio-state" and "/api/" in path:
             try:
                 return self.reply(200, radio_state())
-            except (RuntimeError, HTTPError, URLError, ValueError) as exc:
+            except NETWORK_ERRORS as exc:
                 return self.reply(503, {"error": str(exc)})
         if name == "playback-status" and "/api/" in path:
             if STANDBY.is_set():
                 return self.reply(503, {"error":"Standby"})
             try:
                 return self.reply(200, playback_status())
-            except (RuntimeError, HTTPError, URLError, ValueError) as exc:
+            except NETWORK_ERRORS as exc:
                 return self.reply(503, {"error": str(exc)})
         if name == "players" and "/api/" in path:
             if STANDBY.is_set():
                 return self.reply(503, {"error":"Standby"})
             try:
                 inventory = integration_inventory()
-                classified = classify_devices()
+                classified = classify_devices(inventory)
                 return self.reply(200, {"players": classified["players"], "groups": classified["groups"], "excluded": classified["excluded"],
                     "remembered": remembered(), "saved_levels": speaker_levels(), "discovery": "integration_registry",
                     "diagnostics": {domain: {"entities": len(values),
                         "media_players": sum(v.startswith("media_player.") for v in values)}
                         for domain, values in inventory.items()}})
-            except (RuntimeError, HTTPError, URLError, ValueError) as exc:
+            except NETWORK_ERRORS as exc:
                 return self.reply(503, {"error": str(exc)})
         name = name or "index.html"
         if name not in ("index.html", "style.css", "app.js", "1live.svg", "wdr2.svg", "swr3.svg"):
@@ -598,10 +729,16 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(content)
 
     def do_POST(self):
+        if not self.ingress_allowed():
+            return self.reply(403, {"error": "Ingress only"})
         path = unquote(urlsplit(self.path).path)
         action = path.rsplit("/", 1)[-1]
         if "/api/" not in path or action not in ("volume", "radio_direct", "radio_power", "selected_view", "dashboard_card_installed"):
             return self.reply(404, {"error": "Not found"})
+        if self.headers.get("Sec-Fetch-Site") == "cross-site":
+            return self.reply(403, {"error": "Cross-site request rejected"})
+        if self.headers.get_content_type() != "application/json":
+            return self.reply(415, {"error": "JSON required"})
         try:
             size = int(self.headers.get("Content-Length", "0"))
             if not 0 < size <= 2048:
@@ -613,29 +750,12 @@ class Handler(BaseHTTPRequestHandler):
                 mark_dashboard_card_installed()
             elif action == "selected_view":
                 save_selected_view(body.get("view"))
-            elif action == "radio_power" and body.get("on") is True and STANDBY.is_set():
-                # A local HA Music click is the only permitted wake-up.
-                STANDBY.clear()
-                MONITOR.resume()
-                try:
-                    perform(action, body)
-                except Exception:
-                    MONITOR.stop()
-                    STANDBY.set()
-                    raise
             else:
-                if STANDBY.is_set():
-                    raise ValueError("Radio ist im Standby; zuerst einschalten")
                 perform(action, body)
-            if action == "radio_direct":
-                MONITOR.select(body["station"])
-                save_selected_station(body["station"])
-            elif action == "radio_power" and not body["on"]:
-                MONITOR.select("")
             return self.reply(200, {"ok": True})
         except (ValueError, TypeError, json.JSONDecodeError) as exc:
             return self.reply(400, {"error": str(exc)})
-        except (RuntimeError, HTTPError, URLError) as exc:
+        except (RuntimeError, OSError, HTTPException) as exc:
             return self.reply(502, {"error": str(exc)})
 
 if __name__ == "__main__":

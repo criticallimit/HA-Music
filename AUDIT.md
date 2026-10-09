@@ -1,0 +1,52 @@
+# Codeprüfung HA Music – 9. Oktober 2026
+
+Ausgangsstand: `ffb3768` auf `main`, Add-on-Version `0.0.6`.
+Geprüft: sämtliche Python-Module, Ingress-Frontend (HTML/CSS/JS), Lovelace-Karte und Loader, Startskript, Container-/Add-on-Konfiguration, Workflow, Tests und Dokumentation. Keine separate Branch, kein Release, keine Versionsänderung.
+
+## Belegte Befunde und Korrekturen
+
+| Priorität | Befund am Ausgangsstand | Korrektur / Nachweis |
+|---|---|---|
+| Hoch | Ein Fehler in `set_radio_ready(False)` verhinderte `enter_standby`; der 10-Sekunden-Abschluss hing an einer weiteren HA-Anfrage. | Eigenständiger Timer ab lokalem Ausschalten; Netzwerkzulassung wird vor dem Schließen gesperrt. Test mit Timeout beim Ausschalten. |
+| Hoch | Gemeinsames `ICY_STOP.clear()` konnte alte Worker nach schnellem Aus/Ein wieder aktivieren; `close()` konnte hinter einem blockierten Reader warten. | Unwiderrufliche Abbruch-Events pro Worker, Socket-Shutdown und zeitlich begrenztes Warten auf die asynchrone Bereinigung. Kein zweiter Worker pro Sender, solange der Vorgänger lebt. Test mit echter blockierter HTTP-Verbindung und verspätetem Verbindungsaufbau. |
+| Hoch | Start-, Lautstärke- und Ready-Befehle konnten nach einem veralteten Generationstest weiterlaufen. | Prüfung vor/nach HA-Serviceaufrufen und nach dem Erwerb der Befehlssperre; Wartezeiten sind abbrechbar. Ausschalten wartet nicht hinter Medienbefehlen. Bereits extern angenommene Befehle bleiben eine Grenze (siehe unten). |
+| Hoch | Senderstartfehler wurden abgefangen und anschließend trotzdem Ready gesetzt; Teilfehler beim Restore waren ebenfalls nur Logeinträge. | Fehler verhindern Ready und erscheinen in der Oberfläche. Probe-Lautstärken werden bei einem Startfehler nach Möglichkeit zurückgesetzt. Tests für Sender-, Probe-/Restore-Fehler und Abbruch. |
+| Hoch | Der Monitor startete auch nach externem Einschalten oder Add-on-Neustart automatisch den gespeicherten Sender. | Add-on startet netzwerkseitig im Standby. Ausschließlich der lokale `radio_power`-Einschaltaufruf startet einen neuen Ablauf; der Monitor kann nur externes Ausschalten erkennen. |
+| Hoch | Der HTTP-Server prüfte die Ingress-Gegenstelle nicht. Andere intern erreichbare Container konnten die Steuer-API ansprechen. | TCP-Gegenstelle muss `172.30.32.2` sein; weitergeleitete IP-Header werden nicht vertraut. POST verlangt JSON und lehnt browserseitige Cross-Site-Anfragen ab. Tests für Gegenstellen-/Content-Type-Prüfung. |
+| Mittel | Der Wechsel zu einem Amazon-Preset wurde vom Metadatenmonitor ignoriert; der vorherige Radiostream lief weiter. | Nicht-Radiosender leeren die Metadatenauswahl und schließen alte Streams. Senderwechsel stoppen auch andere Radiostreams sofort. |
+| Mittel | Ohne gespeicherten Raumwert konnte die 1%-Probe nicht zuverlässig zurückgesetzt werden; ein stummer Master wurde beim Start ignoriert. | Nur bekannte, rücksetzbare Raumwerte werden getestet; fehlende gültige Ausgangswerte werden vor der Probe gespeichert. Raum- und Master-Nullwerte bleiben stumm. Master behält auch seinen letzten positiven Wert zum Entstummen. |
+| Mittel | Veraltete HA-Lautstärken konnten nach dem Restore den Regler z. B. wieder auf 50% springen lassen. | Gespeicherter Sollwert und von HA gemeldeter Wert werden unterschieden: abweichender Sollwert trägt `*` mit sichtbarer Erläuterung und Detailhinweis. Kein erneuter Lautstärkebefehl aufgrund einer bloßen Abweichung. |
+| Mittel | Fehler-/Wiedergabestatus waren per CSS verborgen; der Countdown konnte Fehler durch „0 s“ überschreiben; Gerätefehler ließen Lade-Platzhalter stehen. | Meldungen sichtbar, Countdown bei Fehler gelöscht, nach Ablauf Hinweis auf noch laufende Startbefehle, eindeutige Gerätefehler-/Leerzustände. |
+| Mittel | Überlappende Statusanfragen und alte Browserantworten konnten die neue Ansicht überschreiben. | Gleichartige Polls werden zusammengefasst; UI-Generationen verwerfen alte Antworten. Senderwechsel werden gegen parallele Klicks gesperrt. Persistierte Ansicht bleibt über Standby erhalten. |
+| Mittel | Mehrere Clients vervielfachten `/states`-Anfragen; Geräteabruf fragte das Inventar doppelt ab. | Gemeinsamer 2-Sekunden-Zustandscache, Invalidierung nach POST, weniger Inventar-/Discovery-Aufrufe, keine überlappenden Browserpolls; maximal 16 SSE-Clients. |
+| Mittel | Beide bisherigen Testskripte scheiterten bereits am Ausgangsstand; CI lief nur manuell oder nach Release. | Veraltete Gruppen-/Container-Annahmen korrigiert, isolierte temporäre Persistenz, Python-Regressionstests und ausführbare JS-Verhaltenstests. CI läuft bei Push auf `main` und bei PRs, ohne Release-Schritt. |
+
+Ingress-Gegenstellenprüfung gemäß [Home-Assistant-Entwicklerdokumentation](https://developers.home-assistant.io/docs/apps/presentation/#ingress). Streaming ist im Add-on explizit aktiviert. Statische Dateien bleiben auf feste Dateinamen begrenzt; Steuerziele kommen aus dem Alexa-Inventar bzw. den festen Sender-Presets, keine frei übergebenen URLs oder Shellbefehle.
+
+## Verifiziert
+
+- Python-Syntax aller vier Module, bestehende Scaffold-/Smoke-Prüfungen.
+- 30 Python-Regressionstests: Startreihenfolge, 45+2 Sekunden Warteparameter, Fehler, Abbruch, alte Timer, stumme Räume/Master, Persistenz, Cache, Verifikation, Ingress und ICY-Lebenszyklus.
+- 9 JavaScript-Verhaltenstests: Countdown, Fehlerzustände, parallele Polls, verspätete Antworten, gespeicherte Ansicht, Artwork-URL-Prüfung und Soll-/Ist-Lautstärke.
+- JavaScript-Syntax für Frontend, Lovelace-Karte und Loader; `git diff --check`.
+- Die Tests verwenden keine reale HA-/Alexa-Steuerung. Der Socket-Test verwendet ausschließlich eine lokale Verbindung. Unter Windows kann ein Reader erst nach seinem Socket-Timeout zurückkehren; der Standby-Pfad wartet darauf nicht mehr unbegrenzt.
+
+## Verbleibende Risiken und Grenzen
+
+1. **Netzwerk-Standby ist eine Anwendungssperre, keine Firewall.** Zehn Sekunden nach lokalem Ausschalten wird die Zulassung neuer HA-Anfragen gesperrt; Metadaten werden schon beim Ausschalten abgebrochen. Offene HTTP-Antworten werden geschlossen. Bereits laufende DNS-/TCP-/TLS-Aufbauten sind mit `urllib` nicht in jeder Phase hart abbrechbar; Socket-Timeouts sind auf acht Sekunden gesetzt, DNS kann betriebssystemabhängig länger dauern. Ein paketgenauer Nachweis benötigt einen Mitschnitt im HA-Container. Bei externem Ausschalten beginnt die Frist erst mit Erkennung durch den Monitor (3-Sekunden-Poll plus mögliche Anfragezeit).
+2. **Alexa kann Befehle verspätet ausführen.** Ein bereits von HA/Amazon angenommener Start lässt sich durch einen Python-Threadabbruch nicht zurückholen. Keine automatische Wiederholung von Wiedergabebefehlen wurde eingebaut. Verzögerte hörbare Wiedergabe, insbesondere bei Amazon/Audible, bleibt ein Gerätetest. „Ready“ bedeutet erfolgreiche Start-/Restore-Serviceaufrufe, nicht akustisch bestätigte Wiedergabe.
+3. **50 Sekunden sind eine Anzeige, kein hartes Zeitversprechen.** Nach 45 Sekunden folgen `update_entity`, Probe, zwei Sekunden Pause, Senderstart und Restore. Deren Netzwerklaufzeit kann die 50 Sekunden überschreiten; die Oberfläche behauptet dann weder Erfolg noch Fehler allein aufgrund der Uhr.
+4. **Lautstärke-Bestätigung bleibt asynchron und lesend.** Drei Prüfungen mit jeweils zwei Sekunden Pause können langsame HA-Rückmeldungen verpassen. Ein `*` kennzeichnet den gespeicherten Wunschwert, nicht bewiesene akustische Lautstärke. Außerhalb von HA Music vorgenommene Lautstärkeänderungen ersetzen den gespeicherten Wunschwert nicht automatisch. HA-Music-Stummschaltung bedeutet Lautstärke 0; externe native `is_volume_muted`-Zustände werden nicht als eigener persistierter Kanal verwaltet.
+5. **Feste Installation vorausgesetzt.** Schalter `switch.alexa_alle`, Helper `input_boolean.alexa_hochgefahren`, Medienziele und Gruppe `Wohnung` sind fest codiert. Geräte-/Providerkompatibilität, echte Gruppenmitgliedschaft und `custom`-/`AMAZON_MUSIC`-Phrasen brauchen die konkrete Installation. Apple Music bleibt ein Platzhalter.
+6. **Kein vollständiger Ressourcen-/Container-Benchmark.** Kein HA Supervisor, keine Echos und kein Docker-Build auf diesem Windows-Arbeitsplatz verfügbar. RAM-Anzeigen von 0%/0,5% werden im Repository nicht berechnet; deren Ursache kann hier nicht belegt werden. Ein aktiver ICY-Stream lädt weiterhin Audio zur Metadatenauswertung (128 kbit/s entsprechen rund 58 MB/h plus Protokolloverhead). Dashboard-/Ingress-Verbindungen des Browsers sind vom ausgehenden Netzwerk des Add-ons zu unterscheiden.
+7. **Build und Berechtigungen:** Logo-Downloads beim Containerbau sind von Wikimedia abhängig und nicht per Digest fixiert. Der Home-Assistant-Konfigurationsmount bleibt beschreibbar, weil das Startskript die Lovelace-Dateien installiert. Die Add-on-/Kartenintegration muss nach Neuaufbau in echtem Supervisor-Ingress geprüft werden. Es wurde keine Installation oder laufende Wiedergabe des Nutzers verändert.
+
+## Abnahme auf der Zielinstallation
+
+1. Add-on aus `main` neu aufbauen (Version bleibt `0.0.6`), Browser neu laden; Add-on-Neustart darf keine Wiedergabe starten.
+2. Lokal einschalten: Countdown, `update_entity`, nur 1% für aktive Räume, Senderstart, individuelle Wiederherstellung und stumme Räume kontrollieren. Keine gespeicherte Station: kein automatischer Medienbefehl.
+3. Während der Wartezeit sowie während Senderstart/Restore ausschalten; anschließend schnell wieder einschalten. Alte Durchläufe dürfen keine neuen Befehle senden oder Ready setzen.
+4. HA/API absichtlich nicht erreichbar: Fehler muss sichtbar sein; Ausschalten muss dennoch in Netzwerk-Standby gehen. Netzwerkverkehr nach der Frist mitschneiden, inklusive DNS.
+5. Radio → Amazon → anderes Radio wechseln; pro ausgewähltem Radiosender höchstens ein Metadatenstream, bei Amazon/Standby keiner.
+6. Unterschiedliche Raumlautstärken, ein stummer Raum und Master 0 testen. Nach Ein-/Ausschalten sowie Browserreload Sollwerte, `*`-Hinweise und tatsächlichen Ton vergleichen.
+7. Apple-Ansicht auswählen, aus-/einschalten und Browserreload testen; gespeicherte Ansicht muss nach Ready wieder erscheinen. Zwei Dashboards gleichzeitig öffnen und verzögerte HA-Antworten prüfen.

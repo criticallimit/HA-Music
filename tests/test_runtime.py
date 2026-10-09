@@ -1,0 +1,334 @@
+"""Regression tests for lifecycle, delayed operations and stream cancellation."""
+from contextlib import ExitStack
+import io
+from http.client import HTTPResponse
+from email.message import Message
+import socket
+import time
+from pathlib import Path
+import sys
+import tempfile
+import threading
+import unittest
+from unittest.mock import Mock, patch
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "ha_music"))
+import app
+import metadata
+import metadata_feed
+VERIFY = app.verify_restored_volumes
+
+
+class RuntimeTests(unittest.TestCase):
+    def setUp(self):
+        self.stack = ExitStack()
+        self.addCleanup(self.stack.close)
+        folder = Path(self.stack.enter_context(tempfile.TemporaryDirectory(dir=ROOT)))
+        for name in ("VOLUME_FILE", "STATION_FILE", "SPEAKER_FILE", "VIEW_FILE"):
+            self.stack.enter_context(patch.object(app, name, folder / (name + ".json")))
+        self.monitor = self.stack.enter_context(patch.object(app, "MONITOR"))
+        self.timer = self.stack.enter_context(patch.object(app.threading, "Timer"))
+        self.stack.enter_context(patch.object(app, "urlopen", side_effect=AssertionError("Unexpected network")))
+        self.stack.enter_context(patch.object(app, "verify_restored_volumes"))
+        app.CANCEL.set()
+        app.CANCEL = threading.Event()
+        app.STANDBY.clear()
+        app.RESTORE_GENERATION = 10
+        app.LAST_POWER = "on"
+        app.READY = False
+        app.STARTUP_ERROR = None
+        app.STARTED_AT = None
+        app.STATE_CACHE = (0, None)
+        self.states = {
+            app.RADIO_SWITCH: {"state": "on"},
+            "media_player.wohnzimmer": {"state": "idle", "attributes": {"volume_level": 0.4}},
+            "media_player.kueche": {"state": "idle", "attributes": {"volume_level": 0}},
+        }
+
+    def startup(self, request=None):
+        with patch.object(app, "wait_for_start", return_value=True), \
+             patch.object(app, "state_snapshot", return_value=self.states), \
+             patch.object(app, "allowed_entities", return_value=set(self.states)), \
+             patch.object(app, "ha_request", side_effect=request or (lambda *args: {})) as calls:
+            app.radio_start_sequence(10)
+            return calls
+
+    def test_success_order_and_saved_mute(self):
+        app.save_speaker_levels({"media_player.wohnzimmer": 0.4, "media_player.kueche": 0})
+        app.save_selected_station("wdr2")
+        calls = self.startup().call_args_list
+        paths = [c.args[0] for c in calls]
+        self.assertTrue(app.READY)
+        self.assertLess(paths.index("/services/homeassistant/update_entity"), paths.index("/services/media_player/play_media"))
+        self.assertEqual(paths[-1], "/services/input_boolean/turn_on")
+        volumes = [c.args[1] for c in calls if c.args[0].endswith("volume_set")]
+        self.assertEqual([c["volume_level"] for c in volumes if c["entity_id"].endswith("wohnzimmer")], [0.01, 0.4])
+        self.assertTrue(all(c["volume_level"] == 0 for c in volumes if c["entity_id"].endswith("kueche")))
+        self.assertEqual(app.speaker_levels()["media_player.wohnzimmer"], 0.4)
+
+    def test_failed_station_restores_but_never_marks_ready(self):
+        app.save_selected_station("wdr2")
+        def request(path, body=None):
+            if path.endswith("play_media"):
+                raise TimeoutError("Station timed out")
+            return {}
+        calls = self.startup(request).call_args_list
+        self.assertFalse(app.READY)
+        self.assertIn("Station timed out", app.STARTUP_ERROR)
+        self.assertNotIn("/services/input_boolean/turn_on", [c.args[0] for c in calls])
+        self.assertTrue(any(c.args[0].endswith("volume_set") and c.args[1]["volume_level"] == 0.4 for c in calls))
+
+    def test_restore_failure_blocks_ready(self):
+        def request(path, body=None):
+            if path.endswith("volume_set") and body["volume_level"] == 0.4:
+                raise OSError("offline")
+        self.startup(request)
+        self.assertFalse(app.READY)
+        self.assertIn("nicht wiederhergestellt", app.STARTUP_ERROR)
+
+    def test_probe_failure_restores_and_does_not_play(self):
+        app.save_selected_station("wdr2")
+        def request(path, body=None):
+            if path.endswith("volume_set") and body["volume_level"] == 0.01:
+                raise TimeoutError("Probe failed")
+        calls = self.startup(request).call_args_list
+        self.assertFalse(app.READY)
+        self.assertFalse(any(c.args[0].endswith("play_media") for c in calls))
+        self.assertTrue(any(c.args[0].endswith("volume_set") and c.args[1]["volume_level"] == 0.4 for c in calls))
+
+    def test_power_off_does_not_queue_behind_media_lock(self):
+        with patch.object(app, "ha_request", return_value={}) as request:
+            with app.COMMAND_LOCK:
+                thread = threading.Thread(target=app.power_command, args=(False,))
+                thread.start()
+                thread.join(1)
+                self.assertFalse(thread.is_alive())
+            self.assertEqual(request.call_args_list[0].args[0], "/services/switch/turn_off")
+
+    def test_cancel_during_refresh_prevents_play_probe_restore_ready(self):
+        def request(path, body=None):
+            if path.endswith("update_entity"):
+                app.transition_power(False)
+        calls = self.startup(request).call_args_list
+        self.assertEqual([c.args[0] for c in calls], ["/services/input_boolean/turn_off", "/services/homeassistant/update_entity"])
+        self.assertFalse(app.READY)
+
+    def test_no_stored_station_does_not_play(self):
+        calls = self.startup().call_args_list
+        self.assertFalse(any(c.args[0].endswith("play_media") for c in calls))
+        self.assertTrue(app.READY)
+
+    def test_unknown_first_use_volume_is_not_probed(self):
+        self.states["media_player.wohnzimmer"]["attributes"] = {}
+        calls = self.startup().call_args_list
+        self.assertFalse(any(c.args[0].endswith("volume_set") and c.args[1]["entity_id"].endswith("wohnzimmer") for c in calls))
+
+    def test_master_zero_remains_silent(self):
+        app.save_speaker_levels({"media_player.wohnung": 0, "media_player.wohnzimmer": 0.4})
+        calls = self.startup().call_args_list
+        self.assertTrue(all(c.args[1]["volume_level"] == 0 for c in calls if c.args[0].endswith("volume_set")))
+        self.assertEqual(app.speaker_levels()["media_player.wohnzimmer"], 0.4)
+
+    def test_wait_is_interruptible(self):
+        app.CANCEL.set()
+        self.assertFalse(app.wait_for_start(10, 45))
+
+    def test_delays_are_45_then_2_seconds(self):
+        with patch.object(app, "wait_for_start", return_value=True) as wait, patch.object(app, "state_snapshot", return_value=self.states), patch.object(app, "allowed_entities", return_value=set()), patch.object(app, "ha_request"):
+            app.radio_start_sequence(10)
+        self.assertEqual([c.args for c in wait.call_args_list], [(10, 45), (10, 2)])
+
+    def test_verification_cancellation_does_not_poll(self):
+        with patch.object(app, "wait_for_start", return_value=False), patch.object(app, "state_snapshot") as states:
+            VERIFY(10, {"media_player.wohnzimmer": 0.4})
+        states.assert_not_called()
+
+    def test_standby_closes_inflight_ha_response(self):
+        stream = Mock()
+        with patch.object(app, "ACTIVE_RESPONSES", {stream}):
+            generation = app.transition_power(False)
+            app.enter_standby(generation)
+        stream.close.assert_called_once()
+
+    def test_off_timeout_still_schedules_ten_second_standby(self):
+        with patch.object(app, "ha_request", side_effect=TimeoutError("offline")):
+            with self.assertRaises(TimeoutError):
+                app.power_command(False)
+        args = self.timer.call_args
+        self.assertEqual(args.args[:2], (10, app.enter_standby))
+        app.enter_standby(*args.kwargs["args"])
+        self.assertTrue(app.STANDBY.is_set())
+        self.assertFalse(app.READY)
+
+    def test_old_off_timer_cannot_stop_new_generation(self):
+        old = app.transition_power(False)
+        app.transition_power(True)
+        app.enter_standby(old)
+        self.assertFalse(app.STANDBY.is_set())
+
+    def test_standby_reads_are_local_and_writes_cannot_wake(self):
+        app.STANDBY.set()
+        with patch.object(app, "ha_request", side_effect=AssertionError("network")):
+            self.assertTrue(app.radio_state()["standby"])
+            app.save_selected_view("apple")
+            self.assertEqual(app.selected_view(), "apple")
+            with self.assertRaises(app.StartupCancelled):
+                app.perform("radio_direct", {"station": "wdr2"})
+
+    def test_failed_wake_returns_to_standby(self):
+        app.STANDBY.set()
+        with patch.object(app, "ha_request", side_effect=TimeoutError("offline")):
+            with self.assertRaises(TimeoutError):
+                app.power_command(True)
+        self.assertTrue(app.STANDBY.is_set())
+
+    def test_stale_command_rechecked_after_lock_wait(self):
+        entered = threading.Event()
+        result = []
+        def worker():
+            entered.set()
+            try:
+                app.startup_request(10, "/services/media_player/play_media", {})
+            except app.StartupCancelled:
+                result.append("cancelled")
+        with app.COMMAND_LOCK:
+            thread = threading.Thread(target=worker)
+            thread.start()
+            self.assertTrue(entered.wait(1))
+            app.transition_power(False)
+        thread.join(1)
+        self.assertFalse(thread.is_alive())
+        self.assertEqual(result, ["cancelled"])
+
+    def test_ready_helper_alone_cannot_unlock_ui(self):
+        self.states[app.RADIO_READY] = {"state": "on"}
+        with patch.object(app, "state_snapshot", return_value=self.states):
+            self.assertEqual(app.radio_state()["ready"], "off")
+
+    def test_state_requests_coalesced_and_standby_bypasses_cache(self):
+        with patch.object(app, "ha_request", return_value=[{"entity_id": app.RADIO_SWITCH, "state": "on"}]) as request:
+            app.state_snapshot()
+            app.state_snapshot()
+            self.assertEqual(request.call_count, 1)
+            app.STANDBY.set()
+            with self.assertRaises(RuntimeError):
+                app.state_snapshot()
+
+    def test_persistent_view_and_invalid_input(self):
+        app.save_selected_view("apple")
+        self.assertEqual(app.selected_view(), "apple")
+        with self.assertRaises(ValueError):
+            app.save_selected_view("other")
+        self.assertEqual(app.selected_view(), "apple")
+        app.VIEW_FILE.write_text("null")
+        self.assertEqual(app.selected_view(), "radio")
+
+    def test_invalid_volume_and_entity_rejected(self):
+        app.READY = True
+        for entity, volume in [("media_player.x", float("nan")), ("media_player.x", True), ("../x", 0.5)]:
+            with self.assertRaises(ValueError):
+                app.perform("volume", {"entity_id": entity, "volume": volume})
+
+
+class MetadataTests(unittest.TestCase):
+    def tearDown(self):
+        metadata.stop_icy_workers()
+
+    def test_stop_resume_does_not_revive_old_worker(self):
+        cancel = threading.Event()
+        with patch.dict(metadata.ICY_CANCEL, {"wdr2": cancel}, clear=True):
+            metadata.stop_icy_workers()
+            metadata.resume_icy_workers()
+            self.assertTrue(cancel.is_set())
+            with patch.object(metadata, "urlopen") as request:
+                metadata._icy_worker("wdr2", cancel)
+                request.assert_not_called()
+
+    def test_late_open_closed_without_read_after_cancellation(self):
+        cancel = threading.Event()
+        stream = Mock()
+        stream.__enter__ = Mock(side_effect=lambda: (cancel.set(), stream)[1])
+        stream.__exit__ = Mock(return_value=False)
+        with patch.object(metadata, "urlopen", return_value=stream):
+            self.assertEqual(list(metadata._icy_blocks("wdr2", cancel)), [])
+        stream.read.assert_not_called()
+        stream.__exit__.assert_called_once()
+
+    def test_stop_shutdown_before_close(self):
+        stream = Mock()
+        with patch.dict(metadata.ICY_CONNECTIONS, {"wdr2": stream}, clear=True):
+            metadata.stop_icy_workers()
+        self.assertEqual([c[0] for c in stream.mock_calls], ["fp.raw._sock.shutdown", "close"])
+
+    def test_real_blocked_response_is_interrupted(self):
+        client, peer = socket.socketpair()
+        client.settimeout(2)
+        self.addCleanup(client.close)
+        self.addCleanup(peer.close)
+        peer.sendall(b"HTTP/1.1 200 OK\r\nContent-Length: 100000\r\n\r\n")
+        response = HTTPResponse(client)
+        response.begin()
+        entered = threading.Event()
+        def read():
+            entered.set()
+            try:
+                metadata._read_exact(response, 8192)
+            except (EOFError, OSError, ValueError):
+                pass
+        thread = threading.Thread(target=read, daemon=True)
+        with patch.dict(metadata.ICY_CONNECTIONS, {"wdr2": response}, clear=True):
+            thread.start()
+            self.assertTrue(entered.wait(1))
+            before = time.monotonic()
+            metadata.stop_icy_workers()
+            self.assertLess(time.monotonic()-before, 0.5, "Stop waited on the reader lock")
+        thread.join(3)
+        self.assertFalse(thread.is_alive(), "Blocked stream reader survived shutdown")
+
+    def test_icy_partial_reads_and_eof(self):
+        self.assertEqual(metadata._read_exact(io.BytesIO(b"abcd"), 4), b"abcd")
+        with self.assertRaises(EOFError):
+            metadata._read_exact(io.BytesIO(b"a"), 2)
+        cancel = threading.Event()
+        cancel.set()
+        with self.assertRaises(EOFError):
+            metadata._read_exact(io.BytesIO(b"abcd"), 4, cancel)
+
+    def test_amazon_closes_radio_and_suspended_selection_ignored(self):
+        with patch.object(metadata_feed.threading, "Thread"):
+            monitor = metadata_feed.MetadataMonitor()
+        with patch.object(metadata_feed, "stop_icy_workers") as stop, patch.object(metadata_feed, "resume_icy_workers"):
+            monitor.resume()
+            monitor.select("wdr2")
+            monitor.select("charts")
+            self.assertEqual(monitor.station, "")
+            self.assertEqual(stop.call_count, 2)
+            monitor.stop()
+            monitor.select("wdr2")
+            self.assertEqual(monitor.station, "")
+
+
+class SecurityTests(unittest.TestCase):
+    def test_ingress_peer(self):
+        handler = object.__new__(app.Handler)
+        handler.client_address = ("172.30.33.8", 1234)
+        self.assertFalse(handler.ingress_allowed())
+        handler.client_address = ("172.30.32.2", 1234)
+        self.assertTrue(handler.ingress_allowed())
+
+    def test_post_rejects_simple_and_cross_site_requests(self):
+        for content_type, site, expected in [("text/plain", "same-origin", 415), ("application/json", "cross-site", 403)]:
+            handler = object.__new__(app.Handler)
+            handler.client_address = ("172.30.32.2", 1)
+            handler.path = "/api/radio_power"
+            handler.headers = Message()
+            handler.headers["Content-Type"] = content_type
+            handler.headers["Sec-Fetch-Site"] = site
+            handler.reply = Mock()
+            handler.do_POST()
+            self.assertEqual(handler.reply.call_args.args[0], expected)
+
+
+if __name__ == "__main__":
+    unittest.main()
