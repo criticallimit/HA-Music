@@ -1,5 +1,6 @@
 """Regression tests for lifecycle, delayed operations and stream cancellation."""
 from contextlib import ExitStack
+from copy import deepcopy
 import io
 import json
 from http.client import HTTPResponse
@@ -238,6 +239,7 @@ class RuntimeTests(unittest.TestCase):
         self.assertFalse(app.STANDBY.is_set())
         self.assertTrue(all(call.args == ("/states",) for call in request.call_args_list))
         startup.assert_not_called()
+        app.verify_restored_volumes.assert_not_called()
 
     def test_already_on_without_ready_or_playback_never_runs_startup(self):
         self.states[app.RADIO_READY] = {"state":"off"}
@@ -1596,6 +1598,133 @@ class RuntimeTests(unittest.TestCase):
         with patch.object(app, "wait_for_start", return_value=False), patch.object(app, "state_snapshot") as states:
             VERIFY(10, {"media_player.wohnzimmer": 0.4})
         states.assert_not_called()
+
+    def test_startup_reapplies_master_after_optimistic_volume_and_late_playback(self):
+        for source in ("radio", "apple"):
+            with self.subTest(source=source):
+                app.ROOM_TARGETS.clear()
+                app.VOLUME_CONFIRMATION.clear()
+                app.ACTIVE_APPLE = {"target":"media_player.wohnzimmer"} if source == "apple" else None
+                app.save_speaker_levels({"media_player.wohnung":.23, "media_player.wohnzimmer":1, "media_player.kueche":0})
+                polls, audible = 0, {"media_player.wohnzimmer":0, "media_player.kueche":0}
+                def snapshot(**kwargs):
+                    nonlocal polls
+                    polls += 1
+                    self.states["media_player.wohnzimmer"]["state"] = "idle" if polls == 1 else "playing"
+                    return deepcopy(self.states)
+                def request(path, payload):
+                    self.assertEqual(path, "/services/media_player/volume_set")
+                    entity, level = payload["entity_id"], payload["volume_level"]
+                    self.states[entity]["attributes"]["volume_level"] = level  # HA acknowledges early.
+                    if polls >= 4 or level == 0:
+                        audible[entity] = level
+                    return {}
+                with patch.object(app.threading, "Thread") as worker, \
+                     patch.object(app, "wait_for_start", return_value=True), \
+                     patch.object(app, "state_snapshot", side_effect=snapshot), \
+                     patch.object(app, "ha_request", side_effect=request) as calls:
+                    app.restore_speakers(10)
+                    self.assertEqual(audible["media_player.wohnzimmer"], 0)
+                    self.assertEqual(self.states["media_player.wohnzimmer"]["attributes"]["volume_level"], .23)
+                    self.assertEqual(worker.call_args.kwargs["kwargs"], {"after_playback":True})
+                    VERIFY(10, dict(worker.call_args.kwargs["args"][1]))
+                    self.assertEqual(audible["media_player.wohnzimmer"], 0)  # Old value-only check exits too early.
+                    polls = 0
+                    VERIFY(*worker.call_args.kwargs["args"], **worker.call_args.kwargs["kwargs"])
+                self.assertEqual(audible, {"media_player.wohnzimmer":.23, "media_player.kueche":0})
+                positive = [call for call in calls.call_args_list if call.args[1]["volume_level"] > 0]
+                self.assertEqual(len(positive), 2)  # Initial request plus one after stable playback.
+                self.assertTrue(all(call.args[1]["entity_id"] == "media_player.wohnzimmer" for call in positive))
+                self.assertEqual(app.speaker_levels()["media_player.wohnung"], .23)
+
+    def test_delayed_start_volume_never_raises_idle_paused_or_unavailable_room(self):
+        entity = "media_player.wohnzimmer"
+        for state in ("idle", "paused", "unavailable"):
+            with self.subTest(state=state):
+                app.ROOM_TARGETS[entity] = .23
+                self.states[entity]["state"] = state
+                self.states[entity]["attributes"]["volume_level"] = .23
+                with patch.object(app, "wait_for_start", return_value=True) as wait, \
+                     patch.object(app, "state_snapshot", return_value=self.states), \
+                     patch.object(app, "ha_request") as request:
+                    VERIFY(10, {entity:.23}, after_playback=True)
+                request.assert_not_called()
+                self.assertEqual(wait.call_count, 15)
+
+    def test_delayed_start_volume_preserves_manual_master_and_room_changes(self):
+        entity = "media_player.wohnzimmer"
+        for new_level in (0, .6):
+            with self.subTest(new_level=new_level):
+                app.ROOM_TARGETS[entity] = .23
+                self.states[entity]["state"] = "playing"
+                def wait(*args):
+                    app.ROOM_TARGETS[entity] = new_level
+                    return True
+                with patch.object(app, "wait_for_start", side_effect=wait), \
+                     patch.object(app, "state_snapshot", return_value=self.states), \
+                     patch.object(app, "ha_request") as request:
+                    VERIFY(10, {entity:.23}, after_playback=True)
+                request.assert_not_called()
+
+    def test_delayed_start_volume_cancellation_cannot_leave_standby(self):
+        entity = "media_player.wohnzimmer"
+        app.ROOM_TARGETS[entity] = .23
+        def cancel(*args):
+            app.STANDBY.set()
+            app.LAST_POWER = "off"
+            return False
+        with patch.object(app, "wait_for_start", side_effect=cancel), \
+             patch.object(app, "state_snapshot") as snapshot, patch.object(app, "ha_request") as request:
+            VERIFY(10, {entity:.23}, after_playback=True)
+        snapshot.assert_not_called()
+        request.assert_not_called()
+        self.assertTrue(app.STANDBY.is_set())
+
+    def test_delayed_start_volume_omits_newly_disabled_room(self):
+        entity = "media_player.wohnzimmer"
+        app.ROOM_TARGETS[entity] = .23
+        self.states[entity]["state"] = "playing"
+        with patch.object(app, "wait_for_start", return_value=True), \
+             patch.object(app, "state_snapshot", return_value=self.states), \
+             patch.object(app, "enabled_device_ids", return_value=set()), \
+             patch.object(app, "ha_request") as request:
+            VERIFY(10, {entity:.23}, after_playback=True)
+        request.assert_not_called()
+
+    def test_delayed_start_volume_at_zero_keeps_mute_without_playback_poll(self):
+        entity = "media_player.wohnzimmer"
+        app.ROOM_TARGETS[entity] = 0
+        self.states[entity]["attributes"]["volume_level"] = 0
+        with patch.object(app, "wait_for_start", return_value=True), \
+             patch.object(app, "state_snapshot", return_value=self.states) as snapshot, \
+             patch.object(app, "ha_request") as request:
+            VERIFY(10, {entity:0}, after_playback=True)
+        self.assertEqual(snapshot.call_count, 1)
+        request.assert_not_called()
+
+    def test_delayed_start_volume_requires_stable_playback_after_read_failure(self):
+        entity = "media_player.wohnzimmer"
+        app.ROOM_TARGETS[entity] = .23
+        self.states[entity]["state"] = "playing"
+        answers = [self.states, OSError("HA unavailable"), self.states, self.states, self.states, self.states]
+        self.states[entity]["attributes"]["volume_level"] = .23
+        with patch.object(app, "wait_for_start", return_value=True), \
+             patch.object(app, "state_snapshot", side_effect=answers) as snapshot, \
+             patch.object(app, "ha_request", return_value={}) as request:
+            VERIFY(10, {entity:.23}, after_playback=True)
+        request.assert_called_once_with("/services/media_player/volume_set", {"entity_id":entity, "volume_level":.23})
+        self.assertEqual(snapshot.call_count, 6)
+
+    def test_delayed_start_volume_does_not_retry_after_user_pauses(self):
+        entity = "media_player.wohnzimmer"
+        app.ROOM_TARGETS[entity] = .23
+        playing = {entity:{"state":"playing", "attributes":{"volume_level":.01}}}
+        paused = {entity:{"state":"paused", "attributes":{"volume_level":.01}}}
+        with patch.object(app, "wait_for_start", return_value=True), \
+             patch.object(app, "state_snapshot", side_effect=[playing, playing, playing, paused]), \
+             patch.object(app, "ha_request", return_value={}) as request:
+            VERIFY(10, {entity:.23}, after_playback=True)
+        request.assert_called_once_with("/services/media_player/volume_set", {"entity_id":entity, "volume_level":.23})
 
     def test_unconfirmed_startup_volume_retries_only_same_level_twice(self):
         entity = "media_player.wohnzimmer"

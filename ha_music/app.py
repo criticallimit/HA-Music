@@ -646,8 +646,69 @@ def startup_request(generation, path, payload=None):
         return result
 
 
-def verify_restored_volumes(generation, expected):
+def reapply_startup_volumes_after_playback(generation, expected):
+    """An optimistic HA volume value cannot complete normal startup restore.
+
+    Reapply the same positive target once after a room reports playing for
+    three observations, two seconds apart. Never start/resume media here.
+    """
     expected = dict(expected)
+    pending = {entity for entity, level in expected.items() if level > 0}
+    stable, applied = {}, {}
+    for _ in range(15):
+        if not pending:
+            break
+        if not wait_for_start(generation, 2):
+            raise StartupCancelled("Startlautstärke abgebrochen")
+        try:
+            states = state_snapshot(fresh=True)
+            check_generation(generation)
+        except StartupCancelled:
+            raise
+        except NETWORK_ERRORS as exc:
+            stable.clear()
+            print(f"[HA Music] Startup playback wait failed: {exc}", flush=True)
+            continue
+        for entity in sorted(pending):
+            with COMMAND_LOCK:
+                with STATE_LOCK:
+                    check_generation(generation)
+                    if entity not in enabled_device_ids() or ROOM_TARGETS.get(entity) != expected[entity]:
+                        pending.discard(entity)
+                        expected.pop(entity, None)
+                        continue  # A later manual room/master command wins.
+                    playing = states.get(entity, {}).get("state") == "playing"
+                    stable[entity] = stable.get(entity, 0) + 1 if playing else 0
+                if stable[entity] < 3:
+                    continue
+                try:
+                    startup_request(generation, "/services/media_player/volume_set", {
+                        "entity_id":entity, "volume_level":expected[entity]})
+                except StartupCancelled:
+                    raise
+                except NETWORK_ERRORS as exc:
+                    print(f"[HA Music] Deferred startup volume failed for {entity}: {exc}", flush=True)
+                else:
+                    applied[entity] = expected[entity]
+                # One delayed application per room, then the bounded verifier.
+                pending.discard(entity)
+    if applied:
+        print("[HA Music] Startup master reapplied after playback: " + json.dumps(applied, sort_keys=True), flush=True)
+    for entity in sorted(pending):
+        print(f"[HA Music] WARNING: {entity} playback did not settle; deferred startup volume skipped", flush=True)
+        expected.pop(entity, None)  # Never retry positive volumes in idle/paused rooms.
+    return expected
+
+
+def verify_restored_volumes(generation, expected, *, after_playback=False):
+    expected = dict(expected)
+    if after_playback:
+        try:
+            expected = reapply_startup_volumes_after_playback(generation, expected)
+        except StartupCancelled:
+            return
+    if not expected:
+        return
     for attempt in range(3):
         if not wait_for_start(generation, 2):
             return
@@ -671,6 +732,10 @@ def verify_restored_volumes(generation, expected):
                         expected.pop(entity)
                         VOLUME_CONFIRMATION.pop(entity, None)
                         continue
+                    if after_playback and level > 0 and entry.get("state") != "playing":
+                        expected.pop(entity)
+                        VOLUME_CONFIRMATION.pop(entity, None)
+                        continue  # A later pause/unavailable state must not trigger retries.
                     confirmed = entry.get("state") not in ("unknown", "unavailable") and type(observed) in (float, int) and abs(observed - level) <= 0.005
                     if confirmed:
                         expected.pop(entity)
@@ -717,7 +782,7 @@ def restore_speakers(generation):
             failed.append(entity)
     if sent:
         threading.Thread(target=verify_restored_volumes,
-                         args=(generation, sent), daemon=True).start()
+                         args=(generation, sent), kwargs={"after_playback":True}, daemon=True).start()
     if failed:
         raise RuntimeError("Lautstärke nicht wiederhergestellt: " + ", ".join(failed))
 

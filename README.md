@@ -229,3 +229,12 @@ Sicherung davor: [backup/main-2026-10-09-before-library-style-a81ca6a](https://g
 Radio und Apple Music stehen als getrennte Buttons mit etwas Abstand. Der aktive Tab verwendet einen Akzentrand statt einer farbigen Fläche, auch in der Dashboard-Karte. Die Kopfzeile ist niedriger, die rechten Bedienelemente sind kleiner und deaktivierte Ein-/Aus-Buttons deutlich abgedimmt. Die bestehende Aktivierung der Bedienelemente bleibt unverändert.
 
 Sicherung davor: [backup/main-2026-10-09-before-compact-header-8d07aa1](https://github.com/criticallimit/HA-Music/tree/backup/main-2026-10-09-before-compact-header-8d07aa1), Commit `8d07aa1f4162b10726f00ed4a016bfc3f9c2faf3`.
+
+### Master nach angelaufener Wiedergabe anwenden
+
+Beim normalen Einschalten reicht ein gemeldeter Lautstärkewert nicht mehr als Abschluss der Wiederherstellung: Alexa Media Player kann ihn bereits vor der Geräteausführung setzen. Zusätzlich zum ersten Restore erhält jeder aktive Raum seinen gleichen Start-Master einmal erneut, nachdem er dreimal im Abstand von zwei Sekunden `playing` gemeldet hat. Anschließend gilt die begrenzte Lautstärkeprüfung. Es werden höchstens 15 Abfragen zur Einschwingphase durchgeführt; Räume ohne stabile Wiedergabemeldung erhalten keinen zusätzlichen positiven Befehl. Stumme Räume/Master bei 0, deaktivierte Räume, Ausschalten und neuere manuelle Lautstärken bleiben geschützt. Ein späteres Pausieren verhindert weitere positive Retry-Befehle. Sender oder Playlist werden hierbei nicht neu gestartet. Die ausschließlich lesende Wiederanbindung nach Add-on-Neustart/Update startet diese Funktion nicht.
+
+Im Protokoll bestätigt `Startup master reapplied after playback` den zusätzlichen Befehl; die Annahme und HA-Werte sind weiterhin kein Nachweis hörbarer Geräteausgabe.
+
+Sicherung davor: [backup/main-2026-10-09-before-delayed-start-volume-7addae9](https://github.com/criticallimit/HA-Music/tree/backup/main-2026-10-09-before-delayed-start-volume-7addae9), Commit `7addae96aa53eb1cd1624701e9a065ecea93c6af`.
+
