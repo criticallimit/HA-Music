@@ -6,8 +6,9 @@ configuration:
     name: Alexa-Geräte
     description: >-
       Erkannte Geräte werden beim Einschalten von HA Music ergänzt, auch wenn sie nicht verfügbar sind.
-      Nur aktivierte Geräte erscheinen in HA Music und erhalten Lautstärkebefehle.
-      Weitere Geräte sind zunächst deaktiviert. Nach Änderungen speichern und das Add-on neu starten.
+      Dazu gehören registrierte Echo Dots und Fire TVs. Neue Geräte sind zunächst deaktiviert.
+      Zum An/Aus-Schalten den Stift öffnen und "In Ingress anzeigen und steuern" ändern, nicht den Papierkorb verwenden.
+      Ausgeblendete Geräte bleiben in dieser Liste. Anschließend speichern und das Add-on neu starten.
     fields:
       entity_id:
         name: Entity-ID
@@ -16,5 +17,8 @@ configuration:
         name: Gerätename
         description: Angezeigter Name in der Geräteliste und in HA Music.
       enabled:
-        name: In HA Music aktivieren
-        description: Zeigt dieses Gerät an und erlaubt seine Lautstärkesteuerung.
+        name: In Ingress anzeigen und steuern
+        description: >-
+          An zeigt das Gerät in HA Music und erlaubt HA-Music-Steuerbefehle.
+          Aus blendet es aus und verhindert diese Befehle, ohne den Eintrag zu löschen.
+          Die Stromversorgung und die Alexa-Gruppenmitgliedschaft bleiben unverändert.

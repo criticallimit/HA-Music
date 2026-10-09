@@ -5,6 +5,12 @@ Geprüft: sämtliche Python-Module, Ingress-Frontend (HTML/CSS/JS), Lovelace-Kar
 
 ## Belegte Befunde und Korrekturen
 
+### Bedeutung der Geräteauswahl im nativen Add-on-Formular
+
+Beschriftung und Hilfe verdeutlichen den vorhandenen Boolean `enabled`: **In Ingress anzeigen und steuern**. An/Aus erfolgt über den Bearbeitungsdialog (Stift), ohne Löschen des Eintrags. Das native Home-Assistant-Listenformular selbst ist nicht Teil des Add-ons und bietet keine konfigurierbaren direkten Schalter pro Listenzeile. Eine zusätzliche Geräteverwaltung in Ingress wurde vom Nutzer ausdrücklich abgelehnt und nicht implementiert.
+
+Die vorhandene Erkennung berücksichtigt registrierte Alexa-Media-Player einschließlich ausgeschalteter/unverfügbarer Echo Dots und Fire TVs; bestehende Tests decken fehlende Zustände, Fire-TV-Freigabe und Erhalt deaktivierter Einträge ab. Tatsächliche Geräte-/Entity-Registrierung der Zielinstallation ist hier nicht einsehbar. Ein deaktivierter Eintrag sperrt die HA-Music-Anzeige und -Steuerbefehle, ändert aber weder Stromversorgung noch Alexa-Gruppenmitgliedschaft und verhindert keinen Stream, den Alexa selbst an ein weiterhin vorhandenes Gruppenmitglied sendet.
+
 ### Raum-Schalter und gemeinsame Wiedergabe
 
 Ingress zeigt pro Raum einen Schalter **Hörbar/Stumm**. Die letzte positive Raumlautstärke wird beim Stummschalten serverseitig dauerhaft gespeichert; ein erneuter Klick stellt sie wieder her. Befehle sind explizit und wiederholbar, keine blinden Toggles. Der Backend-Sollwert verhindert, dass eine verzögerte HA-Rückmeldung beim Entstummen den gespeicherten Wert ersetzt. Raum-Schalter senden ausschließlich `volume_set`, weder Play/Pause noch Power-Befehle.
