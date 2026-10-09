@@ -39,6 +39,7 @@ STANDBY.set()  # Bootstrap recovery has separate, read-only admission.
 READY = False
 PREPARING = False
 ROOM_TARGETS = {}
+ROOM_REMEMBERED = {}
 STARTUP_ERROR = None
 STATE_LOCK = threading.RLock()
 COMMAND_LOCK = threading.RLock()
@@ -329,10 +330,12 @@ def allowed_entities():
 def remembered():
     try:
         obj = json.loads(VOLUME_FILE.read_text())
-        return {entity: float(value) for entity, value in obj.items()
-                if isinstance(entity, str) and ENTITY_RE.fullmatch(entity)
-                and type(value) in (int, float) and 0 <= value <= 1} if isinstance(obj, dict) else {}
-    except (OSError, ValueError): return {}
+        saved = {entity: float(value) for entity, value in obj.items()
+                 if entity == "media_player.wohnung" and type(value) in (int, float)
+                 and 0 <= value <= 1} if isinstance(obj, dict) else {}
+    except (OSError, ValueError):
+        saved = {}
+    return {**saved, **ROOM_REMEMBERED}
 def write_durable_json(path, data):
     """Call under LOCK: flush the file, replace atomically, flush the directory."""
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -352,7 +355,10 @@ def write_durable_json(path, data):
 
 def save_remembered(entity, level):
     with LOCK:
-        obj = remembered()
+        if entity != "media_player.wohnung":
+            ROOM_REMEMBERED[entity] = level
+            return
+        obj = {key:value for key,value in remembered().items() if key == "media_player.wohnung"}
         obj[entity] = level
         write_durable_json(VOLUME_FILE, obj)
 def speaker_levels():
@@ -433,7 +439,7 @@ def verify_restored_volumes(generation, expected):
                         expected.pop(entity)
                         VOLUME_CONFIRMATION.pop(entity, None)
                         continue
-                    confirmed = entry.get("state") not in ("unknown", "unavailable") and type(observed) in (float, int) and abs(observed - level) <= 0.011
+                    confirmed = entry.get("state") not in ("unknown", "unavailable") and type(observed) in (float, int) and abs(observed - level) <= 0.005
                     if confirmed:
                         expected.pop(entity)
                         VOLUME_CONFIRMATION.pop(entity, None)
@@ -464,7 +470,7 @@ def restore_speakers(generation):
         if entity not in available:
             continue
         # A muted virtual master must remain silent across power cycles.
-        level = 0.0 if master == 0 else levels[entity]
+        level = 0.0 if levels[entity] == 0 else (master or 0.0)
         try:
             startup_request(generation, "/services/media_player/volume_set",
                             {"entity_id": entity, "volume_level": level})
@@ -513,11 +519,13 @@ def prepare_speaker_levels(generation):
     permitted = enabled_device_ids()
     if "media_player.wohnung" not in saved:
         master = (states.get("media_player.wohnung", {}).get("attributes") or {}).get("volume_level")
-        saved["media_player.wohnung"] = float(master) if type(master) in (int, float) and 0 <= master <= 1 else 0.01
+        saved["media_player.wohnung"] = float(master) if type(master) in (int, float) and 0 <= master <= 1 else remembered().get("media_player.wohnung", 0.0)
     for entity in permitted:
         if entity not in saved:
             value = (states.get(entity, {}).get("attributes") or {}).get("volume_level")
-            saved[entity] = float(value) if type(value) in (int, float) and 0 <= value <= 1 else saved["media_player.wohnung"]
+            saved[entity] = 0.0 if value == 0 else (saved["media_player.wohnung"] or 1.0)
+        if entity != "media_player.wohnung" and saved[entity] > 0:
+            saved[entity] = 1.0  # Active marker, never a room volume to restore.
     with STATE_LOCK:
         check_generation(generation)
         save_speaker_levels(saved)
@@ -536,7 +544,9 @@ def prepare_speaker_levels(generation):
             raise
         except NETWORK_ERRORS as exc:
             print(f"[HA Music] Startup mute failed for {entity}: {exc}", flush=True)
-    print(f"[HA Music] Startup room levels prepared: {json.dumps(saved, sort_keys=True)}; pre-muted: {json.dumps(muted, sort_keys=True)}", flush=True)
+    targets = {entity: 0.0 if saved[entity] == 0 else saved["media_player.wohnung"]
+               for entity in permitted if entity != "media_player.wohnung"}
+    print(f"[HA Music] Startup room levels prepared: {json.dumps(targets, sort_keys=True)}; master: {saved['media_player.wohnung']}; pre-muted: {json.dumps(muted, sort_keys=True)}", flush=True)
     return saved
 
 
@@ -802,6 +812,7 @@ def transition_power(on):
         SOURCE_RESTORE_ERROR = None
         RECOVERY_MESSAGE = None
         ROOM_TARGETS.clear()
+        ROOM_REMEMBERED.clear()
         VOLUME_CONFIRMATION.clear()
         STARTED_AT = time.monotonic() if on else None
         STANDBY_UNTIL = 0 if on else time.monotonic() + 10
@@ -1158,7 +1169,7 @@ def playback_status():
         for entity, confirmation in list(VOLUME_CONFIRMATION.items()):
             entry = states.get(entity, {})
             observed_volume = (entry.get("attributes") or {}).get("volume_level")
-            if entry.get("state") not in ("unknown", "unavailable") and type(observed_volume) in (int, float) and abs(observed_volume - confirmation["expected"]) <= 0.011:
+            if entry.get("state") not in ("unknown", "unavailable") and type(observed_volume) in (int, float) and abs(observed_volume - confirmation["expected"]) <= 0.005:
                 VOLUME_CONFIRMATION.pop(entity, None)
         volume_confirmation = deepcopy(VOLUME_CONFIRMATION)
     candidates = dict.fromkeys((target, "media_player.wohnung", *enabled_device_ids()))
@@ -1277,7 +1288,12 @@ def perform(action, body):
 def master_room_levels(room_players):
     """Use the same active/muted intent for master commands and UI previews."""
     stored = speaker_levels()
-    saved = displayed_speaker_levels() if RECOVERED_SESSION and stored.get("media_player.wohnung") != 0 else stored
+    if stored.get("media_player.wohnung") == 0:
+        saved = stored  # Preserve which rooms were active before master mute.
+    elif RECOVERED_SESSION:
+        saved = displayed_speaker_levels()
+    else:
+        saved = {**stored, **ROOM_TARGETS}
     intent = {p["entity_id"]: saved.get(p["entity_id"], p.get("volume")) for p in room_players}
     return {entity: float(value) for entity, value in intent.items()
             if type(value) in (int, float) and 0 <= value <= 1}
@@ -1394,10 +1410,11 @@ def perform_control(action, body, generation):
         result = startup_request(generation, "/services/media_player/volume_set", {"entity_id": entity, "volume_level": level})
         with STATE_LOCK:
             check_generation(generation)
-            save_speaker_levels({entity: float(level)})
+            # Persist only the muted/active choice; positive room levels are session-local.
+            save_speaker_levels({entity: 0.0 if level == 0 else 1.0})
             ROOM_TARGETS[entity] = float(level)
             VOLUME_CONFIRMATION.pop(entity, None)
-        print(f"[HA Music] Saved speaker {entity}: {round(level * 100)}%", flush=True)
+        print(f"[HA Music] Session speaker {entity}: {round(level * 100)}%", flush=True)
         if level > 0: save_remembered(entity, level)
         return result
     raise ValueError("Unbekannte Aktion")
