@@ -78,3 +78,11 @@ Kein Release, Versionssprung oder Installation. Eine Rückkehr erfolgt über ein
 - Randfüllende Cover mit ursprünglicher Auflösung als Rückfall, aktive Markierung über dem Bild, separater Albumlink; Namen bleiben ohne Bild nutzbar. Playlistnamen zentriert mit Zeilenumbruch und längenabhängiger Schrift.
 - Regressionen für Cache, Mehrdeutigkeit, falsche URLs, Standby, Requestlimit, Abbruch, stabile IDs, UI-Coverwahl und Bildfehler. Kein Live-Echo-Test; Version unverändert 0.0.6.
 
+
+## 2026-10-09: Lokale bestätigte Cover und Playlistdiagnose
+
+- Bestätigte Album-IDs erhalten dauerhaft lokale Bilddateien und Metadaten. Vorhandene Bestätigungen werden automatisch beim nächsten bereiten Coverabruf übernommen. Lokale Treffer umgehen auch abgelaufene Katalogcaches; Bildauslieferung über Ingress ohne Internet.
+- Begrenzte Downloads, JPEG/PNG/WebP-Signaturprüfung, atomare Speicherung mit fsync, numerische Dateizuordnung, Abbruch bei Powerwechsel; lokale Bilder werden langfristig vom Browser gecacht.
+- Historische Playlistbefehle vor/nach Konfigurationsmigration identisch. Dirk / Dirk Favoriten als tatsächliches Beispiel regressionsgeprüft. Ursache der Alexa-Suchantwort noch offen; nur gezielte Anforderungsdiagnose ergänzt, keine unbestätigte Änderung am Playback oder Shuffle.
+- Regressionen prüfen Wiederverwendung ohne Internet nach Cacheablauf, lokale HTTP-Bilder, Pfadabwehr, ungültige Downloads, Abbruch und exakten Playlistnamen. Kein Live-Echo-Zugriff; Version bleibt 0.0.6.
+

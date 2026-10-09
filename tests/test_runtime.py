@@ -27,7 +27,7 @@ class RuntimeTests(unittest.TestCase):
         self.stack = ExitStack()
         self.addCleanup(self.stack.close)
         folder = Path(self.stack.enter_context(tempfile.TemporaryDirectory(dir=ROOT)))
-        for name in ("VOLUME_FILE", "STATION_FILE", "SPEAKER_FILE", "VIEW_FILE", "SESSION_FILE", "SOURCE_FILE", "OPTIONS", "LIBRARY_FILE", "ARTWORK_FILE"):
+        for name in ("VOLUME_FILE", "STATION_FILE", "SPEAKER_FILE", "VIEW_FILE", "SESSION_FILE", "SOURCE_FILE", "OPTIONS", "LIBRARY_FILE", "ARTWORK_FILE", "ARTWORK_DIR"):
             self.stack.enter_context(patch.object(app, name, folder / (name + ".json")))
         self.stack.enter_context(patch.object(app, "SUPERVISOR_OPTIONS", None))
         self.stack.enter_context(patch.object(app, "ARTWORK_LAST_REQUEST", 0))
@@ -1028,6 +1028,75 @@ class RuntimeTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Doppelter"):
             app.normalize_library([{"name":"Album", "kind":"Album", "album_id":12},
                                    {"name":"Album", "kind":"Album", "album_id":13}])
+
+    def test_confirmed_album_picture_is_saved_and_served_without_internet_after_expiry(self):
+        app.READY = True
+        album = app.album_candidates({"results":[self.album_record()]})[0]
+        picture = b"\xff\xd8\xff" + b"local jpeg bytes"
+        with patch.object(app, "urlopen") as opened:
+            opened.return_value.__enter__.return_value.read.return_value = picture
+            app.store_album_image(album)
+            self.assertEqual(opened.call_count, 1)
+        app.ARTWORK_FILE.write_text("{}")
+        app.STANDBY.set(); app.READY = False
+        with patch.object(app, "urlopen", side_effect=AssertionError("No Internet")):
+            result = app.album_cover_search({"search":"Dreams", "album_id":12})
+        self.assertEqual(result["selected"]["image"], "api/album-art/12")
+        self.assertEqual(app.local_album_image(12), (picture, "image/jpeg"))
+
+    def test_confirmed_cover_http_serves_local_bytes_and_rejects_path_injection(self):
+        app.ARTWORK_DIR.mkdir()
+        picture = b"\x89PNG\r\n\x1a\n" + b"local png"
+        (app.ARTWORK_DIR / "12.image").write_bytes(picture)
+        handler = object.__new__(app.Handler)
+        handler.client_address = ("172.30.32.2", 1)
+        handler.path = "/prefix/api/album-art/12"
+        handler.send_response = Mock(); handler.send_header = Mock(); handler.end_headers = Mock()
+        handler.wfile = io.BytesIO(); handler.reply = Mock()
+        app.STANDBY.set()
+        with patch.object(app, "urlopen", side_effect=AssertionError("No Internet")):
+            handler.do_GET()
+        self.assertEqual(handler.wfile.getvalue(), picture)
+        handler.send_header.assert_any_call("Content-Type", "image/png")
+        handler.path = "/api/album-art/..%2Foptions.json"
+        handler.do_GET()
+        self.assertEqual(handler.reply.call_args.args[0], 404)
+
+    def test_failed_cover_download_does_not_leave_partial_or_invalid_picture(self):
+        app.READY = True
+        album = app.album_candidates({"results":[self.album_record()]})[0]
+        with patch.object(app, "urlopen") as opened, self.assertRaises(RuntimeError):
+            opened.return_value.__enter__.return_value.read.return_value = b"<html>not an image</html>"
+            app.store_album_image(album)
+        self.assertFalse((app.ARTWORK_DIR / "12.image").exists())
+        self.assertIsNone(app.stored_album(12))
+
+    def test_confirmed_cover_cancelled_download_does_not_write_picture(self):
+        app.READY = True
+        album = app.album_candidates({"results":[self.album_record()]})[0]
+        def reply(*args):
+            app.transition_power(False)
+            return b"\xff\xd8\xffjpeg"
+        with patch.object(app, "urlopen") as opened, self.assertRaises(app.StartupCancelled):
+            opened.return_value.__enter__.return_value.read.side_effect = reply
+            app.store_album_image(album)
+        self.assertFalse((app.ARTWORK_DIR / "12.image").exists())
+
+    def test_dirk_playlist_migration_preserves_exact_alexa_name_and_command(self):
+        app.READY = True
+        config = app.options()
+        config["apple_music_favorites"] = [{"name":"Dirk", "kind":"Playlist", "search":"Dirk Favoriten"}]
+        app.OPTIONS.write_text(json.dumps(config))
+        old = app.apple_music_selection()["items"][0]
+        app.migrate_library(config)
+        app.SUPERVISOR_OPTIONS = {key:value for key,value in config.items() if key != "apple_music_favorites"}
+        selected = app.apple_music_selection()["items"][0]
+        self.assertEqual(selected, old)
+        with patch.object(app, "ha_request", return_value={}) as request, patch("builtins.print") as log:
+            app.play_apple_music(selected["id"], 10)
+        self.assertEqual(request.call_args.args[1]["media"]["media_content_id"],
+                         "spiele meine Playlist Dirk Favoriten auf Apple Music in zufälliger Reihenfolge auf Wohnung")
+        self.assertIn("Dirk Favoriten", log.call_args.args[0])
 
     def test_apple_configuration_filters_invalid_entries_and_is_local_in_standby(self):
         app.OPTIONS.write_text(json.dumps({"apple_music_favorites":[{},None,{"name":"Test", "kind":[]},{"name":"Bad\nName","kind":"Playlist"},{"name":"Guter Name","kind":"Album"}]}))

@@ -825,3 +825,12 @@ test('missing album image leaves a usable labeled playback button', () => {
   assert.equal(h.run('appleButtons.get("a").children[1].textContent'),'Album');
 });
 
+test('confirmed album image accepts only the local numeric artwork route', () => {
+  const h=harness();
+  assert.equal(h.run('validAppleImage("api/album-art/12")'),'api/album-art/12');
+  assert.equal(h.run('validAppleImage("api/album-art/../../options.json")'),'');
+  assert.equal(h.run('validAppleImage("https://evil.test/api/album-art/12")'),'');
+  h.run('radioReadyForViews=true;renderAppleSelection({items:[{id:"a",kind:"Album",name:"Album"}],available:true});applyAlbumCover(appleButtons.get("a"),{image:"api/album-art/12"})');
+  assert.equal(h.run('appleButtons.get("a").coverImage.src'),'api/album-art/12');
+});
+

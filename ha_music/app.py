@@ -34,6 +34,7 @@ SOURCE_FILE = Path(os.environ.get("SOURCE_FILE", "/data/last_source.json"))
 LIBRARY_FILE = Path(os.environ.get("LIBRARY_FILE", "/data/apple_music_library.json"))
 LIBRARY_LOCK = threading.RLock()
 ARTWORK_FILE = Path(os.environ.get("ARTWORK_FILE", "/data/album_artwork.json"))
+ARTWORK_DIR = Path(os.environ.get("ARTWORK_DIR", "/data/album_covers"))
 ARTWORK_LOCK = threading.Lock()
 ARTWORK_LAST_REQUEST = 0.0
 CARD_INSTALLED_FILE = Path("/data/dashboard_card_installed")
@@ -336,6 +337,84 @@ def artwork_cache():
         return {}
 
 
+def image_mime(data):
+    if data.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg"
+    if data.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+    if data.startswith(b"RIFF") and data[8:12] == b"WEBP":
+        return "image/webp"
+    raise ValueError("Coverantwort ist kein unterstütztes Bild")
+
+
+def local_album_image(identity):
+    if type(identity) is not int or not 0 < identity < 10**16:
+        raise ValueError("Ungültige Albumzuordnung")
+    data = (ARTWORK_DIR / f"{identity}.image").read_bytes()
+    if not 0 < len(data) <= 3 * 1024 * 1024:
+        raise ValueError("Ungültige Covergröße")
+    return data, image_mime(data)
+
+
+def stored_album(identity):
+    try:
+        album = json.loads((ARTWORK_DIR / f"{identity}.json").read_text(encoding="utf-8"))
+        if not isinstance(album, dict) or album.get("album_id") != identity:
+            return None
+        local_album_image(identity)
+        return {**album, "image":f"api/album-art/{identity}", "fallback_image":""}
+    except (OSError, ValueError):
+        return None
+
+
+def store_album_image(album):
+    """Called under ARTWORK_LOCK. Persist confirmed pictures, not just remote URLs."""
+    identity = album["album_id"]
+    existing = stored_album(identity)
+    if existing:
+        return existing
+    if STANDBY.is_set() or not READY or PREPARING:
+        raise RuntimeError("Coverdownload erst verfügbar, wenn HA Music bereit ist")
+    generation = RESTORE_GENERATION
+    last_error = None
+    for value in dict.fromkeys((album.get("image"), album.get("fallback_image"))):
+        url = artwork_url(value, "mzstatic.com")
+        if not url:
+            continue
+        try:
+            with urlopen(Request(url, headers={"Accept":"image/jpeg,image/png,image/webp"}), timeout=8) as response:
+                with RESPONSE_LOCK:
+                    check_generation(generation)
+                    ACTIVE_RESPONSES.add(response)
+                try:
+                    data = response.read(3 * 1024 * 1024 + 1)
+                finally:
+                    with RESPONSE_LOCK:
+                        ACTIVE_RESPONSES.discard(response)
+            check_generation(generation)
+            if len(data) > 3 * 1024 * 1024:
+                raise ValueError("Coverbild ist zu groß")
+            image_mime(data)
+            with LOCK:
+                ARTWORK_DIR.mkdir(parents=True, exist_ok=True)
+                destination = ARTWORK_DIR / f"{identity}.image"
+                temporary = destination.with_suffix(".tmp")
+                try:
+                    with temporary.open("wb") as stream:
+                        stream.write(data); stream.flush(); os.fsync(stream.fileno())
+                    check_generation(generation)
+                    temporary.replace(destination)
+                    write_durable_json(ARTWORK_DIR / f"{identity}.json", album)
+                finally:
+                    temporary.unlink(missing_ok=True)
+            return stored_album(identity)
+        except StartupCancelled:
+            raise
+        except NETWORK_ERRORS as exc:
+            last_error = exc
+    raise RuntimeError("Cover konnte nicht lokal gespeichert werden: " + str(last_error or "Bildadresse fehlt"))
+
+
 def album_cover_search(body):
     """Independent catalog lookup; no Alexa/HA call, never leave network standby."""
     global ARTWORK_LAST_REQUEST
@@ -348,7 +427,10 @@ def album_cover_search(body):
     with ARTWORK_LOCK:
         cache = artwork_cache()
         entry = cache.get(key, {})
-        if isinstance(entry, dict) and type(entry.get("at")) in (int, float) and time.time() - entry["at"] < 86400 and isinstance(entry.get("items"), list):
+        saved = stored_album(identity) if identity else None
+        if saved:
+            albums = [saved]
+        elif isinstance(entry, dict) and type(entry.get("at")) in (int, float) and time.time() - entry["at"] < 86400 and isinstance(entry.get("items"), list):
             albums = entry["items"]
         else:
             if STANDBY.is_set() or not READY or PREPARING:
@@ -388,7 +470,11 @@ def album_cover_search(body):
         matches = [album for album in albums if identity == album.get("album_id") or term in (
             normalized(album.get("name", "")), normalized(album.get("artist", "") + " " + album.get("name", "")),
             normalized(album.get("name", "") + " " + album.get("artist", "")))]
-        return {"items":albums, "selected":matches[0] if len(matches) == 1 else None}
+        selected = matches[0] if len(matches) == 1 else None
+        if selected and identity and not saved:
+            selected = store_album_image(selected)
+            albums = [selected]
+        return {"items":albums, "selected":selected}
 
 
 def integration_inventory():
@@ -1130,6 +1216,9 @@ def play_apple_music(favorite_id, generation, *, startup=False):
         phrase += " in zufälliger Reihenfolge"
     if selection["group"]:
         phrase += " auf " + selection["group"]
+    print("[HA Music] Apple playback request: " + json.dumps({"name":favorite["name"],
+          "alexa_name":favorite["search"], "kind":favorite["kind"], "target":selection["target"],
+          "group":selection["group"], "command":phrase}, ensure_ascii=False), flush=True)
     result = play_on_target(generation, selection["target"], "custom", phrase)
     with STATE_LOCK:
         check_generation(generation)
@@ -1639,6 +1728,21 @@ class Handler(BaseHTTPRequestHandler):
             return self.reply(403, {"error": "Ingress only"})
         path = unquote(urlsplit(self.path).path)
         name = path.rsplit("/", 1)[-1]
+        if "/api/album-art/" in path:
+            if not re.fullmatch(r"[1-9][0-9]{0,15}", name):
+                return self.reply(404, {"error":"Cover nicht gefunden"})
+            try:
+                content, mime = local_album_image(int(name))
+            except (OSError, ValueError):
+                return self.reply(404, {"error":"Cover nicht gefunden"})
+            self.send_response(200)
+            self.send_header("Content-Type", mime)
+            self.send_header("Content-Length", str(len(content)))
+            self.send_header("Cache-Control", "private, max-age=31536000, immutable")
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.end_headers()
+            self.wfile.write(content)
+            return
         if name == "status" and "/api/" in path:
             return self.reply(200, {"radio": "direct_presets",
                                     "apple_music": "alexa_favorites", "backend": "connected" if TOKEN else "unavailable"})

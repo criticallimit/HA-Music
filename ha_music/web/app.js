@@ -402,6 +402,7 @@ let albumCoverTimer = false;
 let albumCoverPending = false;
 function validAppleImage(value) {
   if (typeof value !== "string") return "";
+  if (/^api\/album-art\/[1-9][0-9]{0,15}$/.test(value)) return value;
   try { const url = new URL(value); return url.protocol === "https:" && !url.username && !url.password && (!url.port || url.port === "443") && (url.hostname === "mzstatic.com" || url.hostname.endsWith(".mzstatic.com")) ? url.href : ""; }
   catch (_) { return ""; }
 }
@@ -410,7 +411,9 @@ function applyAlbumCover(button, album) {
   const imageUrl = validAppleImage(album?.image);
   if (!imageUrl || !button || button.coverApplied === imageUrl) return;
   button.coverApplied = imageUrl;
+  if (button.coverImage) button.coverImage.remove();
   const image = document.createElement("img"); image.className = "apple-album-cover";
+  button.coverImage = image;
   image.alt = ""; image.loading = "lazy"; image.referrerPolicy = "no-referrer";
   const fallback = validAppleImage(album.fallback_image);
   let retried = false;
@@ -550,7 +553,7 @@ async function submitLibraryEditor(event) {
     for (const row of libraryEditorRows) {
       if (!row.album) continue;
       const item = result.selection.items.find(item => item.kind === "Album" && item.album_id === row.albumId && item.name === row.name.value.trim());
-      if (item) albumCoverResults.set(coverKey(item), {album:row.album});
+      if (item) albumCoverResults.set(coverKey(item), {album:row.album, retryAt:0});
     }
     libraryEpoch++;
     renderAppleSelection(result.selection);
