@@ -452,8 +452,8 @@ for (const [id,on] of [["power-on",true],["power-off",false]]) {
     $("power-on").disabled = true;
     $("power-off").disabled = true;
     if (on) {
-      countdownEndsAt = Date.now() + 50000;
-      $("radio-standby-text").textContent = "Radio startet … 50 s";
+      countdownEndsAt = Date.now() + 70000;
+      $("radio-standby-text").textContent = "Radio startet … 70 s";
     } else {
       countdownEndsAt = null;
       $("radio-standby-text").textContent = "Radio ausgeschaltet";

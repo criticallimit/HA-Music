@@ -381,6 +381,14 @@ def restore_speakers(generation, use_master=False):
         raise RuntimeError("Master-Lautstärke nicht verfügbar")
     available = enabled_device_ids()
     sent, failed = {}, []
+    if "media_player.wohnung" in available and master is not None:
+        try:
+            startup_request(generation, "/services/media_player/volume_set",
+                            {"entity_id": "media_player.wohnung", "volume_level": master})
+        except StartupCancelled:
+            raise
+        except NETWORK_ERRORS:
+            failed.append("media_player.wohnung")
     for entity in sorted(e for e in levels if e != "media_player.wohnung"):
         check_generation(generation)
         if entity not in available:
@@ -446,7 +454,7 @@ def set_probe_volume(generation):
         check_generation(generation)
         save_speaker_levels(saved)
     probed = {}
-    for entity in sorted(permitted - {"media_player.wohnung"}):
+    for entity in sorted(permitted, key=lambda entity: (entity != "media_player.wohnung", entity)):
         level = 0.0 if saved[entity] == 0 or saved["media_player.wohnung"] == 0 else 0.01
         try:
             startup_request(generation, "/services/media_player/volume_set",
@@ -472,10 +480,9 @@ def radio_start_sequence(generation):
             raise
         except NETWORK_ERRORS as exc:
             print(f"[HA Music] Ready helper reset failed: {exc}", flush=True)
-        print("[HA Music] Waiting 40 seconds before Alexa reload", flush=True)
-        if not wait_for_start(generation, 40):
+        print("[HA Music] Waiting 45 seconds before Alexa reload", flush=True)
+        if not wait_for_start(generation, 45):
             return
-        release_deadline = time.monotonic() + 10
         selected = enabled_device_ids()
         station = last_selected_station()
         preferred = DIRECT_STATIONS[station]["target"] if station else "media_player.wohnung"
@@ -491,29 +498,9 @@ def radio_start_sequence(generation):
                 print(f"[HA Music] Alexa integration reload failed: {exc}", flush=True)
             else:
                 print("[HA Music] Alexa integration reload completed", flush=True)
-        remaining = max(0.0, release_deadline - time.monotonic())
-        if not wait_for_start(generation, remaining):
+        print("[HA Music] Waiting 20 seconds after Alexa reload", flush=True)
+        if not wait_for_start(generation, 20):
             return
-        with STATE_LOCK:
-            check_generation(generation)
-            READY = True
-            STARTED_AT = None
-            # Radiotext belongs to the displayed preset, independently of
-            # whether Alexa accepts its later volume/playback commands.
-            MONITOR.select(last_selected_station())
-        print("[HA Music] Interface released after 50-second wait", flush=True)
-        try:
-            startup_request(generation, "/services/input_boolean/turn_on", {"entity_id": RADIO_READY})
-        except StartupCancelled:
-            raise
-        except NETWORK_ERRORS as exc:
-            print(f"[HA Music] Ready helper update failed: {exc}", flush=True)
-        try:
-            synchronize_device_configuration(generation)
-        except StartupCancelled:
-            raise
-        except NETWORK_ERRORS as exc:
-            print(f"[HA Music] Device synchronization failed: {exc}", flush=True)
         refresh_entities = sorted(enabled_device_ids())
         if refresh_entities:
             try:
@@ -522,19 +509,43 @@ def radio_start_sequence(generation):
                 raise
             except NETWORK_ERRORS as exc:
                 print(f"[HA Music] Device refresh failed; continuing startup: {exc}", flush=True)
+        print("[HA Music] Waiting 5 seconds after device refresh", flush=True)
+        if not wait_for_start(generation, 5):
+            return
         station = last_selected_station()
-        startup_completed = False
         try:
             set_probe_volume(generation)
-            if not wait_for_start(generation, 2):
-                return
+            with STATE_LOCK:
+                check_generation(generation)
+                READY = True
+                STARTED_AT = None
+                # Radiotext belongs to the displayed preset, independently of
+                # whether Alexa accepts its later volume/playback commands.
+                MONITOR.select(last_selected_station())
+            print("[HA Music] Interface released after startup preparation", flush=True)
+            try:
+                startup_request(generation, "/services/input_boolean/turn_on", {"entity_id": RADIO_READY})
+            except StartupCancelled:
+                raise
+            except NETWORK_ERRORS as exc:
+                print(f"[HA Music] Ready helper update failed: {exc}", flush=True)
             if station and DIRECT_STATIONS[station]["target"] in enabled_device_ids():
-                play_station(station, generation)
-            startup_completed = True
+                try:
+                    play_station(station, generation)
+                except StartupCancelled:
+                    raise
+                except NETWORK_ERRORS as exc:
+                    print(f"[HA Music] Saved station start failed: {exc}", flush=True)
         finally:
             # Even a failed station/probe command must not leave rooms at 1%.
             check_generation(generation)
-            restore_speakers(generation, use_master=startup_completed)
+            restore_speakers(generation, use_master=True)
+        try:
+            synchronize_device_configuration(generation)
+        except StartupCancelled:
+            raise
+        except NETWORK_ERRORS as exc:
+            print(f"[HA Music] Device synchronization failed: {exc}", flush=True)
         print("[HA Music] Startup commands completed; audible playback is not guaranteed", flush=True)
     except StartupCancelled:
         return
@@ -725,7 +736,7 @@ def save_selected_view(view):
 def startup_remaining():
     if STARTED_AT is None:
         return None
-    return max(0, 50 - int(time.monotonic() - STARTED_AT))
+    return max(0, 70 - int(time.monotonic() - STARTED_AT))
 
 
 def state_snapshot():
