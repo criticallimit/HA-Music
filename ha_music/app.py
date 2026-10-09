@@ -29,6 +29,7 @@ STATION_FILE = Path(os.environ.get("STATION_FILE", "/data/last_station.json"))
 SPEAKER_FILE = Path(os.environ.get("SPEAKER_FILE", "/data/speaker_levels.json"))
 VIEW_FILE = Path(os.environ.get("VIEW_FILE", "/data/selected_view.json"))
 SESSION_FILE = Path(os.environ.get("SESSION_FILE", "/data/session.json"))
+SOURCE_FILE = Path(os.environ.get("SOURCE_FILE", "/data/last_source.json"))
 CARD_INSTALLED_FILE = Path("/data/dashboard_card_installed")
 STARTED_AT = None
 RESTORE_GENERATION = 0
@@ -50,6 +51,7 @@ ACTIVE_APPLE = None
 RECOVERING = False
 RECOVERED_SESSION = False
 SOURCE_UNCONFIRMED = False
+SOURCE_RESTORE_ERROR = None
 RECOVERY_MESSAGE = None
 VOLUME_CONFIRMATION = {}
 RADIO_PLAYERS = ("media_player.wohnung", "media_player.wohnzimmer", "media_player.kueche", "media_player.bad")
@@ -289,14 +291,28 @@ def remembered():
                 if isinstance(entity, str) and ENTITY_RE.fullmatch(entity)
                 and type(value) in (int, float) and 0 <= value <= 1} if isinstance(obj, dict) else {}
     except (OSError, ValueError): return {}
+def write_durable_json(path, data):
+    """Call under LOCK: flush the file, replace atomically, flush the directory."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(".tmp")
+    with temporary.open("w", encoding="utf-8") as stream:
+        json.dump(data, stream, ensure_ascii=False)
+        stream.flush()
+        os.fsync(stream.fileno())
+    temporary.replace(path)
+    if hasattr(os, "O_DIRECTORY"):
+        directory = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
+
+
 def save_remembered(entity, level):
     with LOCK:
         obj = remembered()
         obj[entity] = level
-        VOLUME_FILE.parent.mkdir(parents=True, exist_ok=True)
-        temporary = VOLUME_FILE.with_suffix(".tmp")
-        temporary.write_text(json.dumps(obj))
-        temporary.replace(VOLUME_FILE)
+        write_durable_json(VOLUME_FILE, obj)
 def speaker_levels():
     try:
         data = json.loads(SPEAKER_FILE.read_text())
@@ -311,10 +327,7 @@ def save_speaker_levels(levels):
     with LOCK:
         state = speaker_levels()
         state.update(levels)
-        SPEAKER_FILE.parent.mkdir(parents=True, exist_ok=True)
-        temporary = SPEAKER_FILE.with_suffix(".tmp")
-        temporary.write_text(json.dumps(state))
-        temporary.replace(SPEAKER_FILE)
+        write_durable_json(SPEAKER_FILE, state)
 
 
 def displayed_speaker_levels():
@@ -506,6 +519,7 @@ def set_probe_volume(generation):
 
 def radio_start_sequence(generation):
     global READY, PREPARING, STARTUP_ERROR, STARTED_AT
+    global SOURCE_RESTORE_ERROR
     try:
         with STATE_LOCK:
             check_generation(generation)
@@ -520,8 +534,12 @@ def radio_start_sequence(generation):
         if not wait_for_start(generation, 45):
             return
         selected = enabled_device_ids()
-        station = last_selected_station()
-        preferred = DIRECT_STATIONS[station]["target"] if station else "media_player.wohnung"
+        source = last_selected_source()
+        station = source["id"] if source and source["kind"] == "radio" else ""
+        if source and source["kind"] == "apple":
+            preferred = apple_music_selection()["target"]
+        else:
+            preferred = DIRECT_STATIONS[station]["target"] if station else "media_player.wohnung"
         reload_target = preferred if preferred in selected else next(iter(sorted(selected)), None)
         if reload_target:
             print(f"[HA Music] Reloading Alexa integration via {reload_target}", flush=True)
@@ -548,7 +566,8 @@ def radio_start_sequence(generation):
         print("[HA Music] Waiting 5 seconds after device refresh", flush=True)
         if not wait_for_start(generation, 5):
             return
-        station = last_selected_station()
+        source = last_selected_source()
+        station = source["id"] if source and source["kind"] == "radio" else ""
         try:
             set_probe_volume(generation)
             with STATE_LOCK:
@@ -557,7 +576,7 @@ def radio_start_sequence(generation):
                 STARTED_AT = None
                 # Radiotext belongs to the displayed preset, independently of
                 # whether Alexa accepts its later volume/playback commands.
-                MONITOR.select(last_selected_station())
+                MONITOR.select(station)
             print("[HA Music] Interface released after startup preparation", flush=True)
             try:
                 startup_request(generation, "/services/input_boolean/turn_on", {"entity_id": RADIO_READY})
@@ -565,17 +584,27 @@ def radio_start_sequence(generation):
                 raise
             except NETWORK_ERRORS as exc:
                 print(f"[HA Music] Ready helper update failed: {exc}", flush=True)
-            if station and DIRECT_STATIONS[station]["target"] in enabled_device_ids():
+            if source:
                 try:
-                    play_station(station, generation)
+                    if source["kind"] == "apple":
+                        play_apple_music(source["id"], generation, startup=True)
+                    elif station:
+                        play_station(station, generation)
                 except StartupCancelled:
                     raise
                 except NETWORK_ERRORS as exc:
-                    print(f"[HA Music] Saved station start failed: {exc}", flush=True)
+                    with STATE_LOCK:
+                        check_generation(generation)
+                        SOURCE_RESTORE_ERROR = "Gespeicherte Wiedergabe konnte nicht wiederhergestellt werden: " + str(exc)
+                    print(f"[HA Music] Saved source start failed: {exc}", flush=True)
+            elif SOURCE_FILE.exists():
+                with STATE_LOCK:
+                    check_generation(generation)
+                    SOURCE_RESTORE_ERROR = "Gespeicherte Wiedergabequelle ist nicht verfügbar. Bitte Sender oder Apple-Music-Favorit auswählen."
         finally:
             # Even a failed station/probe command must not leave rooms at 1%.
             check_generation(generation)
-            restore_speakers(generation, use_master=True)
+            restore_speakers(generation)
         try:
             synchronize_device_configuration(generation)
         except StartupCancelled:
@@ -625,10 +654,7 @@ def session_intent():
 
 def save_session_intent(on):
     with LOCK:
-        SESSION_FILE.parent.mkdir(parents=True, exist_ok=True)
-        temporary = SESSION_FILE.with_suffix(".tmp")
-        temporary.write_text(json.dumps({"version": 1, "intent": "on" if on else "off"}))
-        temporary.replace(SESSION_FILE)
+        write_durable_json(SESSION_FILE, {"version": 1, "intent": "on" if on else "off"})
 
 
 def start_session_recovery():
@@ -720,7 +746,14 @@ def transition_power(on):
     global RESTORE_GENERATION, STARTED_AT, LAST_POWER, STANDBY_UNTIL, READY, PREPARING, STARTUP_ERROR, CANCEL
     global ACTIVE_APPLE
     global RECOVERING, RECOVERED_SESSION, RECOVERY_MESSAGE, SOURCE_UNCONFIRMED
+    global SOURCE_RESTORE_ERROR
     with STATE_LOCK:
+        if not on and SOURCE_UNCONFIRMED and not SOURCE_FILE.exists():
+            try:
+                # A legacy radio preset is not evidence for a reattached source.
+                save_selected_source("unknown", "")
+            except OSError as exc:
+                print(f"[HA Music] Unknown source could not be saved: {exc}", flush=True)
         try:
             save_session_intent(on)
         except OSError as exc:
@@ -739,7 +772,9 @@ def transition_power(on):
         ACTIVE_APPLE = None
         RECOVERING = False
         RECOVERED_SESSION = False
-        SOURCE_UNCONFIRMED = False
+        source = last_selected_source()
+        SOURCE_UNCONFIRMED = on and (bool(source and source["kind"] == "apple") or (source is None and SOURCE_FILE.exists()))
+        SOURCE_RESTORE_ERROR = None
         RECOVERY_MESSAGE = None
         ROOM_TARGETS.clear()
         VOLUME_CONFIRMATION.clear()
@@ -913,13 +948,15 @@ def play_on_target(generation, target, media_type, content):
         "entity_id":target, "media":{"media_content_type":media_type, "media_content_id":content, "metadata":{}}})
 
 
-def play_apple_music(favorite_id, generation):
-    global ACTIVE_APPLE, SOURCE_UNCONFIRMED
+def play_apple_music(favorite_id, generation, *, startup=False):
+    global ACTIVE_APPLE, SOURCE_UNCONFIRMED, SOURCE_RESTORE_ERROR
     selection = apple_music_selection()
     favorite = next((item for item in selection["items"] if item["id"] == favorite_id), None)
     if favorite is None:
         raise ValueError("Unbekannter Apple-Music-Favorit")
-    if not selection["available"]:
+    check_generation(generation)
+    startup_allowed = startup and READY and PREPARING and selection["target"] in enabled_device_ids()
+    if not selection["available"] and not startup_allowed:
         raise ValueError("Apple-Music-Steuergerät ist nicht freigegeben oder HA Music ist noch nicht bereit")
     phrase = ("spiele meine Playlist " if favorite["kind"] == "Playlist" else "spiele das Album ") + favorite["search"] + " auf Apple Music"
     if selection["group"]:
@@ -927,20 +964,43 @@ def play_apple_music(favorite_id, generation):
     result = play_on_target(generation, selection["target"], "custom", phrase)
     with STATE_LOCK:
         check_generation(generation)
+        save_selected_source("apple", favorite_id)
         ACTIVE_APPLE = {**favorite, "target": selection["target"]}
         SOURCE_UNCONFIRMED = False
+        SOURCE_RESTORE_ERROR = None
         MONITOR.select("")  # Apple playback no longer needs a radio metadata stream.
     return result
+
+
+def last_selected_source():
+    try:
+        data = json.loads(SOURCE_FILE.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        station = last_selected_station()
+        return {"kind":"radio", "id":station} if station else None
+    except (OSError, ValueError):
+        return None
+    if not isinstance(data, dict) or data.get("version") != 1:
+        return None
+    kind, identity = data.get("kind"), data.get("id")
+    if kind == "radio" and isinstance(identity, str) and identity in DIRECT_STATIONS:
+        return {"kind":kind, "id":identity}
+    if kind == "apple" and isinstance(identity, str) and re.fullmatch(r"[0-9a-f]{24}", identity):
+        return {"kind":kind, "id":identity}
+    return None
+
+
+def save_selected_source(kind, identity):
+    with LOCK:
+        write_durable_json(SOURCE_FILE, {"version":1, "kind":kind, "id":identity})
 
 
 def save_selected_station(station):
     if station not in DIRECT_STATIONS:
         return
     with LOCK:
-        STATION_FILE.parent.mkdir(parents=True, exist_ok=True)
-        temporary = STATION_FILE.with_suffix(".tmp")
-        temporary.write_text(json.dumps({"station": station}))
-        temporary.replace(STATION_FILE)
+        write_durable_json(SOURCE_FILE, {"version":1, "kind":"radio", "id":station})
+        write_durable_json(STATION_FILE, {"station":station})
 
 
 def dashboard_card_installed():
@@ -964,10 +1024,7 @@ def save_selected_view(view):
     if view not in ("radio", "apple"):
         raise ValueError("Ungültige Ansicht")
     with LOCK:
-        VIEW_FILE.parent.mkdir(parents=True, exist_ok=True)
-        temp = VIEW_FILE.with_suffix(".tmp")
-        temp.write_text(json.dumps({"view": view}))
-        temp.replace(VIEW_FILE)
+        write_durable_json(VIEW_FILE, {"view":view})
 
 
 def startup_remaining():
@@ -1060,6 +1117,7 @@ def playback_status():
     with STATE_LOCK:
         target = ACTIVE_APPLE["target"] if ACTIVE_APPLE else "media_player.wohnzimmer"
         apple = ACTIVE_APPLE is not None
+        source_restore_error = SOURCE_RESTORE_ERROR
         for entity, confirmation in list(VOLUME_CONFIRMATION.items()):
             entry = states.get(entity, {})
             observed_volume = (entry.get("attributes") or {}).get("volume_level")
@@ -1100,11 +1158,12 @@ def playback_status():
             "transport": group_transport_state(states),
             "track_transport": track_transport,
             "volume_confirmation":volume_confirmation,
+            "source_restore_error":source_restore_error,
             "details": details if apple else active if active and (active["title"] or active["artist"]) else details}
 
 
 def play_station(key, generation):
-    global ACTIVE_APPLE, SOURCE_UNCONFIRMED
+    global ACTIVE_APPLE, SOURCE_UNCONFIRMED, SOURCE_RESTORE_ERROR
     if not isinstance(key, str) or key not in DIRECT_STATIONS:
         raise ValueError("Unbekannter Sender")
     preset = DIRECT_STATIONS[key]
@@ -1114,10 +1173,11 @@ def play_station(key, generation):
     result = play_on_target(generation, target, preset["media_content_type"], preset["media_content_id"])
     with STATE_LOCK:
         check_generation(generation)
+        save_selected_station(key)
         ACTIVE_APPLE = None
         SOURCE_UNCONFIRMED = False
+        SOURCE_RESTORE_ERROR = None
         MONITOR.select(key)
-        save_selected_station(key)
     return result
 
 

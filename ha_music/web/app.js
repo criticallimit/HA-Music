@@ -324,9 +324,9 @@ async function updateSong() {
       }
     }
     const unconfirmedVolumes = Object.keys(info.volume_confirmation || {});
-    $("playback-state").textContent = unconfirmedVolumes.length
+    $("playback-state").textContent = info.source_restore_error || (unconfirmedVolumes.length
       ? "Lautstärke von " + unconfirmedVolumes.length + " Echo-Gerät(en) noch nicht bestätigt. Hörbare Wiedergabe nicht bestätigt."
-      : info.playing ? "Alexa meldet Wiedergabe" : "Alexa meldet derzeit keine aktive Wiedergabe";
+      : info.playing ? "Alexa meldet Wiedergabe" : "Alexa meldet derzeit keine aktive Wiedergabe");
   } catch(e) {
     if (generation === uiGeneration && stationEpoch === epoch && transportRequestEpoch === transportEpoch) {
       $("playback-state").textContent = "Wiedergabestatus nicht verfügbar: " + e.message;

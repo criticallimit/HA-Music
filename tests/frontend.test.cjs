@@ -441,6 +441,14 @@ test('missing HA room volume does not pretend a saved percentage is current', ()
   assert.equal(row.children[2].textContent,'–');
 });
 
+test('failed saved source restoration is visible even if Alexa reports playing', async () => {
+  const h = harness();
+  h.context.reply=async()=>({playing:true,source_restore_error:'Gespeicherte Wiedergabe konnte nicht wiederhergestellt werden'});
+  h.run('api=reply; radioReadyForViews=true');
+  await h.run('updateSong()');
+  assert.equal(h.get('playback-state').textContent,'Gespeicherte Wiedergabe konnte nicht wiederhergestellt werden');
+});
+
 test('stale 1LIVE artwork cannot return after an accepted Apple selection', async () => {
   const h = harness();
   h.context.reply=async()=>({playing:true,details:{title:'1LIVE',image:'/1live.svg',content_type:'radio'}});

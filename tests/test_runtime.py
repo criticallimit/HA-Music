@@ -27,13 +27,14 @@ class RuntimeTests(unittest.TestCase):
         self.stack = ExitStack()
         self.addCleanup(self.stack.close)
         folder = Path(self.stack.enter_context(tempfile.TemporaryDirectory(dir=ROOT)))
-        for name in ("VOLUME_FILE", "STATION_FILE", "SPEAKER_FILE", "VIEW_FILE", "SESSION_FILE", "OPTIONS"):
+        for name in ("VOLUME_FILE", "STATION_FILE", "SPEAKER_FILE", "VIEW_FILE", "SESSION_FILE", "SOURCE_FILE", "OPTIONS"):
             self.stack.enter_context(patch.object(app, name, folder / (name + ".json")))
         self.stack.enter_context(patch.object(app, "SUPERVISOR_OPTIONS", None))
         self.stack.enter_context(patch.object(app, "ACTIVE_APPLE", None))
         self.stack.enter_context(patch.object(app, "RECOVERING", False))
         self.stack.enter_context(patch.object(app, "RECOVERED_SESSION", False))
         self.stack.enter_context(patch.object(app, "SOURCE_UNCONFIRMED", False))
+        self.stack.enter_context(patch.object(app, "SOURCE_RESTORE_ERROR", None))
         self.stack.enter_context(patch.object(app, "RECOVERY_MESSAGE", None))
         self.stack.enter_context(patch.dict(app.REGISTERED_DEVICE_NAMES, {}, clear=True))
         app.OPTIONS.write_text(json.dumps({"devices": [{"entity_id": entity, "name": entity, "enabled": True} for entity in ("media_player.wohnung", "media_player.wohnzimmer", "media_player.kueche", "media_player.bad", "media_player.buero")]}))
@@ -510,6 +511,121 @@ class RuntimeTests(unittest.TestCase):
         app.OPTIONS.write_text(json.dumps(config))
         return app.apple_music_selection()["items"][0]["id"]
 
+    def test_apple_playlist_and_album_persist_and_restart_instead_of_old_radio(self):
+        for kind in ("Playlist", "Album"):
+            with self.subTest(kind=kind):
+                app.READY, app.PREPARING = True, False
+                app.save_selected_station("wdr2")
+                favorite = self.apple_favorite(kind)
+                with patch.object(app, "ha_request", return_value={}):
+                    app.perform("apple_music", {"favorite":favorite})
+                self.assertEqual(app.last_selected_source(), {"kind":"apple", "id":favorite})
+                app.transition_power(False)
+                self.assertIsNone(app.ACTIVE_APPLE)
+                self.assertEqual(app.last_selected_source()["id"], favorite)
+                app.transition_power(True)
+                requests = self.startup().call_args_list
+                playback = [c for c in requests if c.args[0].endswith("play_media")]
+                self.assertEqual(len(playback), 1)
+                self.assertIn("auf Apple Music", playback[0].args[1]["media"]["media_content_id"])
+                self.assertEqual(app.ACTIVE_APPLE["id"], favorite)
+                self.assertIsNone(app.SOURCE_RESTORE_ERROR)
+                self.assertEqual(app.last_selected_station(), "wdr2")
+
+    def test_deleted_apple_favorite_never_restarts_old_radio(self):
+        app.save_selected_station("wdr2")
+        favorite = self.apple_favorite()
+        app.save_selected_source("apple", favorite)
+        config = json.loads(app.OPTIONS.read_text())
+        config["apple_music_favorites"] = []
+        app.OPTIONS.write_text(json.dumps(config))
+        requests = self.startup().call_args_list
+        self.assertFalse(any(c.args[0].endswith("play_media") for c in requests))
+        self.assertIn("Unbekannter Apple-Music-Favorit", app.SOURCE_RESTORE_ERROR)
+        self.assertEqual(app.last_selected_source()["id"], favorite)
+
+    def test_rejected_apple_restart_is_not_retried_or_replaced_by_radio(self):
+        app.save_selected_station("wdr2")
+        favorite = self.apple_favorite()
+        app.save_selected_source("apple", favorite)
+        def request(path, body=None):
+            if path.endswith("play_media"):
+                raise OSError("offline")
+            return {}
+        requests = self.startup(request).call_args_list
+        self.assertEqual(sum(c.args[0].endswith("play_media") for c in requests), 1)
+        self.assertIn("offline", app.SOURCE_RESTORE_ERROR)
+        self.assertEqual(app.last_selected_source()["kind"], "apple")
+        self.assertTrue(any(c.args[0].endswith("volume_set") and c.args[1]["volume_level"] == .4 for c in requests))
+
+    def test_missing_source_migrates_legacy_radio_but_corruption_never_does(self):
+        app.STATION_FILE.write_text(json.dumps({"station":"wdr2"}))
+        self.assertEqual(app.last_selected_source(), {"kind":"radio", "id":"wdr2"})
+        for value in ("{", "null", '{"version":2,"kind":"radio","id":"wdr2"}', '{"version":1,"kind":"apple","id":"bad"}'):
+            with self.subTest(value=value):
+                app.SOURCE_FILE.write_text(value)
+                self.assertIsNone(app.last_selected_source())
+                requests = self.startup().call_args_list
+                self.assertFalse(any(c.args[0].endswith("play_media") for c in requests))
+                self.assertIsNotNone(app.SOURCE_RESTORE_ERROR)
+
+    def test_radio_selection_replaces_persisted_apple_source(self):
+        app.READY = True
+        favorite = self.apple_favorite()
+        with patch.object(app, "ha_request", return_value={}):
+            app.perform("apple_music", {"favorite":favorite})
+            app.perform("radio_direct", {"station":"1live"})
+        self.assertEqual(app.last_selected_source(), {"kind":"radio", "id":"1live"})
+
+    def test_failed_selection_cannot_replace_persisted_source(self):
+        app.READY = True
+        app.save_selected_station("wdr2")
+        favorite = self.apple_favorite()
+        with patch.object(app, "ha_request", side_effect=OSError("offline")):
+            with self.assertRaises(OSError):
+                app.perform("apple_music", {"favorite":favorite})
+        self.assertEqual(app.last_selected_source(), {"kind":"radio", "id":"wdr2"})
+
+    def test_addon_restart_with_saved_apple_is_read_only(self):
+        favorite = self.apple_favorite()
+        app.save_selected_source("apple", favorite)
+        self.states["media_player.wohnzimmer"]["state"] = "playing"
+        requests = self.recovery()
+        self.assertTrue(app.READY)
+        self.assertTrue(all(c.args == ("/states",) for c in requests.call_args_list))
+        self.assertEqual(app.last_selected_source(), {"kind":"apple", "id":favorite})
+
+    def test_legacy_unconfirmed_session_cannot_revive_old_radio_after_off(self):
+        app.STATION_FILE.write_text(json.dumps({"station":"wdr2"}))
+        self.states["media_player.wohnzimmer"]["state"] = "playing"
+        self.recovery()
+        self.assertTrue(app.SOURCE_UNCONFIRMED)
+        app.transition_power(False)
+        app.transition_power(True)
+        requests = self.startup().call_args_list
+        self.assertFalse(any(c.args[0].endswith("play_media") for c in requests))
+        self.assertIsNotNone(app.SOURCE_RESTORE_ERROR)
+
+    def test_settings_flush_before_replacing_last_good_file(self):
+        app.save_selected_station("wdr2")
+        with patch.object(app.os, "fsync", side_effect=OSError("disk failure")):
+            with self.assertRaises(OSError):
+                app.save_selected_source("apple", "a"*24)
+        self.assertEqual(app.last_selected_source(), {"kind":"radio", "id":"wdr2"})
+
+    def test_each_saved_setting_is_flushed_to_disk_immediately(self):
+        with patch.object(app.os, "fsync", wraps=app.os.fsync) as flush:
+            operations = [lambda: app.save_selected_station("wdr2"),
+                          lambda: app.save_selected_source("apple", "a"*24),
+                          lambda: app.save_speaker_levels({"media_player.bad":.35}),
+                          lambda: app.save_remembered("media_player.bad", .35),
+                          lambda: app.save_selected_view("apple"),
+                          lambda: app.save_session_intent(False)]
+            for operation in operations:
+                before = flush.call_count
+                operation()
+                self.assertGreater(flush.call_count, before)
+
     def test_apple_favorite_starts_group_without_touching_volumes_or_saved_radio(self):
         app.READY = True
         app.save_selected_station("wdr2")
@@ -817,7 +933,7 @@ class RuntimeTests(unittest.TestCase):
         self.assertFalse(app.PREPARING)
         self.assertIsNone(app.STARTUP_ERROR)
         self.assertTrue(any("Station timed out" in str(c) for c in log.call_args_list))
-        self.assertTrue(any(c.args[0].endswith("volume_set") and c.args[1] == {"entity_id": "media_player.wohnzimmer", "volume_level": 0.25} for c in calls))
+        self.assertTrue(any(c.args[0].endswith("volume_set") and c.args[1] == {"entity_id": "media_player.wohnzimmer", "volume_level": 0.6} for c in calls))
         app.synchronize_device_configuration.assert_called_once_with(10)
 
     def test_unavailable_target_is_probed_and_sender_is_requested(self):
@@ -956,17 +1072,16 @@ class RuntimeTests(unittest.TestCase):
         self.assertEqual(app.speaker_levels()["media_player.wohnzimmer"], 0.4)
         self.assertEqual(app.displayed_speaker_levels()["media_player.wohnzimmer"], 0)
 
-    def test_start_sets_every_active_room_to_probe_then_master(self):
+    def test_start_restores_distinct_saved_room_levels_and_mutes(self):
         self.states["media_player.bad"] = {"state": "idle", "attributes": {"volume_level": 0.7}}
         self.states["media_player.buero"] = {"state": "idle", "attributes": {"volume_level": 0.6}}
         app.save_speaker_levels({"media_player.wohnung": 0.25, "media_player.wohnzimmer": 0.15,
                                  "media_player.bad": 0.7, "media_player.kueche": 0})
         calls = self.startup().call_args_list
-        for entity in ("media_player.wohnzimmer", "media_player.bad", "media_player.buero"):
+        for entity, level in (("media_player.wohnzimmer", .15), ("media_player.bad", .7), ("media_player.buero", .6)):
             commands = [c.args[1]["volume_level"] for c in calls if c.args[0].endswith("volume_set") and c.args[1]["entity_id"] == entity]
-            self.assertEqual(commands, [0.01, 0.25])
-            self.assertEqual(app.speaker_levels()[entity], 0.25)
-            self.assertEqual(app.remembered()[entity], 0.25)
+            self.assertEqual(commands, [0.01, level])
+            self.assertEqual(app.speaker_levels()[entity], level)
         self.assertEqual(app.speaker_levels()["media_player.kueche"], 0)
 
     def test_individual_changes_after_start_do_not_follow_master(self):
@@ -983,7 +1098,7 @@ class RuntimeTests(unittest.TestCase):
         app.transition_power(True)
         calls = self.startup().call_args_list
         commands = [c.args[1]["volume_level"] for c in calls if c.args[0].endswith("volume_set") and c.args[1]["entity_id"] == "media_player.wohnzimmer"]
-        self.assertEqual(commands, [0.01, 0.25])
+        self.assertEqual(commands, [0.01, 0.55])
 
     def test_individual_room_can_be_raised_after_start_with_master_zero(self):
         app.save_speaker_levels({"media_player.wohnung": 0, "media_player.wohnzimmer": 0.4})
