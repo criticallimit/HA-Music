@@ -5,6 +5,14 @@ Geprüft: sämtliche Python-Module, Ingress-Frontend (HTML/CSS/JS), Lovelace-Kar
 
 ## Belegte Befunde und Korrekturen
 
+### Ingress-Einschalten: „Invalid request length“
+
+Mit `ingress_stream: true` reicht der Supervisor POST-Inhalte als Stream weiter und entfernt die ursprüngliche Content-Length-Angabe; die HTTP-Clientbibliothek kann dafür `Transfer-Encoding: chunked` verwenden. Unser Handler akzeptierte ausschließlich Content-Length und wies solche gültigen Einschaltbefehle mit HTTP 400 ab. Dadurch kann der Start vor dem Einschalten und vor der Geräteerkennung scheitern. Belegt durch [Supervisor-Weiterleitung](https://github.com/home-assistant/supervisor/blob/main/supervisor/api/ingress.py) und einen reproduzierten Einschalt-POST über eine echte lokale HTTP-Verbindung.
+
+Der Handler akzeptiert nun beide Übertragungsformen. Die JSON-Nutzdaten bleiben auf 2048 Bytes beschränkt; Chunk-Zeilen, Trailer und gesamter Framing-Aufwand sind ebenfalls begrenzt. Eine gemeinsame 20-Sekunden-Frist gilt für das Einlesen. Mehrdeutige Content-Length-/Transfer-Encoding-Kombinationen, doppelte Längen, unbekannte Codierungen, ungültige/trunkierte Chunks und leere/zu große Inhalte werden abgewiesen, ohne einen Steuerbefehl auszuführen. Ingress-Gegenstellenprüfung und JSON-/Cross-Site-Prüfung bleiben erhalten. Der Streaming-Modus und die Metadaten-Eventverbindung bleiben bestehen.
+
+Die Fehlerbehebung lässt die Geräteerkennung wieder erreichbar werden, erweitert aber nicht deren Integrationsumfang: Media-Player anderer Integrationen und reine MacBook-/iPad-Geräte bleiben außerhalb der bisherigen Alexa-Erkennung. Prüfung mit dem tatsächlichen Home-Assistant-Ingress ist nach Neuaufbau auf der Zielinstallation erforderlich.
+
 ### Bedeutung der Geräteauswahl im nativen Add-on-Formular
 
 Beschriftung und Hilfe verdeutlichen den vorhandenen Boolean `enabled`: **In Ingress anzeigen und steuern**. An/Aus erfolgt über den Bearbeitungsdialog (Stift), ohne Löschen des Eintrags. Das native Home-Assistant-Listenformular selbst ist nicht Teil des Add-ons und bietet keine konfigurierbaren direkten Schalter pro Listenzeile. Eine zusätzliche Geräteverwaltung in Ingress wurde vom Nutzer ausdrücklich abgelehnt und nicht implementiert.
@@ -40,7 +48,7 @@ Ingress-Gegenstellenprüfung gemäß [Home-Assistant-Entwicklerdokumentation](ht
 ## Verifiziert
 
 - Python-Syntax aller vier Module, bestehende Scaffold-/Smoke-Prüfungen.
-- 56 Python-Regressionstests: Startreihenfolge, 45+2 Sekunden Warteparameter, Fehler, Abbruch, alte Timer, stumme Räume/Master, Persistenz, Cache, Verifikation, Ingress, ICY-Lebenszyklus, Angleichung an den Master ausschließlich beim Start, Geräteauswahl, Raum-Schalter und Gruppensteuerung.
+- 62 Python-Regressionstests: Startreihenfolge, 45+2 Sekunden Warteparameter, Fehler, Abbruch, alte Timer, stumme Räume/Master, Persistenz, Cache, Verifikation, Ingress inklusive gestückelter POSTs/Framing-Grenzen, ICY-Lebenszyklus, Angleichung an den Master ausschließlich beim Start, Geräteauswahl, Raum-Schalter und Gruppensteuerung.
 - 14 JavaScript-Verhaltenstests: Countdown, Fehlerzustände, parallele Polls, verspätete Antworten, gespeicherte Ansicht, Artwork-URL-Prüfung, Soll-/Ist-Lautstärke, unabhängige Raumregelung bei Master 0 sowie Raum-/Gruppensteuerung.
 - JavaScript-Syntax für Frontend, Lovelace-Karte und Loader; `git diff --check`.
 - Die Tests verwenden keine reale HA-/Alexa-Steuerung. Der Socket-Test verwendet ausschließlich eine lokale Verbindung. Unter Windows kann ein Reader erst nach seinem Socket-Timeout zurückkehren; der Standby-Pfad wartet darauf nicht mehr unbegrenzt.

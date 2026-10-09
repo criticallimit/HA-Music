@@ -803,6 +803,75 @@ def perform_control(action, body, generation):
     raise ValueError("Unbekannte Aktion")
 
 class Handler(BaseHTTPRequestHandler):
+    def read_request_body(self):
+        """Accept bounded JSON bodies, including Supervisor's streamed POSTs."""
+        deadline = time.monotonic() + 20
+
+        def read(size, *, line=False):
+            result = bytearray()
+            while len(result) < size:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise TimeoutError("Request body timeout")
+                connection = getattr(self, "connection", None)
+                if connection is not None:
+                    connection.settimeout(remaining)
+                # read1 performs at most one socket read, so trickling data
+                # cannot reset the deadline inside a buffered read(size).
+                part = self.rfile.read1(1 if line else size - len(result))
+                if not part:
+                    break
+                result.extend(part)
+                if line and part == b"\n":
+                    break
+            return bytes(result)
+
+        lengths = self.headers.get_all("Content-Length", [])
+        encodings = self.headers.get_all("Transfer-Encoding", [])
+        if encodings:
+            if lengths or len(encodings) != 1 or encodings[0].strip().lower() != "chunked":
+                raise ValueError("Invalid request framing")
+            body = bytearray()
+            framing_size = 0
+
+            def read_line():
+                nonlocal framing_size
+                line = read(257, line=True)
+                framing_size += len(line)
+                if len(line) > 256 or not line.endswith(b"\r\n") or framing_size > 16384:
+                    raise ValueError("Invalid chunk framing")
+                return line
+
+            while True:
+                line = read_line()
+                if not re.fullmatch(rb"[0-9a-fA-F]{1,8}(?:;[^\r\n]*)?\r\n", line):
+                    raise ValueError("Invalid chunk size")
+                size = int(line.split(b";", 1)[0].strip(), 16)
+                if size == 0:
+                    # Consume trailers; they never replace the checked headers.
+                    while (trailer := read_line()) != b"\r\n":
+                        if not re.fullmatch(rb"[!#$%&'*+.^_`|~0-9a-zA-Z-]+:[^\r\n]*\r\n", trailer):
+                            raise ValueError("Invalid chunk trailer")
+                    if not body:
+                        raise ValueError("Invalid request length")
+                    return bytes(body)
+                if len(body) + size > 2048:
+                    raise ValueError("Invalid request length")
+                part = read(size)
+                if len(part) != size or read(2) != b"\r\n":
+                    raise ValueError("Truncated chunked request")
+                body.extend(part)
+                framing_size += 2
+        if len(lengths) != 1 or not re.fullmatch(r"[0-9]{1,10}", lengths[0].strip()):
+            raise ValueError("Invalid request length")
+        size = int(lengths[0])
+        if not 0 < size <= 2048:
+            raise ValueError("Invalid request length")
+        body = read(size)
+        if len(body) != size:
+            raise ValueError("Truncated request body")
+        return body
+
     def ingress_allowed(self):
         # Trust the TCP peer, never a spoofable X-Forwarded-For header.
         return self.client_address[0] == "172.30.32.2"
@@ -906,10 +975,7 @@ class Handler(BaseHTTPRequestHandler):
         if self.headers.get_content_type() != "application/json":
             return self.reply(415, {"error": "JSON required"})
         try:
-            size = int(self.headers.get("Content-Length", "0"))
-            if not 0 < size <= 2048:
-                return self.reply(400, {"error": "Invalid request length"})
-            body = json.loads(self.rfile.read(size))
+            body = json.loads(self.read_request_body())
             if not isinstance(body, dict):
                 raise ValueError("Invalid body")
             if action == "dashboard_card_installed":

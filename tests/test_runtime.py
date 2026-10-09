@@ -563,6 +563,82 @@ class MetadataTests(unittest.TestCase):
 
 
 class SecurityTests(unittest.TestCase):
+    def body_handler(self, headers, body):
+        handler = object.__new__(app.Handler)
+        handler.headers = Message()
+        for name, value in headers:
+            handler.headers[name] = value
+        handler.rfile = io.BytesIO(body)
+        return handler
+
+    def test_streamed_power_command_over_real_http(self):
+        class LocalHandler(app.Handler):
+            def ingress_allowed(self):
+                return True  # Only this loopback-bound test server bypasses ingress.
+
+            def log_message(self, *args):
+                pass
+
+        server = app.ThreadingHTTPServer(("127.0.0.1", 0), LocalHandler)
+        thread = threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.05}, daemon=True)
+        thread.start()
+        try:
+            with patch.object(app, "perform") as perform:
+                with socket.create_connection(server.server_address, timeout=2) as client:
+                    # Supervisor ingress_stream forwards POST with chunked framing.
+                    client.sendall(b'POST /api/radio_power HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\nTransfer-Encoding: chunked\r\n\r\n4\r\n{"on\r\n7;proxy=test\r\n":true}\r\n0\r\nX-Test: ingress\r\n\r\n')
+                    response = bytearray()
+                    while part := client.recv(4096):
+                        response.extend(part)
+                self.assertIn(b"200 OK", response)
+                self.assertIn(b'"ok": true', response)
+                perform.assert_called_once_with("radio_power", {"on": True})
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(2)
+
+    def test_chunked_and_fixed_length_have_same_json_body(self):
+        expected = b'{"on":false}'
+        for headers, body in (([("Content-Length", "12")], expected),
+                              ([("Transfer-Encoding", "Chunked")], b'C\r\n' + expected + b'\r\n0\r\n\r\n')):
+            self.assertEqual(self.body_handler(headers, body).read_request_body(), expected)
+
+    def test_ambiguous_or_missing_framing_rejected(self):
+        for headers in ([], [("Content-Length", "1"), ("Content-Length", "1")],
+                        [("Content-Length", "1"), ("Transfer-Encoding", "chunked")],
+                        [("Transfer-Encoding", "gzip, chunked")],
+                        [("Transfer-Encoding", "chunked"), ("Transfer-Encoding", "chunked")],
+                        [("Content-Length", "-1")], [("Content-Length", "abc")]):
+            with self.subTest(headers=headers), self.assertRaises(ValueError):
+                self.body_handler(headers, b'x').read_request_body()
+
+    def test_oversized_and_truncated_request_bodies_rejected(self):
+        cases = [([("Content-Length", "2049")], b""), ([("Content-Length", "2")], b"x"),
+                 ([("Transfer-Encoding", "chunked")], b"801\r\n"),
+                 ([("Transfer-Encoding", "chunked")], b"800\r\n" + b"x" * 2048 + b"\r\n1\r\nx\r\n0\r\n\r\n")]
+        for headers, body in cases:
+            with self.subTest(body_size=len(body)), self.assertRaises(ValueError):
+                self.body_handler(headers, body).read_request_body()
+
+    def test_invalid_chunk_framing_rejected_without_dispatch(self):
+        for body in (b"0\r\n\r\n", b"z\r\nx\r\n", b"1\nx\n0\n\n", b"2\r\nx", b"1\r\nxXX",
+                     b"1\r\nx\r\n0\r\ninvalid-trailer\r\n\r\n", b"1;" + b"x" * 255 + b"\r\nx\r\n0\r\n\r\n",
+                     b"1\r\nx\r\n0\r\n" + (b"X-Test: " + b"y" * 200 + b"\r\n") * 90):
+            handler = self.body_handler([("Transfer-Encoding", "chunked"), ("Content-Type", "application/json")], body)
+            handler.client_address = ("172.30.32.2", 1)
+            handler.path = "/api/radio_power"
+            handler.reply = Mock()
+            with self.subTest(body_size=len(body)), patch.object(app, "perform") as perform:
+                handler.do_POST()
+                self.assertEqual(handler.reply.call_args.args[0], 400)
+                perform.assert_not_called()
+
+    def test_body_deadline_applies_across_chunks(self):
+        handler = self.body_handler([("Transfer-Encoding", "chunked")], b"1\r\nx\r\n0\r\n\r\n")
+        with patch.object(app.time, "monotonic", side_effect=[0, 1, 21]), self.assertRaises(TimeoutError):
+            handler.read_request_body()
+
     def test_room_post_returns_restored_volume_to_browser(self):
         handler = object.__new__(app.Handler)
         handler.client_address = ("172.30.32.2", 1)
