@@ -11,7 +11,7 @@ function harness() {
     const classes = new Set();
     return {hidden:false, disabled:false, textContent:'', value:'', children:[], attributes:{}, listeners:{},
       open:false, showModal(){this.open=true;}, close(){this.open=false;}, remove(){this.removed=true;},
-      classList:{toggle(name,on){if(on) classes.add(name); else classes.delete(name);},add(name){classes.add(name);},contains(name){return classes.has(name);}}, style:{setProperty(){}},
+      classList:{toggle(name,on){if(on) classes.add(name); else classes.delete(name);},add(name){classes.add(name);},remove(name){classes.delete(name);},contains(name){return classes.has(name);}}, style:{setProperty(){}},
       addEventListener(name,handler){this.listeners[name]=handler;}, appendChild(e){this.children.push(e);},
       append(...items){this.children.push(...items);}, replaceChildren(...items){this.children = items;},
       setAttribute(k,v){this.attributes[k]=v;}, getAttribute(k){return this.attributes[k];},
@@ -784,5 +784,44 @@ test('old state poll cannot remove newly saved library tiles', async () => {
   resolve({stations:[],power:'on',ready:'on',apple_music:{items:[],available:true}});
   await pending;
   assert.equal(h.run('appleButtons.has("new")'),true);
+});
+
+test('album artwork loads before playback and playlists retain their entered labels', async () => {
+  const h=harness(), calls=[];
+  h.context.reply=async(action)=>{calls.push(action);return {selected:{image:'https://is1.mzstatic.com/cover.jpg',store_url:'https://music.apple.com/de/album/12'}};};
+  h.run('api=reply; radioReadyForViews=true; renderAppleSelection({items:[{id:"a",kind:"Album",name:"Album",search:"Album"},{id:"p",kind:"Playlist",name:"Dirks Favoriten"}],available:true})');
+  await h.timers.find(timer=>timer.delay===4500).callback();
+  assert.equal(h.run('appleButtons.get("a").classList.contains("has-cover")'),true);
+  assert.equal(h.run('appleButtons.get("a").children.at(-1).src'),'https://is1.mzstatic.com/cover.jpg');
+  assert.equal(h.run('appleButtons.get("p").children[1].textContent'),'Dirks Favoriten');
+  assert.deepEqual(calls,['album-covers']);
+});
+
+test('album cover selection is saved with library without starting music', async () => {
+  const h=harness();let posted;
+  h.context.reply=async(action,body)=>{
+    if(action==='album-covers')return {items:[{album_id:12,name:'Album',artist:'Singer',image:'https://is1.mzstatic.com/a.jpg'}]};
+    if(!body)return {revision:'r',items:[{kind:'Album',name:'Album'}]};
+    posted=body;return {selection:{items:[],available:true}};
+  };
+  h.run('api=reply; radioReadyForViews=true');await h.run('openLibraryEditor("Album")');
+  await h.run('searchEditorAlbumCover(libraryEditorRows[0])');
+  h.run('libraryEditorRows[0].coverResults.children[0].listeners.click()');
+  await h.run('submitLibraryEditor({preventDefault(){}})');
+  assert.equal(posted.items[0].album_id,12);
+});
+
+test('untrusted artwork and cover searches in standby cannot issue image requests', async () => {
+  const h=harness();h.run('radioReadyForViews=false; renderAppleSelection({items:[{id:"a",kind:"Album",name:"Album"}],available:false})');
+  assert.equal(h.timers.some(timer=>timer.delay===4500),false);
+  h.run('applyAlbumCover(appleButtons.get("a"),{image:"https://mzstatic.com.evil.test/a.jpg"})');
+  assert.equal(h.run('appleButtons.get("a").classList.contains("has-cover")'),false);
+});
+
+test('missing album image leaves a usable labeled playback button', () => {
+  const h=harness();h.run('radioReadyForViews=true; renderAppleSelection({items:[{id:"a",kind:"Album",name:"Album"}],available:true}); applyAlbumCover(appleButtons.get("a"),{image:"https://is1.mzstatic.com/a.jpg",store_url:"https://music.apple.com/de/album/12"})');
+  h.run('appleButtons.get("a").children.at(-1).listeners.error()');
+  assert.equal(h.run('appleButtons.get("a").classList.contains("has-cover")'),false);
+  assert.equal(h.run('appleButtons.get("a").children[1].textContent'),'Album');
 });
 

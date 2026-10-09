@@ -397,17 +397,70 @@ let libraryEditorKind = "Playlist";
 let libraryEditorSnapshot = null;
 let libraryEditorRows = [];
 let libraryEditorBusy = false;
+const albumCoverResults = new Map();
+let albumCoverTimer = false;
+let albumCoverPending = false;
+function validAppleImage(value) {
+  if (typeof value !== "string") return "";
+  try { const url = new URL(value); return url.protocol === "https:" && !url.username && !url.password && (!url.port || url.port === "443") && (url.hostname === "mzstatic.com" || url.hostname.endsWith(".mzstatic.com")) ? url.href : ""; }
+  catch (_) { return ""; }
+}
+function coverKey(item) { return item.id + ":" + (item.album_id || "auto"); }
+function applyAlbumCover(button, album) {
+  const imageUrl = validAppleImage(album?.image);
+  if (!imageUrl || !button || button.coverApplied === imageUrl) return;
+  button.coverApplied = imageUrl;
+  const image = document.createElement("img"); image.className = "apple-album-cover";
+  image.alt = ""; image.loading = "lazy"; image.referrerPolicy = "no-referrer";
+  const fallback = validAppleImage(album.fallback_image);
+  let retried = false;
+  image.addEventListener("error", () => {
+    if (!retried && fallback && fallback !== imageUrl && radioReadyForViews && !strictStandby) {
+      retried = true; image.src = fallback; return;
+    }
+    image.remove(); button.classList.remove("has-cover"); button.artworkLink.hidden = true;
+  });
+  image.src = imageUrl; button.appendChild(image); button.classList.add("has-cover");
+  // Link stays outside the playback button, so opening the store cannot start music.
+  try {
+    const url = new URL(album.store_url);
+    if (url.protocol === "https:" && !url.username && !url.password && ["music.apple.com", "itunes.apple.com"].includes(url.hostname)) {
+      button.artworkLink.href = url.href; button.artworkLink.hidden = false;
+    }
+  } catch (_) { /* Missing store links do not affect playback. */ }
+}
+function queueAlbumCovers() {
+  if (albumCoverTimer || albumCoverPending || !radioReadyForViews || mediaPreparing || strictStandby) return;
+  const candidate = appleSelection?.items?.find(item => item.kind === "Album" &&
+    (!albumCoverResults.has(coverKey(item)) || albumCoverResults.get(coverKey(item)).retryAt <= Date.now()));
+  if (!candidate) return;
+  albumCoverTimer = true;
+  setTimeout(async () => {
+    albumCoverTimer = false;
+    if (!radioReadyForViews || mediaPreparing || strictStandby || !appleButtons.has(candidate.id)) return;
+    albumCoverPending = true;
+    const generation = uiGeneration, key = coverKey(candidate);
+    try {
+      const result = await api("album-covers", {search:candidate.search || candidate.name, ...(candidate.album_id ? {album_id:candidate.album_id} : {})});
+      albumCoverResults.set(key, {album:result.selected});
+      if (generation === uiGeneration && radioReadyForViews && !strictStandby &&
+          appleSelection.items.some(item => coverKey(item) === key)) applyAlbumCover(appleButtons.get(candidate.id), result.selected);
+    } catch (_) { albumCoverResults.set(key, {album:null, retryAt:Date.now()+60000}); }
+    finally { albumCoverPending = false; queueAlbumCovers(); }
+  }, 4500);
+}
 function libraryEditorControls(busy) {
   libraryEditorBusy = busy;
   for (const id of ["library-editor-save", "library-editor-add", "library-editor-close", "library-editor-cancel"])
     $(id).disabled = busy;
   for (const row of libraryEditorRows) {
     row.name.disabled = busy; row.search.disabled = busy; row.remove.disabled = busy;
+    if (row.coverButton) row.coverButton.disabled = busy;
   }
 }
 function addLibraryEditorRow(item = {}) {
   const container = document.createElement("div"); container.className = "library-editor-row";
-  const row = {container};
+  const row = {container, albumId:item.album_id};
   for (const [field, text] of [["name", "Anzeigename"], ["search", "Alexa-Name (optional)"]]) {
     const label = document.createElement("label"); label.textContent = text;
     const input = document.createElement("input"); input.type = "text"; input.maxLength = 200;
@@ -421,7 +474,47 @@ function addLibraryEditorRow(item = {}) {
     container.remove();
   });
   container.appendChild(row.remove); libraryEditorRows.push(row); $("library-editor-rows").appendChild(container);
+  if (libraryEditorKind === "Album") {
+    row.coverButton = document.createElement("button"); row.coverButton.type = "button"; row.coverButton.textContent = "Cover suchen";
+    row.coverResults = document.createElement("div"); row.coverResults.className = "album-cover-results";
+    row.coverButton.addEventListener("click", () => searchEditorAlbumCover(row));
+    for (const input of [row.name,row.search]) input.addEventListener("input", () => {
+      row.albumId = undefined; row.album = null; row.coverResults.replaceChildren();
+    });
+    container.append(row.coverButton,row.coverResults);
+  }
   return row;
+}
+async function searchEditorAlbumCover(row) {
+  if (libraryEditorBusy) return;
+  if (!radioReadyForViews || strictStandby || mediaPreparing) {
+    row.coverResults.textContent = "Albumsuche erst verfügbar, wenn HA Music bereit ist."; return;
+  }
+  const generation = uiGeneration;
+  libraryEditorControls(true); row.coverResults.replaceChildren();
+  row.coverResults.textContent = "Suche Albumcover …";
+  try {
+    const result = await api("album-covers", {search:row.search.value.trim() || row.name.value.trim()});
+    if (generation !== uiGeneration || !radioReadyForViews || strictStandby) throw new Error("Albumsuche unterbrochen");
+    row.coverResults.textContent = "";
+    if (!result.items.length) row.coverResults.textContent = "Kein Album gefunden. Bitte Albumtitel und Interpret prüfen.";
+    for (const album of result.items) {
+      const choice = document.createElement("button"); choice.type = "button"; choice.className = "album-cover-choice";
+      const image = document.createElement("img"); image.alt = ""; image.loading = "lazy";
+      image.src = validAppleImage(album.image);
+      const text = document.createElement("span"); text.textContent = album.artist + " – " + album.name;
+      choice.append(image,text); choice.setAttribute("aria-pressed", String(row.albumId === album.album_id));
+      choice.addEventListener("click", () => {
+        if (libraryEditorBusy) return;
+        row.albumId = album.album_id;
+        row.album = album;
+        for (const child of row.coverResults.children) child.setAttribute("aria-pressed", String(child === choice));
+        $("library-editor-feedback").textContent = "Cover ausgewählt. Mit Übernehmen speichern.";
+      });
+      row.coverResults.appendChild(choice);
+    }
+  } catch (e) { row.coverResults.textContent = "Albumsuche fehlgeschlagen: " + e.message; }
+  finally { libraryEditorControls(false); }
 }
 async function openLibraryEditor(kind) {
   if (libraryEditorBusy || $("library-editor").open) return;
@@ -450,10 +543,15 @@ async function submitLibraryEditor(event) {
   if (libraryEditorBusy || !libraryEditorSnapshot) return;
   const items = libraryEditorSnapshot.items.filter(item => item.kind !== libraryEditorKind);
   for (const row of libraryEditorRows)
-    items.push({kind:libraryEditorKind, name:row.name.value.trim(), search:row.search.value.trim()});
+    items.push({kind:libraryEditorKind, name:row.name.value.trim(), search:row.search.value.trim(), ...(row.albumId ? {album_id:row.albumId} : {})});
   libraryEditorControls(true); $("library-editor-feedback").textContent = "Speichere …";
   try {
     const result = await api("apple-library", {items, revision:libraryEditorSnapshot.revision});
+    for (const row of libraryEditorRows) {
+      if (!row.album) continue;
+      const item = result.selection.items.find(item => item.kind === "Album" && item.album_id === row.albumId && item.name === row.name.value.trim());
+      if (item) albumCoverResults.set(coverKey(item), {album:row.album});
+    }
     libraryEpoch++;
     renderAppleSelection(result.selection);
     $("library-editor").close();
@@ -486,14 +584,22 @@ function renderAppleSelection(selection) {
       }
       for (const favorite of favorites) {
         const button = document.createElement("button"); button.type = "button";
-        button.className = "station apple-favorite";
+        button.className = "station apple-favorite " + (kind === "Playlist" ? "apple-playlist" : "apple-album");
         const icon = document.createElement("span"); icon.className = "station-icon"; icon.setAttribute("aria-hidden","true");
         icon.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>';
         const label = document.createElement("span"); label.className = "apple-favorite-label"; label.textContent = favorite.name;
-        button.title = favorite.name;
+        if (kind === "Playlist") label.style.setProperty("--playlist-font-size", (favorite.name.length > 60 ? 11 : favorite.name.length > 30 ? 13 : 17) + "px");
+        button.title = favorite.name; button.setAttribute("aria-label", favorite.name);
         button.append(icon,label);
         button.addEventListener("click", () => startAppleFavorite(favorite.id));
-        appleButtons.set(favorite.id,button); container.appendChild(button);
+        appleButtons.set(favorite.id,button);
+        if (kind === "Album") {
+          const entry = document.createElement("div"); entry.className = "apple-album-entry"; entry.title = favorite.name;
+          const link = document.createElement("a"); link.className = "album-store-link"; link.textContent = "Apple Music ↗";
+          link.hidden = true; link.target = "_blank"; link.rel = "noopener noreferrer";
+          button.artworkLink = link; entry.append(button,link); container.appendChild(entry);
+          if (radioReadyForViews && !strictStandby) applyAlbumCover(button, albumCoverResults.get(coverKey(favorite))?.album);
+        } else container.appendChild(button);
       }
     }
   }
@@ -501,10 +607,14 @@ function renderAppleSelection(selection) {
     button.disabled = stationPending || transportPending || !radioReadyForViews || mediaPreparing || strictStandby || !appleSelection.available;
     button.classList.toggle("active", activeApple?.id === id);
     button.setAttribute("aria-pressed", String(activeApple?.id === id));
+    const item = items.find(item => item.id === id);
+    if (item?.kind === "Album" && radioReadyForViews && !strictStandby && !mediaPreparing)
+      applyAlbumCover(button, albumCoverResults.get(coverKey(item))?.album);
   }
   $("apple-library-note").textContent = items.length && !appleSelection.available && radioReadyForViews && !mediaPreparing
     ? "Apple-Music-Steuergerät unter Add-on → Konfiguration auswählen und unter Alexa-Geräte auf Aktiv setzen."
     : "Playlists und Alben über das Plus neben der Überschrift verwalten. Dein Apple-Music-Konto muss in Alexa verknüpft sein.";
+  queueAlbumCovers();
 }
 async function startAppleFavorite(id) {
   if (stationPending || transportPending || !radioReadyForViews || mediaPreparing || strictStandby || !appleSelection.available || !appleButtons.has(id)) return;

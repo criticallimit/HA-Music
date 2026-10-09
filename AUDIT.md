@@ -69,3 +69,12 @@ Kein Release, Versionssprung oder Installation. Eine Rückkehr erfolgt über ein
 - Speichern verändert keine laufende Quelle, Lautstärken oder Power/Ready; Netzwerk-Standby bleibt erhalten. Erfolg aktualisiert Kacheln sofort, Fehler behalten den Entwurf. Ältere Zustandsantworten können die neue Liste nicht rückgängig anzeigen.
 - Lokale Regressionen prüfen Migration, absichtlich leere Liste, Neustartpersistenz, Schreibfehler, beschädigte Daten, konkurrierende Entwürfe, lokale Standby-Verwaltung, HTTP-Grenzen und UI-Bedienung. Kein Live-Test an den Echos; Version bleibt 0.0.6.
 
+
+## 2026-10-09: Albumcover und Playlistbeschriftung
+
+- Öffentliche Apple-Album-Suche vor Playback, eindeutiger exakter Treffer automatisch, mehrere Treffer im Albumeditor manuell auswählbar. Echter Katalogtest und 600x600-Cover mit HTTP 200 verifiziert.
+- Optional gespeicherte Album-ID ist ausschließlich Coverzuordnung; Favoriten-ID berücksichtigt weiterhin nur Name, Art und Alexa-Name. Keine Playback-, Lautstärke- oder Quellenänderung aus dem Coverabruf.
+- Begrenzte Katalogantworten, erlaubte Apple-Bild-/Storehosts, Metadatencache mit 24 Stunden und 100 Einträgen, gemeinsames Requestlimit, Standby-/Vorbereitungsprüfung und Abbruch bei Powerwechsel.
+- Randfüllende Cover mit ursprünglicher Auflösung als Rückfall, aktive Markierung über dem Bild, separater Albumlink; Namen bleiben ohne Bild nutzbar. Playlistnamen zentriert mit Zeilenumbruch und längenabhängiger Schrift.
+- Regressionen für Cache, Mehrdeutigkeit, falsche URLs, Standby, Requestlimit, Abbruch, stabile IDs, UI-Coverwahl und Bildfehler. Kein Live-Echo-Test; Version unverändert 0.0.6.
+

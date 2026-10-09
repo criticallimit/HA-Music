@@ -179,9 +179,22 @@ Die Konfiguration lässt sich bei ausgeschaltetem Radio bearbeiten. Zur Übernah
 
 ### Quadratische Apple-Music-Kacheln
 
-Playlist- und Albumkacheln haben ein Seitenverhältnis von 1:1 ohne Innenabstand oder sichtbaren Rahmen. Der Name liegt unten innerhalb der Kachel, die aktive Auswahl bleibt markiert. Coverabruf ist damit noch nicht implementiert. Alexa liefert das Bild der laufenden Wiedergabe; dieses ist keine verlässliche Identifikation eines Playlistcovers. Vorababruf persönlicher Playlists benötigt Apple Music API/MusicKit mit Developer- und Music-User-Token; öffentliche Albumcover können über die iTunes-Suche ermittelt werden, müssen bei mehrdeutigen Treffern bestätigt werden. Alternativ ist eine eigene Coverdatei pro Favorit möglich.
+Playlist- und Albumkacheln haben ein Seitenverhältnis von 1:1 ohne Innenabstand oder sichtbaren Rahmen. Der Name liegt unten innerhalb der Kachel, die aktive Auswahl bleibt markiert. Albumcover werden über die öffentliche Apple-Katalogsuche ergänzt; persönliche Playlistcover werden weiterhin nicht abgerufen. Alexa liefert das Bild der laufenden Wiedergabe; dieses ist keine verlässliche Identifikation eines Playlistcovers. Vorababruf persönlicher Playlists benötigt Apple Music API/MusicKit mit Developer- und Music-User-Token; öffentliche Albumcover können über die iTunes-Suche ermittelt werden, müssen bei mehrdeutigen Treffern bestätigt werden. Alternativ ist eine eigene Coverdatei pro Favorit möglich.
 
 Quellen: [Apple Music API](https://developer.apple.com/documentation/applemusicapi/), [persönliche Playlists](https://developer.apple.com/documentation/applemusicapi/get-all-library-playlists), [iTunes-Suche](https://performance-partners.apple.com/search-api), [Alexa Media Player](https://github.com/alandtse/alexa_media_player).
 
 Sicherung davor: [backup/main-2026-10-09-before-square-tiles-0987f50](https://github.com/criticallimit/HA-Music/tree/backup/main-2026-10-09-before-square-tiles-0987f50), Commit 0987f5066209bc35d3a1e93525324e5f4053098c.
+
+
+### Albumcover und Playlistnamen
+
+Albumkacheln zeigen randfüllende Cover aus Apples öffentlichem iTunes-Katalog (DE). Die Suche erfolgt automatisch im bereiten Betrieb, vor dem Abspielen, anhand des gespeicherten Alexa-Namens beziehungsweise Anzeigenamens. Nur genau ein passender Albumtitel oder die genaue Kombination aus Interpret und Albumtitel wird automatisch zugeordnet. Keine Übernahme des laufenden Songcovers als Playlistbild. Bei mehreren Versionen, fehlenden Treffern oder abweichenden Namen bleibt die beschriftete Kachel bedienbar.
+
+Im Albumfenster kann **Cover suchen** mehrere Treffer mit Cover, Interpret und Albumtitel anzeigen. Den passenden Treffer auswählen und **Übernehmen** drücken. Die gewählte Katalog-ID bleibt dauerhaft gespeichert; sie ändert weder den Alexa-Abspielnamen noch die Favoriten-ID oder die zuletzt gespeicherte Quelle. Änderungen an Name oder Suchbegriff lösen die bisherige Coverzuordnung. Unterschiedliche Versionen desselben Albums benötigen unterschiedliche Anzeigenamen.
+
+Coverdaten werden unter /data/album_artwork.json für 24 Stunden zwischengespeichert (bis zu 100 Such-/ID-Einträge). Coverbilder werden direkt von Apples Bildserver geladen, mit Rückfall auf die ursprüngliche kleinere Auflösung. Kein Developer-Token oder Apple-Login erforderlich. Ein separater Apple-Music-Link unter dem Cover führt zum zugeordneten Album; der Kachelbutton startet weiterhin über Alexa. Coverabruf sendet keine HA-/Alexa-Befehle und keine Supervisor- oder HA-Zugangsdaten. Neue Kataloganfragen sind in Standby oder Startvorbereitung gesperrt und beim Ausschalten abbrechbar; ein Mindestabstand begrenzt die Anfragen auch bei mehreren Browserfenstern.
+
+Playlists verwenden ausschließlich ihren eingetragenen Namen, mittig und mit Zeilenumbrüchen in der quadratischen Kachel. Lange Namen erhalten kleinere Schrift; der vollständige Name bleibt als Tooltip und barrierefreier Buttonname vorhanden.
+
+Sicherung davor: [backup/main-2026-10-09-before-album-covers-babb353](https://github.com/criticallimit/HA-Music/tree/backup/main-2026-10-09-before-album-covers-babb353), Commit babb353eb8bd01fcd2b86d7bad5c017b00308da3. Die zusätzliche Album-ID ist vom älteren Code noch nicht unterstützt; bei einer Rückkehr die Bibliotheksdatei separat sichern und diesen optionalen Wert aus den Einträgen entfernen.
 

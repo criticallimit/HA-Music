@@ -1,7 +1,7 @@
 """Ingress app and restricted Home Assistant Alexa control API."""
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import unquote, urlsplit
+from urllib.parse import unquote, urlsplit, urlencode
 from urllib.request import Request, urlopen
 from http.client import HTTPException
 import json
@@ -11,6 +11,7 @@ import os
 import re
 import threading
 import time
+import unicodedata
 from metadata_feed import MONITOR
 from metadata import close_stream
 
@@ -32,6 +33,9 @@ SESSION_FILE = Path(os.environ.get("SESSION_FILE", "/data/session.json"))
 SOURCE_FILE = Path(os.environ.get("SOURCE_FILE", "/data/last_source.json"))
 LIBRARY_FILE = Path(os.environ.get("LIBRARY_FILE", "/data/apple_music_library.json"))
 LIBRARY_LOCK = threading.RLock()
+ARTWORK_FILE = Path(os.environ.get("ARTWORK_FILE", "/data/album_artwork.json"))
+ARTWORK_LOCK = threading.Lock()
+ARTWORK_LAST_REQUEST = 0.0
 CARD_INSTALLED_FILE = Path("/data/dashboard_card_installed")
 STARTED_AT = None
 RESTORE_GENERATION = 0
@@ -236,7 +240,15 @@ def normalize_library(entries, *, legacy=False):
                 continue
             raise ValueError("Name und Alexa-Name müssen 1 bis 200 Zeichen enthalten; Art: Playlist oder Album")
         item = {"name": name.strip(), "kind": kind, "search": search.strip()}
-        if item not in result:
+        if "album_id" in entry:
+            if kind != "Album" or type(entry["album_id"]) is not int or not 0 < entry["album_id"] < 10**16:
+                raise ValueError("Ungültige Albumzuordnung")
+            item["album_id"] = entry["album_id"]
+        existing = next((saved for saved in result if all(saved[key] == item[key] for key in ("name", "kind", "search"))), None)
+        if existing is not None:
+            if existing.get("album_id") != item.get("album_id"):
+                raise ValueError("Doppelter Albumeintrag: für verschiedene Versionen unterschiedliche Namen verwenden")
+        else:
             result.append(item)
     return result
 
@@ -281,6 +293,102 @@ def save_library(body):
         with LOCK:
             write_durable_json(LIBRARY_FILE, entries)
         return library_snapshot()
+
+
+def artwork_url(value, host):
+    if not isinstance(value, str) or len(value) > 2048:
+        return ""
+    try:
+        parsed = urlsplit(value)
+        return value if (parsed.scheme == "https" and not parsed.username and not parsed.password
+                         and parsed.port in (None, 443) and parsed.hostname
+                         and (parsed.hostname == host or parsed.hostname.endswith("." + host))) else ""
+    except ValueError:
+        return ""
+
+
+def album_candidates(data):
+    """Only real album records and Apple-hosted artwork; never consume playback metadata."""
+    results = data.get("results") if isinstance(data, dict) else None
+    if not isinstance(results, list):
+        raise ValueError("Ungültige Antwort der Albumsuche")
+    albums = {}
+    for result in results[:25]:
+        if not isinstance(result, dict) or result.get("collectionType") != "Album":
+            continue
+        identity, title, artist = result.get("collectionId"), result.get("collectionName"), result.get("artistName")
+        if type(identity) is not int or not 0 < identity < 10**16 or not all(isinstance(v, str) and 0 < len(v) <= 300 for v in (title, artist)):
+            continue
+        image = artwork_url(result.get("artworkUrl100"), "mzstatic.com")
+        store = artwork_url(result.get("collectionViewUrl"), "music.apple.com") or artwork_url(result.get("collectionViewUrl"), "itunes.apple.com")
+        if image and store:
+            albums[identity] = {"album_id":identity, "name":title, "artist":artist,
+                                "image":re.sub(r"/100x100bb\.(jpg|png)$", r"/600x600bb.\1", image),
+                                "fallback_image":image, "store_url":store}
+    return list(albums.values())
+
+
+def artwork_cache():
+    try:
+        value = json.loads(ARTWORK_FILE.read_text(encoding="utf-8"))
+        return value if isinstance(value, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def album_cover_search(body):
+    """Independent catalog lookup; no Alexa/HA call, never leave network standby."""
+    global ARTWORK_LAST_REQUEST
+    search, identity = body.get("search"), body.get("album_id")
+    if not isinstance(search, str) or not search.strip() or len(search) > 200 or any(ord(c) < 32 for c in search):
+        raise ValueError("Bitte Albumtitel und möglichst den Interpreten eingeben")
+    if identity is not None and (type(identity) is not int or not 0 < identity < 10**16):
+        raise ValueError("Ungültige Albumzuordnung")
+    key = "id:" + str(identity) if identity else "search:" + search.strip().casefold()
+    with ARTWORK_LOCK:
+        cache = artwork_cache()
+        entry = cache.get(key, {})
+        if isinstance(entry, dict) and type(entry.get("at")) in (int, float) and time.time() - entry["at"] < 86400 and isinstance(entry.get("items"), list):
+            albums = entry["items"]
+        else:
+            if STANDBY.is_set() or not READY or PREPARING:
+                raise RuntimeError("Albumsuche erst verfügbar, wenn HA Music bereit ist")
+            if time.monotonic() - ARTWORK_LAST_REQUEST < 4:
+                raise RuntimeError("Albumsuche kurz ausgelastet. Bitte erneut versuchen.")
+            ARTWORK_LAST_REQUEST = time.monotonic()
+            generation = RESTORE_GENERATION
+            params = {"country":"DE", "entity":"album", "limit":25}
+            params["id" if identity else "term"] = identity or search.strip()
+            endpoint = "lookup" if identity else "search"
+            request = Request("https://itunes.apple.com/" + endpoint + "?" + urlencode(params), headers={"Accept":"application/json"})
+            with urlopen(request, timeout=8) as response:
+                with RESPONSE_LOCK:
+                    check_generation(generation)
+                    ACTIVE_RESPONSES.add(response)
+                try:
+                    raw = response.read(262145)
+                finally:
+                    with RESPONSE_LOCK:
+                        ACTIVE_RESPONSES.discard(response)
+            check_generation(generation)
+            if len(raw) > 262144:
+                raise ValueError("Antwort der Albumsuche ist zu groß")
+            albums = album_candidates(json.loads(raw))
+            if identity:
+                albums = [album for album in albums if album["album_id"] == identity]
+            cache[key] = {"at":time.time(), "items":albums}
+            for album in albums:
+                cache["id:" + str(album["album_id"])] = {"at":time.time(), "items":[album]}
+            cache = dict(sorted(cache.items(), key=lambda pair:pair[1].get("at", 0) if isinstance(pair[1], dict) else 0)[-100:])
+            with LOCK:
+                write_durable_json(ARTWORK_FILE, cache)
+        def normalized(value):
+            return " ".join(re.findall(r"\w+", unicodedata.normalize("NFKC", value).casefold()))
+        term = normalized(search)
+        matches = [album for album in albums if identity == album.get("album_id") or term in (
+            normalized(album.get("name", "")), normalized(album.get("artist", "") + " " + album.get("name", "")),
+            normalized(album.get("name", "") + " " + album.get("artist", "")))]
+        return {"items":albums, "selected":matches[0] if len(matches) == 1 else None}
 
 
 def integration_inventory():
@@ -973,7 +1081,8 @@ def apple_music_selection():
     items = []
     for favorite in library_snapshot(config)["items"]:
         item = dict(favorite)
-        item["id"] = hashlib.sha256(json.dumps(item, sort_keys=True).encode()).hexdigest()[:24]
+        identity = {key:item[key] for key in ("name", "kind", "search")}
+        item["id"] = hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()[:24]
         items.append(item)
     with STATE_LOCK:
         active = deepcopy(ACTIVE_APPLE)
@@ -1610,7 +1719,7 @@ class Handler(BaseHTTPRequestHandler):
             return self.reply(403, {"error": "Ingress only"})
         path = unquote(urlsplit(self.path).path)
         action = path.rsplit("/", 1)[-1]
-        if "/api/" not in path or action not in ("volume", "room_audio", "group_transport", "track_transport", "radio_direct", "apple_music", "radio_power", "selected_view", "dashboard_card_installed", "apple-library"):
+        if "/api/" not in path or action not in ("volume", "room_audio", "group_transport", "track_transport", "radio_direct", "apple_music", "radio_power", "selected_view", "dashboard_card_installed", "apple-library", "album-covers"):
             return self.reply(404, {"error": "Not found"})
         if self.headers.get("Sec-Fetch-Site") == "cross-site":
             return self.reply(403, {"error": "Cross-site request rejected"})
@@ -1620,6 +1729,8 @@ class Handler(BaseHTTPRequestHandler):
             body = json.loads(self.read_request_body(65536) if action == "apple-library" else self.read_request_body())
             if not isinstance(body, dict):
                 raise ValueError("Invalid body")
+            if action == "album-covers":
+                return self.reply(200, album_cover_search(body))
             if action == "apple-library":
                 saved = save_library(body)
                 return self.reply(200, {**saved, "selection": apple_music_selection()})

@@ -27,9 +27,10 @@ class RuntimeTests(unittest.TestCase):
         self.stack = ExitStack()
         self.addCleanup(self.stack.close)
         folder = Path(self.stack.enter_context(tempfile.TemporaryDirectory(dir=ROOT)))
-        for name in ("VOLUME_FILE", "STATION_FILE", "SPEAKER_FILE", "VIEW_FILE", "SESSION_FILE", "SOURCE_FILE", "OPTIONS", "LIBRARY_FILE"):
+        for name in ("VOLUME_FILE", "STATION_FILE", "SPEAKER_FILE", "VIEW_FILE", "SESSION_FILE", "SOURCE_FILE", "OPTIONS", "LIBRARY_FILE", "ARTWORK_FILE"):
             self.stack.enter_context(patch.object(app, name, folder / (name + ".json")))
         self.stack.enter_context(patch.object(app, "SUPERVISOR_OPTIONS", None))
+        self.stack.enter_context(patch.object(app, "ARTWORK_LAST_REQUEST", 0))
         self.stack.enter_context(patch.object(app, "ACTIVE_APPLE", None))
         self.stack.enter_context(patch.object(app, "RECOVERING", False))
         self.stack.enter_context(patch.object(app, "RECOVERED_SESSION", False))
@@ -954,6 +955,79 @@ class RuntimeTests(unittest.TestCase):
         with patch.object(app, "supervisor_request", return_value={"options":legacy}) as request, self.assertRaises(ValueError):
             SYNCHRONIZE(None, migrate_only=True, bootstrap=True)
         self.assertEqual(request.call_count, 1)
+
+    def album_record(self, identity=12, name="Dreams", artist="Singer"):
+        return {"collectionType":"Album", "collectionId":identity, "collectionName":name,
+                "artistName":artist, "artworkUrl100":"https://is1-ssl.mzstatic.com/image/100x100bb.jpg",
+                "collectionViewUrl":"https://music.apple.com/de/album/dreams/" + str(identity)}
+
+    def test_album_cover_search_uses_public_catalog_and_caches_without_playback(self):
+        app.READY = True
+        with patch.object(app, "urlopen") as opened, patch.object(app, "ha_request", side_effect=AssertionError("No HA")):
+            opened.return_value.__enter__.return_value.read.return_value = json.dumps({"results":[self.album_record()]}).encode()
+            found = app.album_cover_search({"search":"Singer Dreams"})
+            self.assertEqual(found["selected"]["album_id"], 12)
+            self.assertTrue(found["selected"]["image"].endswith("600x600bb.jpg"))
+            request = opened.call_args.args[0]
+            self.assertTrue(request.full_url.startswith("https://itunes.apple.com/search?"))
+            self.assertNotIn("Authorization", request.headers)
+            app.STANDBY.set()
+            self.assertEqual(app.album_cover_search({"search":"Singer Dreams"}), found)
+            self.assertEqual(opened.call_count, 1)
+        self.monitor.select.assert_not_called()
+
+    def test_album_cover_search_does_not_guess_between_two_albums_or_versions(self):
+        app.READY = True
+        records = [self.album_record(12), self.album_record(13, artist="Other Singer")]
+        with patch.object(app, "urlopen") as opened:
+            opened.return_value.__enter__.return_value.read.return_value = json.dumps({"results":records}).encode()
+            result = app.album_cover_search({"search":"Dreams"})
+        self.assertEqual(len(result["items"]), 2)
+        self.assertIsNone(result["selected"])
+
+    def test_album_artwork_filters_non_album_and_untrusted_urls(self):
+        invalid = [self.album_record() for _ in range(4)]
+        invalid[0]["collectionType"] = "Song"
+        invalid[1]["artworkUrl100"] = "https://mzstatic.com.evil.test/x.jpg"
+        invalid[2]["artworkUrl100"] = "https://user@is1.mzstatic.com/x.jpg"
+        invalid[3]["collectionViewUrl"] = "javascript:alert(1)"
+        self.assertEqual(app.album_candidates({"results":invalid}), [])
+        for url in ("https://is1.mzstatic.com:bad/x", "http://is1.mzstatic.com/x", "data:image/png;base64,x"):
+            self.assertEqual(app.artwork_url(url, "mzstatic.com"), "")
+
+    def test_album_cover_network_is_blocked_in_standby_preparation_and_rate_limited(self):
+        for standby, ready, preparing in ((True, True, False), (False, False, False), (False, True, True)):
+            app.STANDBY.set() if standby else app.STANDBY.clear()
+            app.READY, app.PREPARING = ready, preparing
+            with self.assertRaises(RuntimeError):
+                app.album_cover_search({"search":"Dreams"})
+        app.STANDBY.clear(); app.READY = True; app.PREPARING = False
+        app.ARTWORK_LAST_REQUEST = time.monotonic()
+        with self.assertRaisesRegex(RuntimeError, "ausgelastet"):
+            app.album_cover_search({"search":"Dreams"})
+
+    def test_album_cover_cancelled_reply_never_persists(self):
+        app.READY = True
+        def reply(*args):
+            app.transition_power(False)
+            return json.dumps({"results":[self.album_record()]}).encode()
+        with patch.object(app, "urlopen") as opened, self.assertRaises(app.StartupCancelled):
+            opened.return_value.__enter__.return_value.read.side_effect = reply
+            app.album_cover_search({"search":"Dreams"})
+        self.assertFalse(app.ARTWORK_FILE.exists())
+
+    def test_album_cover_choice_persists_without_changing_source_identity(self):
+        favorite_id = self.apple_favorite(kind="Album")
+        old = app.library_snapshot()
+        old["items"][0]["album_id"] = 12
+        app.save_library(old)
+        self.assertEqual(app.apple_music_selection()["items"][0]["id"], favorite_id)
+        self.assertEqual(app.library_snapshot()["items"][0]["album_id"], 12)
+        with self.assertRaises(ValueError):
+            app.normalize_library([{"name":"Playlist", "kind":"Playlist", "album_id":12}])
+        with self.assertRaisesRegex(ValueError, "Doppelter"):
+            app.normalize_library([{"name":"Album", "kind":"Album", "album_id":12},
+                                   {"name":"Album", "kind":"Album", "album_id":13}])
 
     def test_apple_configuration_filters_invalid_entries_and_is_local_in_standby(self):
         app.OPTIONS.write_text(json.dumps({"apple_music_favorites":[{},None,{"name":"Test", "kind":[]},{"name":"Bad\nName","kind":"Playlist"},{"name":"Guter Name","kind":"Album"}]}))
