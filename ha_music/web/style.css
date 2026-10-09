@@ -37,7 +37,7 @@ nav button.active{background:#275276;border-color:#4d8bb8;color:#fff}
 .now-ticker span{white-space:normal;animation:none}
 .now-ticker[hidden]{visibility:hidden!important;display:block!important}
 #playback-state{display:block;font-size:11px;line-height:1.4;margin-top:6px;overflow-wrap:anywhere}
-.dashboard-right{min-width:0;display:flex;flex-direction:column;gap:11px}
+.dashboard-right{min-width:0;min-height:720px;display:flex;flex-direction:column;gap:11px}
 .players{display:flex;flex-direction:column;gap:10px}
 .master-volume,.speaker-list .player-row,.station{border:1px solid var(--border);border-radius:18px;background:var(--surface)}
 .master-volume{min-height:104px;padding:0 24px;justify-content:center}
@@ -51,7 +51,7 @@ nav button.active{background:#275276;border-color:#4d8bb8;color:#fff}
 .player-row button::after{content:"";display:block;width:22px;height:22px;background-size:contain;background-repeat:no-repeat;background-position:center;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23b9c7d5' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M11 5 6 9H3v6h3l5 4V5Z'/%3E%3Cpath d='M15 9a5 5 0 0 1 0 6'/%3E%3Cpath d='M18 6a9 9 0 0 1 0 12'/%3E%3C/svg%3E")}
 .player-row button.is-muted::after{background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23b9c7d5' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M11 5 6 9H3v6h3l5 4V5Z'/%3E%3Cpath d='m16 9 5 6m0-6-5 6'/%3E%3C/svg%3E")}
 .stations{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin-top:auto}
-.apple-library{display:flex;flex-direction:column;gap:16px}
+.apple-library{display:flex;flex-direction:column;gap:16px;margin-top:auto}
 .apple-library-section h2{font-size:14px;font-weight:600;margin:4px 0 10px;color:var(--text)}
 .apple-empty{grid-column:1/-1;margin:0;min-height:82px;padding:20px 16px;display:flex;align-items:center;border:1px solid var(--border);border-radius:18px;background:var(--surface);color:var(--muted);font-size:14px;line-height:1.4}
 .apple-library-note{margin:0;color:var(--muted);font-size:12px;line-height:1.5}
@@ -64,8 +64,8 @@ nav button.active{background:#275276;border-color:#4d8bb8;color:#fff}
 .station.active .station-icon{color:#e9f5ff}
 .sr-info{position:absolute!important;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
 [hidden]{display:none!important}
-@media(max-width:1199px) and (min-width:921px){.now{height:680px}}
-@media(max-width:920px){.shell{padding:14px}.dashboard{grid-template-columns:minmax(0,1fr)}.now{height:420px}.master-volume{padding:0 12px}.speaker-list .player-row{min-height:100px;padding:12px}.stations{margin-top:0}}
+@media(max-width:1199px) and (min-width:921px){.now{height:680px}.dashboard-right{min-height:680px}}
+@media(max-width:920px){.shell{padding:14px}.dashboard{grid-template-columns:minmax(0,1fr)}.now{height:420px}.dashboard-right{min-height:0}.master-volume{padding:0 12px}.speaker-list .player-row{min-height:100px;padding:12px}.stations{margin-top:0}}
 @media(max-width:550px){
  header{grid-template-columns:minmax(0,1fr) auto;gap:9px}
  header nav{grid-column:1;grid-row:1;justify-self:start}
