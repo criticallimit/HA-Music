@@ -620,17 +620,18 @@ def start_session_recovery():
         if session_intent() == "off" or RECOVERING or not STANDBY.is_set():
             return
         RECOVERING = True
-        RECOVERY_MESSAGE = "Bestehenden Wiedergabestatus prüfen …"
+        RECOVERY_MESSAGE = "Bestehenden Einschalt- und Wiedergabestatus prüfen …"
         generation, cancellation = RESTORE_GENERATION, CANCEL
         threading.Thread(target=recover_session, args=(generation, cancellation), daemon=True).start()
 
 
 def recover_session(generation, cancellation):
-    """Two consistent playback observations unlock UI; never run cold startup."""
+    """Confirm playback or already-ready devices; never run cold startup."""
     global RECOVERING, RECOVERY_MESSAGE, RECOVERED_SESSION, LAST_POWER, READY
     global STATE_CACHE
     global SOURCE_UNCONFIRMED
     previous = set()
+    previous_ready = set()
     try:
         for attempt in range(12):
             with STATE_LOCK:
@@ -645,6 +646,10 @@ def recover_session(generation, cancellation):
                 switch = states.get(RADIO_SWITCH, {}).get("state")
                 active = {entity for entity in enabled_device_ids()
                           if states.get(entity, {}).get("state") in ("playing", "paused")}
+                already_ready = {entity for entity in enabled_device_ids()
+                                 if states.get(entity, {}).get("state") in ("on", "idle", "playing", "paused")}
+                if states.get(RADIO_READY, {}).get("state") != "on":
+                    already_ready = set()
                 with STATE_LOCK:
                     if generation != RESTORE_GENERATION or cancellation.is_set() or not RECOVERING:
                         return
@@ -652,7 +657,7 @@ def recover_session(generation, cancellation):
                         save_session_intent(False)
                         RECOVERY_MESSAGE = None
                         return
-                    if switch == "on" and active & previous:
+                    if switch == "on" and (active & previous or already_ready & previous_ready):
                         save_session_intent(True)
                         # No transition_power(), ready-helper write, metadata
                         # selection, volume restore or playback command here.
@@ -667,8 +672,10 @@ def recover_session(generation, cancellation):
                         # already use the opposite order for standby admission.
                         break
                 previous = active if switch == "on" else set()
+                previous_ready = already_ready if switch == "on" else set()
             except NETWORK_ERRORS as exc:
                 previous = set()
+                previous_ready = set()
                 print(f"[HA Music] Read-only session recovery retry: {exc}", flush=True)
             if attempt < 11 and cancellation.wait(5):
                 return
@@ -680,7 +687,7 @@ def recover_session(generation, cancellation):
         with CACHE_LOCK:
             # The normal monitor will obtain fresh states after this snapshot.
             STATE_CACHE = (0.0, None)
-        print("[HA Music] Existing playback reattached without device commands", flush=True)
+        print("[HA Music] Existing powered session reattached without device commands", flush=True)
     finally:
         with STATE_LOCK:
             if generation == RESTORE_GENERATION:
@@ -1059,6 +1066,8 @@ def power_command(on):
         raise ValueError("Ungültiger Schaltzustand")
     with POWER_LOCK:
         if on:
+            if RECOVERING:
+                raise ValueError("Bestehender Einschaltzustand wird noch geprüft; keine Startsequenz ausgeführt")
             if LAST_POWER == "on" and not STANDBY.is_set():
                 return
             with STATE_LOCK:

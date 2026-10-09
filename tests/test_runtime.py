@@ -206,6 +206,66 @@ class RuntimeTests(unittest.TestCase):
         with patch.object(app, "state_snapshot", return_value=self.states):
             self.assertEqual(app.radio_state()["last_station"], "")
 
+    def test_update_reattaches_already_on_ready_idle_devices_without_startup(self):
+        self.states[app.RADIO_READY] = {"state":"on"}
+        with patch.object(app, "radio_start_sequence") as startup:
+            request = self.recovery()
+        self.assertEqual(request.call_count, 2)
+        self.assertTrue(app.READY)
+        self.assertEqual(app.LAST_POWER, "on")
+        self.assertFalse(app.STANDBY.is_set())
+        self.assertTrue(all(call.args == ("/states",) for call in request.call_args_list))
+        startup.assert_not_called()
+
+    def test_already_on_without_ready_or_playback_never_runs_startup(self):
+        self.states[app.RADIO_READY] = {"state":"off"}
+        raw = [{"entity_id": entity, **state} for entity, state in self.states.items()]
+        with patch.object(app, "radio_start_sequence") as startup:
+            request = self.recovery([raw] * 12)
+        self.assertFalse(app.READY)
+        self.assertTrue(app.STANDBY.is_set())
+        self.assertTrue(all(call.args == ("/states",) for call in request.call_args_list))
+        startup.assert_not_called()
+
+    def test_stale_ready_without_available_device_does_not_unlock_ui(self):
+        self.states[app.RADIO_READY] = {"state":"on"}
+        for entity in app.enabled_device_ids():
+            self.states[entity] = {"state":"unavailable"}
+        raw = [{"entity_id": entity, **state} for entity, state in self.states.items()]
+        request = self.recovery([raw] * 12)
+        self.assertEqual(request.call_count, 12)
+        self.assertFalse(app.READY)
+        self.assertTrue(app.STANDBY.is_set())
+
+    def test_ready_idle_recovery_requires_two_consistent_observations(self):
+        ready = [{"entity_id": entity, **state} for entity, state in self.states.items()] + [{"entity_id":app.RADIO_READY, "state":"on"}]
+        not_ready = [{"entity_id": entity, **state} for entity, state in self.states.items()] + [{"entity_id":app.RADIO_READY, "state":"off"}]
+        request = self.recovery([ready, not_ready, ready, ready])
+        self.assertEqual(request.call_count, 4)
+        self.assertTrue(app.READY)
+
+    def test_switch_off_wins_over_ready_idle_devices(self):
+        self.states[app.RADIO_SWITCH] = {"state":"off"}
+        self.states[app.RADIO_READY] = {"state":"on"}
+        request = self.recovery()
+        self.assertEqual(request.call_count, 1)
+        self.assertTrue(app.STANDBY.is_set())
+        self.assertFalse(app.READY)
+
+    def test_power_on_during_update_check_cannot_launch_startup_or_cancel_recovery(self):
+        app.RECOVERING = True
+        app.STANDBY.set()
+        app.LAST_POWER = "off"
+        with patch.object(app, "ha_request") as request, patch.object(app, "radio_start_sequence") as startup:
+            with self.assertRaisesRegex(ValueError, "keine Startsequenz"):
+                app.power_command(True)
+        request.assert_not_called()
+        startup.assert_not_called()
+        self.assertTrue(app.RECOVERING)
+        self.assertTrue(app.STANDBY.is_set())
+        self.assertEqual(app.RESTORE_GENERATION, 10)
+        self.assertIsNone(app.session_intent())
+
     def test_apple_session_restores_view_without_claiming_old_radio_or_playlist(self):
         app.save_selected_view("apple")
         app.save_selected_station("wdr2")
@@ -311,18 +371,21 @@ class RuntimeTests(unittest.TestCase):
         self.assertTrue(app.STANDBY.is_set())
         self.assertFalse(app.READY)
 
-    def test_unknown_idle_or_disabled_playback_never_unlocks_from_saved_ready(self):
-        for state, switch in (("unknown", "on"), ("unavailable", "on"), ("idle", "on"), ("playing", "unknown")):
+    def test_unknown_or_disabled_devices_never_unlock_from_saved_ready(self):
+        for state, switch in (("unknown", "on"), ("unavailable", "on"), ("playing", "unknown")):
             with self.subTest(state=state, switch=switch):
                 self.states[app.RADIO_SWITCH]["state"] = switch
                 self.states[app.RADIO_READY] = {"state": "on"}
-                self.states["media_player.wohnzimmer"]["state"] = state
+                for entity in app.enabled_device_ids():
+                    self.states[entity] = {"state":state}
                 raw = [{"entity_id": entity, **item} for entity, item in self.states.items()]
                 self.recovery([raw] * 12)
                 self.assertTrue(app.STANDBY.is_set())
                 self.assertFalse(app.READY)
                 self.assertIsNotNone(app.RECOVERY_MESSAGE)
         self.states[app.RADIO_SWITCH]["state"] = "on"
+        for entity in app.enabled_device_ids():
+            self.states[entity] = {"state":"unavailable"}
         self.states["media_player.wohnzimmer"]["state"] = "playing"
         with patch.object(app, "enabled_device_ids", return_value={"media_player.bad"}):
             raw = [{"entity_id": entity, **item} for entity, item in self.states.items()]
