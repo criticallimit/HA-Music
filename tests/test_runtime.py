@@ -87,6 +87,44 @@ class RuntimeTests(unittest.TestCase):
         self.assertNotIn("/services/input_boolean/turn_on", [c.args[0] for c in calls])
         self.assertTrue(any(c.args[0].endswith("volume_set") and c.args[1]["volume_level"] == 0.4 for c in calls))
 
+    def test_late_target_is_awaited_before_one_percent_probe(self):
+        app.save_selected_station("wdr2")
+        self.states["media_player.wohnzimmer"]["state"] = "unavailable"
+        phases = []
+        def wait(generation, seconds):
+            phases.append(seconds)
+            if phases == [45, 2]:
+                self.states["media_player.wohnzimmer"]["state"] = "idle"
+            return True
+        def request(path, body=None):
+            if path.endswith("volume_set") and body["volume_level"] == 0.01:
+                self.assertEqual(phases, [45, 2])
+            return {}
+        with patch.object(app, "wait_for_start", side_effect=wait), patch.object(app, "state_snapshot", return_value=self.states), patch.object(app, "allowed_entities", return_value={"media_player.wohnung", "media_player.wohnzimmer"}), patch.object(app, "ha_request", side_effect=request) as calls:
+            app.radio_start_sequence(10)
+        self.assertTrue(app.READY)
+        self.assertEqual(phases, [45, 2, 2])
+        self.assertEqual(sum(c.args[0].endswith("play_media") for c in calls.call_args_list), 1)
+
+    def test_permanently_unavailable_target_fails_before_probe_and_names_entity(self):
+        app.save_selected_station("wdr2")
+        self.states["media_player.wohnzimmer"]["state"] = "unavailable"
+        calls = self.startup().call_args_list
+        self.assertFalse(app.READY)
+        self.assertIn("media_player.wohnzimmer", app.STARTUP_ERROR)
+        self.assertIn("unavailable", app.STARTUP_ERROR)
+        self.assertFalse(any(c.args[0].endswith("volume_set") or c.args[0].endswith("play_media") for c in calls))
+
+    def test_target_wait_cancels_before_any_further_lookup(self):
+        self.states["media_player.wohnzimmer"]["state"] = "unavailable"
+        def cancel(generation, seconds):
+            app.transition_power(False)
+            return False
+        with patch.object(app, "state_snapshot", return_value=self.states) as snapshot, patch.object(app, "wait_for_start", side_effect=cancel):
+            with self.assertRaises(app.StartupCancelled):
+                app.wait_for_station_target("wdr2", 10)
+        self.assertEqual(snapshot.call_count, 1)
+
     def test_restore_failure_blocks_ready(self):
         def request(path, body=None):
             if path.endswith("volume_set") and body["volume_level"] == 0.4:

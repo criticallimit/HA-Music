@@ -430,12 +430,14 @@ def radio_start_sequence(generation):
         if refresh_entities:
             startup_request(generation, "/services/homeassistant/update_entity",
                             {"entity_id": refresh_entities})
+        station = last_selected_station()
+        if station and DIRECT_STATIONS[station]["target"] in enabled_device_ids():
+            wait_for_station_target(station, generation)
         startup_completed = False
         try:
             set_probe_volume(generation)
             if not wait_for_start(generation, 2):
                 return
-            station = last_selected_station()
             if station and DIRECT_STATIONS[station]["target"] in enabled_device_ids():
                 play_station(station, generation)
             startup_completed = True
@@ -699,6 +701,21 @@ def playback_status():
             "details": active if active and (active["title"] or active["artist"]) else details}
 
 
+def wait_for_station_target(key, generation):
+    """Allow asynchronous Alexa discovery after update_entity, before probing."""
+    target = DIRECT_STATIONS[key]["target"]
+    for attempt in range(7):
+        check_generation(generation)
+        state = state_snapshot().get(target, {}).get("state")
+        if state not in (None, "unknown", "unavailable"):
+            check_generation(generation)
+            return
+        if attempt == 6:
+            raise ValueError(f"Alexa-Senderziel {target}: {state or 'Entity fehlt'} – nach 12 s weiterhin nicht verfügbar")
+        if not wait_for_start(generation, 2):
+            raise StartupCancelled("Start abgebrochen")
+
+
 def play_station(key, generation):
     if not isinstance(key, str) or key not in DIRECT_STATIONS:
         raise ValueError("Unbekannter Sender")
@@ -706,9 +723,10 @@ def play_station(key, generation):
     states = state_snapshot()
     target = preset["target"]
     if target not in enabled_device_ids():
-        raise ValueError("Alexa-Senderziel ist in der Add-on-Konfiguration deaktiviert")
-    if states.get(target, {}).get("state") in (None, "unknown", "unavailable"):
-        raise ValueError("Alexa-Zielgerät nicht verfügbar")
+        raise ValueError(f"Alexa-Senderziel {target} ist in der Add-on-Konfiguration deaktiviert")
+    state = states.get(target, {}).get("state")
+    if state in (None, "unknown", "unavailable"):
+        raise ValueError(f"Alexa-Senderziel {target}: {state or 'Entity fehlt'} – nicht verfügbar")
     result = startup_request(generation, "/services/media_player/play_media", {
         "entity_id": target, "media": {
             "media_content_id": preset["media_content_id"],

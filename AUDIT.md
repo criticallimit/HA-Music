@@ -5,6 +5,12 @@ Geprüft: sämtliche Python-Module, Ingress-Frontend (HTML/CSS/JS), Lovelace-Kar
 
 ## Belegte Befunde und Korrekturen
 
+### Verspätete Verfügbarkeit des Senderziels nach Einschalten
+
+Die Meldung „Alexa-Zielgerät nicht verfügbar“ stammte aus der Prüfung des festen Ziels `media_player.wohnzimmer` vor dem Senderbefehl. Sie nannte weder die Entity-ID noch den tatsächlichen Zustand und brach auch dann sofort ab, wenn Home Assistant den Media Player kurz nach `update_entity` noch asynchron aktualisierte. Vor der 1%-Probe erhält das gespeicherte aktive Senderziel jetzt bis zu sechs abbrechbare Zwei-Sekunden-Warteintervalle. Ein bereits verfügbares Ziel verursacht keine zusätzliche Verzögerung. Nach Ablauf bleibt der Start fehlgeschlagen; die Fehlermeldung nennt die konkrete ID und `unavailable`, `unknown` oder „Entity fehlt“. Der eigentliche Senderbefehl wird nicht wiederholt und kein anderes Gerät automatisch ausgewählt.
+
+Drei neue Tests prüfen verspätete Verfügbarkeit vor der Probe mit genau einem Senderbefehl, ein dauerhaft unerreichbares Ziel ohne Probe-/Play-Befehle sowie Abbruch ohne weitere Zustandsabfrage. Die 50-Sekunden-Anzeige bleibt eine Schätzung; die zusätzliche Verfügbarkeitsphase kann den Start verlängern. Ob auf der Zielinstallation eine falsche Entity-ID, ein weiterhin ausgeschaltetes Gerät oder eine Alexa-Integrationsstörung vorliegt, ist ohne dessen tatsächlichen HA-Zustand nicht nachweisbar. Diese Änderung behebt den verfrühten Abbruch bei verzögerter Aktualisierung, repariert aber kein dauerhaft offline befindliches Gerät.
+
 ### Vollständiger Alexa-Katalog statt ausschließlich geladener Entitäten
 
 Die bisherige `integration_entities(domain)`-Abfrage ist keine garantierte vollständige Registry-Abfrage. Home Assistant verwendet bei Domain-Suche `entity_sources`; die Suche nach dem Titel eines Integrationseintrags verwendet dagegen dessen Entity-Registry. Die Erkennung ermittelt daher aus den vorhandenen Entitäten die Alexa-Kontoeinträge und ergänzt die vollständigen registrierten Entitäten dieser Konten. Kandidaten werden erneut auf die Alexa-Integrationsdomain geprüft, damit gleiche Kontotitel anderer Integrationen keine fremden Media Player aufnehmen. [HA-Implementierung](https://github.com/home-assistant/core/blob/dev/homeassistant/helpers/template/extensions/config_entries.py).
@@ -56,7 +62,7 @@ Ingress-Gegenstellenprüfung gemäß [Home-Assistant-Entwicklerdokumentation](ht
 ## Verifiziert
 
 - Python-Syntax aller vier Module, bestehende Scaffold-/Smoke-Prüfungen.
-- 63 Python-Regressionstests: Startreihenfolge, 45+2 Sekunden Warteparameter, Fehler, Abbruch, alte Timer, stumme Räume/Master, Persistenz, Cache, Verifikation, Ingress inklusive gestückelter POSTs/Framing-Grenzen, ICY-Lebenszyklus, Angleichung an den Master ausschließlich beim Start, Geräteauswahl, Registry-Namen, Raum-Schalter und Gruppensteuerung.
+- 66 Python-Regressionstests: Startreihenfolge, 45+2 Sekunden Warteparameter, verspätete Senderziel-Verfügbarkeit, Fehler, Abbruch, alte Timer, stumme Räume/Master, Persistenz, Cache, Verifikation, Ingress inklusive gestückelter POSTs/Framing-Grenzen, ICY-Lebenszyklus, Angleichung an den Master ausschließlich beim Start, Geräteauswahl, Registry-Namen, Raum-Schalter und Gruppensteuerung.
 - 5 Sandbox-Tests für die tatsächlich ausgeführte Geräteerkennungs-Vorlage, einschließlich aller acht Beispielgeräte trotz fehlender geladener Media Player.
 - 14 JavaScript-Verhaltenstests: Countdown, Fehlerzustände, parallele Polls, verspätete Antworten, gespeicherte Ansicht, Artwork-URL-Prüfung, Soll-/Ist-Lautstärke, unabhängige Raumregelung bei Master 0 sowie Raum-/Gruppensteuerung.
 - JavaScript-Syntax für Frontend, Lovelace-Karte und Loader; `git diff --check`.
