@@ -236,6 +236,7 @@ async function updateSong() {
     }
     const details = info.details;
     const isRadio = ["wdr2","1live","swr3"].includes(station);
+    if (isRadio && info.radio_metadata) applyRadioMetadata(info.radio_metadata);
     $("current-title").textContent = STATIONS.find(s => s[0] === station)?.[1] || details?.title || "Kein Sender ausgewählt";
     if (!isRadio) {
       const line = details?.artist && details?.title ? details.artist + " – " + details.title : "";
@@ -268,6 +269,26 @@ async function updateSong() {
 }
 // One backend monitor polls radio metadata, all open clients receive changes.
 let radioEventsReady = false;
+function applyRadioMetadata(update) {
+  if (!radioReadyForViews || update.station !== selectedStation) return;
+  const item = update.metadata;
+  if (item?.status === "available" && (item.title || item.show)) {
+    lastStationMetadata.set(selectedStation, {value:item, at:Date.now()});
+    renderRadioMetadata(selectedStation, item);
+  } else {
+    const prior = lastStationMetadata.get(selectedStation);
+    if (prior && Date.now() - prior.at < METADATA_GRACE_MS) {
+      const station = selectedStation;
+      const generation = uiGeneration;
+      renderRadioMetadata(station, prior.value);
+      setTimeout(() => {
+        if (generation === uiGeneration && radioReadyForViews && selectedStation === station &&
+            lastStationMetadata.get(station) === prior && Date.now() - prior.at >= METADATA_GRACE_MS)
+          renderRadioMetadata(station, null);
+      }, METADATA_GRACE_MS - (Date.now() - prior.at));
+    } else renderRadioMetadata(selectedStation, null);
+  }
+}
 function connectRadioEvents() {
   if (!window.EventSource) return;
   if (strictStandby || !radioReadyForViews || radioEventSource) return;
@@ -286,24 +307,7 @@ function connectRadioEvents() {
         updateStationLogo(selectedStation);
         $("current-title").textContent = STATIONS.find(s => s[0] === selectedStation)?.[1] || selectedStation;
       }
-      if (update.station !== selectedStation) return;
-      const item = update.metadata;
-      if (item?.status === "available" && (item.title || item.show)) {
-        lastStationMetadata.set(selectedStation, {value:item, at:Date.now()});
-        renderRadioMetadata(selectedStation, item);
-      } else {
-        const prior = lastStationMetadata.get(selectedStation);
-        if (prior && Date.now() - prior.at < METADATA_GRACE_MS) {
-          const station = selectedStation;
-          renderRadioMetadata(station, prior.value);
-          setTimeout(() => {
-            if (radioEventSource === source && radioReadyForViews && selectedStation === station &&
-                lastStationMetadata.get(station) === prior && Date.now() - prior.at >= METADATA_GRACE_MS)
-              renderRadioMetadata(station, null);
-          }, METADATA_GRACE_MS - (Date.now() - prior.at));
-        }
-        else renderRadioMetadata(selectedStation, null);
-      }
+      applyRadioMetadata(update);
     } catch (_) { /* Ignore invalid event payloads. */ }
   };
 }

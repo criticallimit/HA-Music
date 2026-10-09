@@ -504,6 +504,9 @@ def radio_start_sequence(generation):
             check_generation(generation)
             READY = True
             STARTED_AT = None
+            # Radiotext belongs to the displayed preset, independently of
+            # whether Alexa accepts its later volume/playback commands.
+            MONITOR.select(last_selected_station())
         print("[HA Music] Interface released after 50-second wait", flush=True)
         try:
             startup_request(generation, "/services/input_boolean/turn_on", {"entity_id": RADIO_READY})
@@ -796,7 +799,9 @@ def playback_status():
                          "content_type": attrs.get("media_content_type")})
     active = next((p for p in observed if p["state"] == "playing"), None)
     details = next((p for p in observed if p["title"] or p["artist"]), None)
+    _, station, payload = MONITOR.snapshot()
     return {"playing": active is not None, "players": observed,
+            "radio_metadata": {"station": station, "metadata": payload},
             "transport": group_transport_state(states),
             "details": active if active and (active["title"] or active["artist"]) else details}
 

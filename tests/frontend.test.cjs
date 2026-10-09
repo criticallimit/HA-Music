@@ -233,3 +233,22 @@ test('Lovelace errors are rendered as text rather than HTML', () => {
   assert.equal(loading.textContent,message);
   assert.equal(shadowRoot.innerHTML.includes(message),false);
 });
+
+test('regular playback reply restores radiotext after missing event delivery', async () => {
+  const h = harness();
+  h.context.reply=async()=>({playing:true,radio_metadata:{station:'wdr2',metadata:{status:'available',title:'Track',artist:'Artist'}}});
+  h.run('api=reply; radioReadyForViews=true; selectedStation="wdr2"');
+  await h.run('updateSong()');
+  assert.equal(h.get('now-ticker-text').textContent,'Artist – Track');
+  assert.equal(h.get('current-artist').textContent,'Aktueller Radiotext');
+});
+
+test('cached radio snapshot cannot overwrite another station or wake standby', async () => {
+  const h = harness();
+  h.context.reply=async()=>({playing:true,radio_metadata:{station:'swr3',metadata:{status:'available',title:'Wrong',artist:'Artist'}}});
+  h.run('api=reply; radioReadyForViews=true; selectedStation="wdr2"');
+  await h.run('updateSong()');
+  assert.equal(h.get('now-ticker-text').textContent,'');
+  h.run('radioReadyForViews=false; applyRadioMetadata({station:"wdr2",metadata:{status:"available",title:"Wrong",artist:"Artist"}})');
+  assert.equal(h.get('now-ticker-text').textContent,'');
+});

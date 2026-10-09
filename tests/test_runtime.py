@@ -34,6 +34,7 @@ class RuntimeTests(unittest.TestCase):
         app.OPTIONS.write_text(json.dumps({"devices": [{"entity_id": entity, "name": entity, "enabled": True} for entity in ("media_player.wohnung", "media_player.wohnzimmer", "media_player.kueche", "media_player.bad", "media_player.buero")]}))
         self.stack.enter_context(patch.object(app, "synchronize_device_configuration"))
         self.monitor = self.stack.enter_context(patch.object(app, "MONITOR"))
+        self.monitor.snapshot.return_value = (0, "", None)
         self.timer = self.stack.enter_context(patch.object(app.threading, "Timer"))
         self.stack.enter_context(patch.object(app, "urlopen", side_effect=AssertionError("Unexpected network")))
         self.stack.enter_context(patch.object(app, "verify_restored_volumes"))
@@ -250,6 +251,15 @@ class RuntimeTests(unittest.TestCase):
         self.assertEqual([delays[0], delays[2]], [40, 2])
         self.assertTrue(9 <= delays[1] <= 10)
         self.assertEqual(sum(c.args[0].endswith("play_media") for c in calls.call_args_list), 0)
+        self.monitor.select.assert_called_once_with("wdr2")
+
+    def test_playback_status_includes_cached_radiotext_without_new_fetch(self):
+        item = {"status": "available", "title": "Track", "artist": "Artist"}
+        self.monitor.snapshot.return_value = (3, "wdr2", item)
+        with patch.object(app, "state_snapshot", return_value=self.states), patch.object(app, "ha_request", side_effect=AssertionError("No extra request")):
+            response = app.playback_status()
+        self.assertEqual(response["radio_metadata"], {"station": "wdr2", "metadata": item})
+        self.monitor.select.assert_not_called()
 
     def test_time_release_precedes_probe_and_manual_controls_wait_for_preparation(self):
         app.save_selected_station("wdr2")
