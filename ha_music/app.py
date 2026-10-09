@@ -1253,12 +1253,12 @@ def apple_music_selection():
 def play_on_target(generation, target, media_type, content):
     if target not in enabled_device_ids():
         raise ValueError("Alexa-Abspielgerät ist deaktiviert")
-    if media_type == "custom":
+    if media_type in ("custom", "APPLE_MUSIC"):
         inventory = integration_inventory()
         sources = [domain for domain in ("alexa_media", "alexa_devices") if target in inventory.get(domain, [])]
         if len(sources) != 1:
             raise ValueError("Alexa-Integration des Abspielgeräts nicht eindeutig erkannt")
-        if sources[0] == "alexa_devices":
+        if media_type == "custom" and sources[0] == "alexa_devices":
             template = "{{ {'domain': config_entry_attr(config_entry_id('" + target + "'), 'domain'), 'device_id': device_id('" + target + "')} | to_json }}"
             raw = startup_request(generation, "/template", {"template":template})
             if not isinstance(raw, str):
@@ -1284,15 +1284,16 @@ def play_apple_music(favorite_id, generation, *, startup=False):
     startup_allowed = startup and READY and PREPARING and selection["target"] in enabled_device_ids()
     if not selection["available"] and not startup_allowed:
         raise ValueError("Apple-Music-Steuergerät ist nicht freigegeben oder HA Music ist noch nicht bereit")
-    phrase = ("spiele meine Playlist " if favorite["kind"] == "Playlist" else "spiele das Album ") + favorite["search"] + " auf Apple Music"
+    # Provider search phrase, not a full custom voice command.
+    phrase = ("meine Playlist " if favorite["kind"] == "Playlist" else "Album ") + favorite["search"]
     if favorite["kind"] == "Playlist":
         phrase += " in zufälliger Reihenfolge"
     if selection["group"]:
         phrase += " auf " + selection["group"]
     print("[HA Music] Apple playback request: " + json.dumps({"name":favorite["name"],
           "alexa_name":favorite["search"], "kind":favorite["kind"], "target":selection["target"],
-          "group":selection["group"], "command":phrase}, ensure_ascii=False), flush=True)
-    result = play_on_target(generation, selection["target"], "custom", phrase)
+          "group":selection["group"], "media_type":"APPLE_MUSIC", "command":phrase}, ensure_ascii=False), flush=True)
+    result = play_on_target(generation, selection["target"], "APPLE_MUSIC", phrase)
     with STATE_LOCK:
         check_generation(generation)
         save_selected_source("apple", favorite_id)
@@ -1939,4 +1940,3 @@ if __name__ == "__main__":
     threading.Thread(target=radio_switch_monitor, daemon=True).start()
     start_session_recovery()
     ThreadingHTTPServer(("0.0.0.0", PORT), Handler).serve_forever()
-

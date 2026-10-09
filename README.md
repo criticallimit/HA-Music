@@ -48,7 +48,7 @@ Bei regulärem Einschalten werden nicht bestätigte Raumlautstärken anhand fris
 
 Sicherung vor der vereinfachten Raumlautstärke-Anzeige: [backup/main-2026-10-09-before-single-volume-4030c64](https://github.com/criticallimit/HA-Music/tree/backup/main-2026-10-09-before-single-volume-4030c64), Commit `4030c647d266327ec87a5d1ca87d30e769d976f6`.
 
-Eigene Abspieltexte wie Apple-Playlists und ARD-Radio werden passend zur registrierten Integration gesendet: `custom` über `media_player.play_media` für Alexa Media Player, `alexa_devices.send_text_command` für die offizielle Alexa Devices-Integration. Letztere interpretiert den Medientyp bei `play_media` als Anbieterkennung, daher ist `custom` dort kein gleichwertiger Abspielweg. Gerät und Integration werden für Textbefehle aus HA verifiziert; bei unklarer Zuordnung wird kein anderes Gerät verwendet. Quelle: [Alexa Devices-Abspielimplementierung](https://github.com/home-assistant/core/blob/dev/homeassistant/components/alexa_devices/media_player.py), [Textbefehl-Service](https://github.com/home-assistant/core/blob/dev/homeassistant/components/alexa_devices/services.yaml).
+Apple-Playlists und Alben verwenden `media_player.play_media` mit der Anbieterkennung `APPLE_MUSIC`, sowohl für Alexa Media Player als auch für die offizielle Alexa Devices-Integration. Eigene Radiotexte verwenden weiterhin `custom` für Alexa Media Player beziehungsweise `alexa_devices.send_text_command` für Alexa Devices. Gerät und Integration werden aus HA verifiziert; bei unklarer Zuordnung wird kein anderes Gerät verwendet. Quelle: [Alexa Devices-Abspielimplementierung](https://github.com/home-assistant/core/blob/dev/homeassistant/components/alexa_devices/media_player.py), [Textbefehl-Service](https://github.com/home-assistant/core/blob/dev/homeassistant/components/alexa_devices/services.yaml), [Alexa Media Player: Apple Music](https://github.com/alandtse/alexa_media_player/wiki#apple-music).
 
 Nach einem erfolgreich gesendeten Apple-Favoritenbefehl verschwindet das alte Senderlogo sofort, auch während einer bereits laufenden Zustandsabfrage. Bekannte alte Radio-Logos und Radio-/Channel-Metadaten werden in dieser Auswahl verworfen. Das bestätigt den gesendeten Befehl, nicht die tatsächliche Apple-Wiedergabe.
 
@@ -238,3 +238,8 @@ Im Protokoll bestätigt `Startup master reapplied after playback` den zusätzlic
 
 Sicherung davor: [backup/main-2026-10-09-before-delayed-start-volume-7addae9](https://github.com/criticallimit/HA-Music/tree/backup/main-2026-10-09-before-delayed-start-volume-7addae9), Commit `7addae96aa53eb1cd1624701e9a065ecea93c6af`.
 
+### Apple-Music-Anbieterübergabe
+
+Apple-Favoriten starten jetzt mit `media_content_type: APPLE_MUSIC`. Die Suchanfrage enthält den unveränderten Alexa-Namen, den Typ (`meine Playlist` oder `Album`), bei Playlists den Shuffle-Wunsch und gegebenenfalls `auf <Gruppenname>`. Der vollständige Sprachbefehl mit `spiele` und `auf Apple Music` entfällt. Es wird genau ein Abspielauftrag gesendet, ohne zusätzlichen Textbefehl oder Wiederholungsstart. Auswahl und Wiederanlauf verwenden denselben Anbieterweg. Ob Alexa persönliche Playlists, Gruppen und Shuffle damit auf der Installation richtig erkennt, muss nach Neuaufbau getestet werden; ein angenommener Serviceaufruf bestätigt keine hörbare Wiedergabe.
+
+Sicherung davor: [backup/main-2026-10-09-before-apple-provider-76b7012](https://github.com/criticallimit/HA-Music/tree/backup/main-2026-10-09-before-apple-provider-76b7012), Commit `76b70123329aa7679c24baa6020c2eb60f1d1d58`.
