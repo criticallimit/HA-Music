@@ -241,12 +241,19 @@ def normalize_library(entries, *, legacy=False):
                 continue
             raise ValueError("Name und Alexa-Name müssen 1 bis 200 Zeichen enthalten; Art: Playlist oder Album")
         item = {"name": name.strip(), "kind": kind, "search": search.strip()}
+        if "command" in entry:
+            command = entry["command"]
+            if not isinstance(command, str) or not command.strip() or len(command) > 500 or any(ord(c) < 32 for c in command):
+                raise ValueError("Alexa-Text muss 1 bis 500 Zeichen ohne Zeilenumbrüche enthalten")
+            item["command"] = command
         if "album_id" in entry:
             if kind != "Album" or type(entry["album_id"]) is not int or not 0 < entry["album_id"] < 10**16:
                 raise ValueError("Ungültige Albumzuordnung")
             item["album_id"] = entry["album_id"]
         existing = next((saved for saved in result if all(saved[key] == item[key] for key in ("name", "kind", "search"))), None)
         if existing is not None:
+            if existing.get("command") != item.get("command"):
+                raise ValueError("Doppelte Einträge mit verschiedenen Alexa-Texten: unterschiedliche Anzeigenamen verwenden")
             if existing.get("album_id") != item.get("album_id"):
                 raise ValueError("Doppelter Albumeintrag: für verschiedene Versionen unterschiedliche Namen verwenden")
         else:
@@ -1285,7 +1292,7 @@ def play_apple_music(favorite_id, generation, *, startup=False):
     if not selection["available"] and not startup_allowed:
         raise ValueError("Apple-Music-Steuergerät ist nicht freigegeben oder HA Music ist noch nicht bereit")
     media_type = "custom"
-    phrase = ("spiel playlist " if favorite["kind"] == "Playlist" else "spiel album ") + favorite["name"]
+    phrase = favorite.get("command", ("spiel playlist " if favorite["kind"] == "Playlist" else "spiel album ") + favorite["name"])
     print("[HA Music] Apple playback request: " + json.dumps({"name":favorite["name"],
           "playback_name":favorite["name"], "kind":favorite["kind"], "target":selection["target"],
           "group":"",

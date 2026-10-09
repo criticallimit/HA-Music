@@ -733,12 +733,15 @@ test('library editor saves current category and preserves albums without playbac
   h.run('api=reply; radioReadyForViews=true');
   await h.run('openLibraryEditor("Playlist")');
   assert.equal(h.get('library-editor').open,true);
+  assert.equal(h.run('libraryEditorRows[0].command.value'),'spiel playlist Old');
   h.run('libraryEditorRows[0].name.value="New"');
+  h.run('libraryEditorRows[0].command.value="  spiele meine Playlist Dirk auf Apple Music auf Wohnung  "');
   await h.run('submitLibraryEditor({preventDefault(){}})');
   assert.equal(h.get('library-editor').open,false);
   assert.equal(calls[1].body.revision,'r');
   assert.equal(calls[1].body.items.find(i=>i.kind==='Album').name,'Album');
   assert.equal(calls[1].body.items.find(i=>i.kind==='Playlist').name,'New');
+  assert.equal(calls[1].body.items.find(i=>i.kind==='Playlist').command,'  spiele meine Playlist Dirk auf Apple Music auf Wohnung  ');
   assert.equal(h.run('appleButtons.has("new")'),true);
   assert.ok(calls.every(c=>c.action==='apple-library'));
 });
@@ -849,4 +852,3 @@ test('saved covers take priority over old remote browser results', () => {
   assert.equal(h.run('appleButtons.get("a").coverImage.src'),'api/album-art/12');
   assert.equal(h.timers.some(timer=>timer.delay===4500),false);
 });
-

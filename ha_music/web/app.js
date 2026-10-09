@@ -461,19 +461,21 @@ function libraryEditorControls(busy) {
   for (const id of ["library-editor-save", "library-editor-add", "library-editor-close", "library-editor-cancel"])
     $(id).disabled = busy;
   for (const row of libraryEditorRows) {
-    row.name.disabled = busy; row.search.disabled = busy; row.remove.disabled = busy;
+    row.name.disabled = busy; row.search.disabled = busy; row.command.disabled = busy; row.remove.disabled = busy;
     if (row.coverButton) row.coverButton.disabled = busy;
   }
 }
 function addLibraryEditorRow(item = {}) {
   const container = document.createElement("div"); container.className = "library-editor-row";
   const row = {container, albumId:item.album_id};
-  for (const [field, text] of [["name", "Name für Anzeige und Wiedergabe"], ["search", "Cover-Suchname (optional)"]]) {
+  for (const [field, text] of [["name", "Anzeigename"], ["command", "Text an Alexa"], ["search", "Cover-Suchname"]]) {
     const label = document.createElement("label"); label.textContent = text;
-    const input = document.createElement("input"); input.type = "text"; input.maxLength = 200;
-    input.required = field === "name"; input.value = item[field] || "";
+    const input = document.createElement("input"); input.type = "text"; input.maxLength = field === "command" ? 500 : 200;
+    input.required = field !== "search";
+    input.value = field === "command" ? (item.command ?? (item.name ? (libraryEditorKind === "Playlist" ? "spiel playlist " : "spiel album ") + item.name : "")) : (item[field] || "");
+    if (field === "command") input.placeholder = libraryEditorKind === "Playlist" ? "spiel playlist Dirk" : "spiel album Albumtitel";
     label.appendChild(input);
-    if (field === "name" || libraryEditorKind === "Album") container.appendChild(label);
+    if (field !== "search") container.appendChild(label);
     row[field] = input;
   }
   row.remove = document.createElement("button"); row.remove.type = "button"; row.remove.textContent = "Entfernen";
@@ -552,7 +554,7 @@ async function submitLibraryEditor(event) {
   if (libraryEditorBusy || !libraryEditorSnapshot) return;
   const items = libraryEditorSnapshot.items.filter(item => item.kind !== libraryEditorKind);
   for (const row of libraryEditorRows)
-    items.push({kind:libraryEditorKind, name:row.name.value.trim(), search:row.search.value.trim(), ...(row.albumId ? {album_id:row.albumId} : {})});
+    items.push({kind:libraryEditorKind, name:row.name.value.trim(), command:row.command.value, search:row.search.value.trim(), ...(row.albumId ? {album_id:row.albumId} : {})});
   libraryEditorControls(true); $("library-editor-feedback").textContent = "Speichere …";
   try {
     const result = await api("apple-library", {items, revision:libraryEditorSnapshot.revision});

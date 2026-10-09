@@ -881,6 +881,41 @@ class RuntimeTests(unittest.TestCase):
         self.assertIsNone(app.ACTIVE_APPLE)
         self.assertEqual(app.last_selected_station(), "wdr2")
 
+    def test_custom_library_text_is_durable_exact_and_reused_at_startup(self):
+        for kind in ("Playlist", "Album"):
+            with self.subTest(kind=kind):
+                text = "  spiele meine Playlist Dirk auf Apple Music auf Wohnung  "
+                snapshot = app.library_snapshot()
+                app.save_library({"items":[{"name":"Anzeige", "kind":kind, "command":text}], "revision":snapshot["revision"]})
+                app.READY, app.PREPARING = True, False
+                favorite = app.apple_music_selection()["items"][0]
+                identity = favorite["id"]
+                self.assertEqual(json.loads(app.LIBRARY_FILE.read_text())[0]["command"], text)
+                for startup in (False, True):
+                    app.PREPARING = startup
+                    with patch.object(app, "ha_request", return_value={}) as request:
+                        app.play_apple_music(identity, 10, startup=startup)
+                    request.assert_called_once_with("/services/media_player/play_media", {
+                        "entity_id":"media_player.wohnzimmer", "media":{
+                            "media_content_type":"custom", "media_content_id":text, "metadata":{}}})
+                snapshot = app.library_snapshot()
+                edited = dict(snapshot["items"][0], command="spiel playlist anderer Name")
+                app.save_library({"items":[edited], "revision":snapshot["revision"]})
+                self.assertEqual(app.apple_music_selection()["items"][0]["id"], identity)
+
+    def test_invalid_custom_library_text_preserves_existing_file(self):
+        snapshot = app.save_library({"items":[{"name":"Saved", "kind":"Playlist", "command":"spiel playlist Saved"}],
+                                     "revision":app.library_snapshot()["revision"]})
+        for command in (None, 42, "", " ", "test\nnext", "test\x00", "x"*501):
+            with self.subTest(command=command), self.assertRaises(ValueError):
+                app.save_library({"items":[{"name":"Saved", "kind":"Playlist", "command":command}], "revision":snapshot["revision"]})
+            self.assertEqual(app.library_snapshot(), snapshot)
+
+    def test_duplicate_favorite_with_conflicting_command_is_rejected(self):
+        with self.assertRaisesRegex(ValueError, "verschiedenen Alexa-Texten"):
+            app.normalize_library([{"name":"Dirk", "kind":"Playlist", "command":command}
+                                   for command in ("spiel playlist Dirk", "spiel playlist Mo")])
+
     def test_library_add_edit_remove_is_durable_and_does_not_change_options(self):
         original = app.options()
         for entries in ([{"name":"Neu", "kind":"Playlist"}],
