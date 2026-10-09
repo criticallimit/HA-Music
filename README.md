@@ -22,7 +22,7 @@ Die konkrete Installation verwendet weiterhin `switch.alexa_alle`, `input_boolea
 
 ## Räume und Gruppenwiedergabe steuern
 
-Die Raum-Schalter zeigen **Hörbar** oder **Stumm**. Ein Klick schaltet ausschließlich die Raumlautstärke um; die Alexa-Gruppenwiedergabe läuft weiter. Beim Stummschalten wird die zuletzt eingestellte positive Lautstärke dauerhaft gespeichert und beim erneuten Hörbarschalten wiederhergestellt. Ohne gespeicherten Wert wird eine positive Master-Lautstärke verwendet, andernfalls 30%. Lautstärkeregler bleiben unabhängig bedienbar.
+Die Raum-Schalter zeigen dasselbe kleine **Lautsprechersymbol** wie der Master: normal bei hörbarer Lautstärke, durchgestrichen bei Stummschaltung. Ein Klick schaltet ausschließlich die Raumlautstärke um; die Alexa-Gruppenwiedergabe läuft weiter. Beim Stummschalten wird die zuletzt eingestellte positive Lautstärke dauerhaft gespeichert und beim erneuten Hörbarschalten wiederhergestellt. Ohne gespeicherten Wert wird eine positive Master-Lautstärke verwendet, andernfalls 30%. Lautstärkeregler bleiben unabhängig bedienbar.
 
 Direkt neben dem Lautsprechersymbol des Masters sitzt ein gleich großes **Play/Pause-Symbol** für die gesamte Gruppe. Es zeigt Pause bei laufender Wiedergabe und Play bei pausierter Wiedergabe. Es ist nur aktiv, wenn Home Assistant den passenden Gruppenzustand und die benötigte Funktion meldet. Fortsetzen startet keinen neuen Sender aus einem inaktiven/unbekannten Zustand. Raum-Schalter, Gruppen-Pause und das zentrale Ausschalten sind unterschiedliche Funktionen: Nur der zentrale HA-Music-Ausschaltbutton startet den Netzwerk-Standby. Ein Pausebefehl an ein einzelnes Alexa-Gruppenmitglied könnte die gesamte Gruppe pausieren; deshalb gibt es keine individuellen Pausebuttons.
 

@@ -5,6 +5,8 @@ Geprüft: sämtliche Python-Module, Ingress-Frontend (HTML/CSS/JS), Lovelace-Kar
 
 ## Abschließende Ablaufprüfung und neue Startvorgabe
 
+Darstellungsnachtrag: Die breiten Hörbar/Stumm-Textbuttons der Räume verwenden jetzt dieselben 34-Pixel-Buttons und 22-Pixel-Lautsprechersymbole wie der Master. Bei 0% erscheint das durchgestrichene Symbol. Beschriftungen für Screenreader, Tooltip, Tastaturbedienung und die bisherige Lautstärke-/Stummschaltfunktion bleiben erhalten. Dafür entfallen ausschließlich die CSS-Ausnahmen der Raum-Textbuttons.
+
 Neueste Anzeigevorgabe: Hinweis-/Fehlerbanner sind auf Nutzerwunsch vollständig entfernt, einschließlich Meldungselement, Styles, Timer und Lautstärkehinweis. Detaillierte Startfehler werden nicht mehr zentral eingeblendet; normale Zustände wie Countdown und „nicht verfügbar“ bleiben als Bedienzustand erhalten. Browserfehler werden nur in die Konsole geschrieben, fehlgeschlagene oder abgelehnte Steueranfragen zusätzlich im Add-on-Protokoll erfasst. Der Start-/Reload-/Lautstärkeablauf ist davon unverändert. Die drei Banner-Timertests entfallen mit dieser Funktion; es bleiben 19 Frontend-Tests. Frühere Aussagen zu eingeblendeten Meldungen und deren Laufzeit gelten damit nicht mehr.
 
 ### Korrektur nach echtem Startprotokoll: Reload nach Einschaltzeit
