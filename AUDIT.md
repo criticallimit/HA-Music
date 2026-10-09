@@ -1,5 +1,9 @@
 # Codeprüfung HA Music – 9. Oktober 2026
 
+## Apple-Music-Oberfläche vorbereitet
+
+Der Apple-Music-Reiter verwendet dieselben laufenden Cover- und Geräteelemente wie Radio. Nur die Senderauswahl wird gegen leere Bereiche für Playlists und Alben ausgetauscht. Keine zusätzlichen Netzwerkabfragen, keine Änderung von Startzeiten, Backend, Version oder Abspielverhalten. Die Kontoverknüpfung und eigentliche Apple-Music-Auswahl/Wiedergabe sind noch nicht implementiert. Frontend-Regressionen (21 Tests), Syntax- und Scaffold-Prüfung erfolgreich. Der geplante zusätzliche Browsertest für responsive Darstellung konnte nicht durchgeführt werden: Edge beendet sich beim Start im Ausführungssandbox. Visuelle Kontrolle im echten Ingress bleibt erforderlich.
+
 Ausgangsstand: `ffb3768` auf `main`, Add-on-Version `0.0.6`.
 Geprüft: sämtliche Python-Module, Ingress-Frontend (HTML/CSS/JS), Lovelace-Karte und Loader, Startskript, Container-/Add-on-Konfiguration, Workflow, Tests und Dokumentation. Keine separate Branch, kein Release, keine Versionsänderung.
 

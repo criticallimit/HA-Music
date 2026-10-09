@@ -111,6 +111,15 @@ async function controlGroup(command) {
 let radioEventSource = null;
 function show(page) {
   const radio = page === "radio";
+  // Move the live elements rather than clone them: both views share controls,
+  // current artwork, listeners and the existing polling/event subscriptions.
+  const dashboard = $(radio ? "radio-page" : "apple-page");
+  for (const selector of [".now", ".dashboard-right"]) {
+    const panel = document.querySelector(selector);
+    if (panel.parentElement !== dashboard) dashboard.appendChild(panel);
+  }
+  $("station-list").hidden = !radio;
+  $("apple-library").hidden = radio;
   $("radio-page").hidden = !radio;
   $("apple-page").hidden = radio;
   $("radio-tab").classList.toggle("active", radio);

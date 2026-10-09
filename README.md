@@ -1,6 +1,12 @@
 # HA Music
 
-Home-Assistant-Add-on für Alexa-Multiroom-Radio mit Ingress-Oberfläche und Lovelace-Karte. Entwicklungsstand auf `main`, Version **0.0.6**. Apple Music ist weiterhin ein Platzhalter; es gibt keinen Apple-Music-Login.
+Home-Assistant-Add-on für Alexa-Multiroom-Radio mit Ingress-Oberfläche und Lovelace-Karte. Entwicklungsstand auf `main`, Version **0.0.6**. Die Apple-Music-Oberfläche ist vorbereitet; Kontoverknüpfung, Mediathekabruf und Apple-Music-Startbefehle sind noch nicht implementiert.
+
+## Apple-Music-Oberfläche
+
+Der vorhandene Button **Apple Music** öffnet eine Seite im gleichen Layout wie Radio. Cover/Logo, laufende Wiedergabe, Master-Lautstärke, Play/Pause und sämtliche aktiv ausgewählten Raumgeräte werden gemeinsam verwendet. Die bestehenden Elemente werden beim Umschalten verschoben, nicht dupliziert; dadurch bleiben Lautstärken, Bedienung und vorhandene Abfragen erhalten. Anstelle der Radiosender erscheinen vorbereitete Bereiche für **Playlists** und **Alben**, zunächst mit ehrlichen Leeranzeigen. Es gibt noch keine persönlichen Inhalte oder funktionslosen Abspielkacheln.
+
+Das Umschalten ändert ausschließlich die gespeicherte Ansicht. Es startet oder stoppt keine Musik und verändert keine Lautstärken. Ein bereits laufender Sender bleibt sichtbar und hörbar. Die feste Startreihenfolge und der gespeicherte Radiosender bleiben unverändert. Für die nächste Ausbaustufe sollen persönliche Favoriten über ein zuvor in Alexa verknüpftes Apple-Music-Konto abgespielt werden; eine automatisch geladene Mediathek benötigt zusätzlich MusicKit/Apple Music API.
 
 ## Installation
 

@@ -51,6 +51,10 @@ nav button.active{background:#275276;border-color:#4d8bb8;color:#fff}
 .player-row button::after{content:"";display:block;width:22px;height:22px;background-size:contain;background-repeat:no-repeat;background-position:center;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23b9c7d5' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M11 5 6 9H3v6h3l5 4V5Z'/%3E%3Cpath d='M15 9a5 5 0 0 1 0 6'/%3E%3Cpath d='M18 6a9 9 0 0 1 0 12'/%3E%3C/svg%3E")}
 .player-row button.is-muted::after{background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23b9c7d5' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M11 5 6 9H3v6h3l5 4V5Z'/%3E%3Cpath d='m16 9 5 6m0-6-5 6'/%3E%3C/svg%3E")}
 .stations{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin-top:auto}
+.apple-library{display:flex;flex-direction:column;gap:16px}
+.apple-library-section h2{font-size:14px;font-weight:600;margin:4px 0 10px;color:var(--text)}
+.apple-empty{grid-column:1/-1;margin:0;min-height:82px;padding:20px 16px;display:flex;align-items:center;border:1px solid var(--border);border-radius:18px;background:var(--surface);color:var(--muted);font-size:14px;line-height:1.4}
+.apple-library-note{margin:0;color:var(--muted);font-size:12px;line-height:1.5}
 .station{min-height:108px;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:10px;padding:10px 5px;font-size:14px;font-weight:600;white-space:nowrap}
 .station:hover:not(:disabled){background:#293441;border-color:#61768b}
 .station.active,.station.active:disabled{background:#254d6a;border-color:#60b6f2;opacity:1}

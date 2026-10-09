@@ -13,11 +13,16 @@
 <div id="groups" class="sr-info">Prüfe Wohnung …</div>
 <div id="players" class="players speaker-list" aria-label="Lautsprecher">Lade Geräte …</div>
 <div id="station-list" class="stations" aria-label="Senderauswahl"></div>
+<div id="apple-library" class="apple-library" hidden aria-label="Apple-Music-Auswahl">
+  <section class="apple-library-section" aria-labelledby="apple-playlists-title"><h2 id="apple-playlists-title">Playlists</h2><div id="apple-playlist-list" class="stations"><p class="apple-empty">Noch keine Playlists verbunden.</p></div></section>
+  <section class="apple-library-section" aria-labelledby="apple-albums-title"><h2 id="apple-albums-title">Alben</h2><div id="apple-album-list" class="stations"><p class="apple-empty">Noch keine Alben verbunden.</p></div></section>
+  <p class="apple-library-note">In Vorbereitung: Deine Auswahl erscheint hier nach der Einrichtung von Apple Music.</p>
+</div>
 
 <div id="excluded" class="sr-info"></div>
 </div>
 </section>
-<section id="apple-page" hidden><article class="notice"><h2>Apple Music</h2><p>In Vorbereitung. Später sind Alben, Playlists und Familienprofile vorgesehen.</p></article></section>
+<section id="apple-page" class="dashboard" hidden aria-label="Apple Music"></section>
 <dialog id="dashboard-settings" class="dashboard-settings" aria-labelledby="dashboard-settings-title">
   <div class="settings-heading"><h2 id="dashboard-settings-title">Dashboard-Karte einrichten</h2><button type="button" id="settings-close" aria-label="Schließen">×</button></div>
   <p>HA Music stellt die Lovelace-Kartendateien beim Start automatisch unter <code>/local/</code> bereit. Die Ressource muss in Home Assistant einmal registriert werden.</p>
