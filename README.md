@@ -95,7 +95,9 @@ node --check ha_music/lovelace/ha-music-card.js
 node --check ha_music/lovelace/ha-music-card-loader.js
 ```
 
-Die CI führt diese Prüfungen bei Push auf `main` aus. Entwicklung direkt auf `main`; Releases nur nach ausdrücklicher Freigabe. Befunde, Änderungen, Testumfang und verbleibende Risiken: [Codeprüfung vom 9. Oktober 2026](AUDIT.md).
+Die CI führt diese Prüfungen bei Push auf `main` aus. Geprüfte Änderungen werden auf `main` übernommen; vor jeder Änderung wird dessen exakter bisheriger Commit in einem neuen Backup-Branch gesichert und überprüft. Die Arbeitsregeln stehen in [AGENTS.md](AGENTS.md). Releases, Versionsänderungen und Installationen nur nach ausdrücklicher Freigabe. Befunde, Änderungen, Testumfang und verbleibende Risiken: [Codeprüfung vom 9. Oktober 2026](AUDIT.md).
+
+Rückkehrpunkt vor der automatischen Wiederanbindung und den Titel-/Shuffle-Bedienelementen: [backup/main-2026-10-09-before-playback-recovery-7d93a7c](https://github.com/criticallimit/HA-Music/tree/backup/main-2026-10-09-before-playback-recovery-7d93a7c), Commit `7d93a7ca1965850bdb6899ec330096b608e52e6b`, Add-on-Version `0.0.6`. Die GitHub-Prüfung dieses Stands war erfolgreich; die bekannten Neustartfehler sind darin noch enthalten. Für eine Rückkehr wird nach Sicherung des dann aktuellen `main` ein neuer Commit mit dem gesicherten Dateistand erstellt. So bleibt die Historie erhalten. Die Code-Sicherung umfasst keine laufenden HA-Zustände oder Add-on-Daten unter `/data`; vor einer Installation zusätzlich eine Home-Assistant-Sicherung anlegen.
 
 Alte Gerätewerte `enabled: true/false` bleiben beim Umstieg gültig. Beim nächsten Start des Add-ons werden sie automatisch in `status: Aktiv/Inaktiv` umgewandelt und aus der gespeicherten Liste entfernt. Anschließend die Konfigurationsseite neu öffnen. Das optionale Feld „Bisherige Auswahl“ dient nur der Kompatibilität; wenn ein HA-Music-Status gesetzt ist, gilt dieser. Neu erkannte Geräte erhalten `Inaktiv`.
 
