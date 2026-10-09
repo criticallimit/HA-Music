@@ -93,17 +93,17 @@ class RuntimeTests(unittest.TestCase):
         phases = []
         def wait(generation, seconds):
             phases.append(seconds)
-            if phases == [45, 2]:
+            if phases == [50, 2]:
                 self.states["media_player.wohnzimmer"]["state"] = "idle"
             return True
         def request(path, body=None):
             if path.endswith("volume_set") and body["volume_level"] == 0.01:
-                self.assertEqual(phases, [45, 2])
+                self.assertEqual(phases, [50, 2])
             return {}
         with patch.object(app, "wait_for_start", side_effect=wait), patch.object(app, "state_snapshot", return_value=self.states), patch.object(app, "allowed_entities", return_value={"media_player.wohnung", "media_player.wohnzimmer"}), patch.object(app, "ha_request", side_effect=request) as calls:
             app.radio_start_sequence(10)
         self.assertTrue(app.READY)
-        self.assertEqual(phases, [45, 2, 2])
+        self.assertEqual(phases, [50, 2, 2])
         self.assertEqual(sum(c.args[0].endswith("play_media") for c in calls.call_args_list), 1)
 
     def test_permanently_unavailable_target_fails_before_probe_and_names_entity(self):
@@ -224,12 +224,12 @@ class RuntimeTests(unittest.TestCase):
 
     def test_wait_is_interruptible(self):
         app.CANCEL.set()
-        self.assertFalse(app.wait_for_start(10, 45))
+        self.assertFalse(app.wait_for_start(10, 50))
 
-    def test_delays_are_45_then_2_seconds(self):
+    def test_delays_are_50_then_2_seconds(self):
         with patch.object(app, "wait_for_start", return_value=True) as wait, patch.object(app, "state_snapshot", return_value=self.states), patch.object(app, "allowed_entities", return_value=set()), patch.object(app, "ha_request"):
             app.radio_start_sequence(10)
-        self.assertEqual([c.args for c in wait.call_args_list], [(10, 45), (10, 2)])
+        self.assertEqual([c.args for c in wait.call_args_list], [(10, 50), (10, 2)])
 
     def test_verification_cancellation_does_not_poll(self):
         with patch.object(app, "wait_for_start", return_value=False), patch.object(app, "state_snapshot") as states:

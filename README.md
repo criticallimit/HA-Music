@@ -9,7 +9,7 @@ Home-Assistant-Add-on für Alexa-Multiroom-Radio mit Ingress-Oberfläche und Lov
 ## Aktuelles Verhalten
 
 - Nach Add-on-Start bleibt das Netzwerk im Standby. Nur der Einschaltbutton in HA Music startet den Ablauf; ein externer Schalterwechsel oder Browserreload startet keinen Sender.
-- Nach Einschalten: 45 Sekunden warten, Alexa-Zustände aktualisieren, bekannte aktive Räume auf 1% setzen, zwei Sekunden warten, gespeicherten Sender anfordern und die gespeicherte Master-Lautstärke auf alle nicht stummen Räume anwenden. Stumme Räume und ein stummer Master bleiben bei 0%. Diese Angleichung erfolgt nur beim Start; anschließend lassen sich die Räume unabhängig regeln. Beim nächsten Start werden aktive Räume erneut an den Master angeglichen.
+- Nach Einschalten: 50 Sekunden warten, Alexa-Zustände aktualisieren, bekannte aktive Räume auf 1% setzen, zwei Sekunden warten, gespeicherten Sender anfordern und die gespeicherte Master-Lautstärke auf alle nicht stummen Räume anwenden. Stumme Räume und ein stummer Master bleiben bei 0%. Diese Angleichung erfolgt nur beim Start; anschließend lassen sich die Räume unabhängig regeln. Beim nächsten Start werden aktive Räume erneut an den Master angeglichen.
 - Die 50-Sekunden-Anzeige ist eine Schätzung. Ready wird erst nach erfolgreichen Serviceaufrufen gesetzt; hörbare Wiedergabe kann später beginnen. Fehler sind sichtbar, Lautstärkebestätigungen erfolgen asynchron.
 - Meldet Home Assistant das gespeicherte Senderziel nach der Geräteaktualisierung noch als unbekannt/nicht verfügbar, wartet der Start vor der 1%-Probe bis zu zwölf zusätzliche Sekunden auf dessen Verfügbarkeit. Die Wartephase ist abbrechbar und wiederholt keinen Senderbefehl. Bleibt das Ziel unerreichbar, nennt die Fehlermeldung Entity-ID und Zustand; der Start bleibt fehlgeschlagen. Das bestehende feste Senderziel ist `media_player.wohnzimmer`.
 - Beim Ausschalten werden Startabläufe und Metadaten abgebrochen. Nach zehn Sekunden sperrt das Add-on neue HA-Anfragen. Grenzen bereits laufender Netzwerk-/Alexa-Aufträge: [Prüfbericht](AUDIT.md).
@@ -28,7 +28,7 @@ Direkt neben dem Lautsprechersymbol des Masters sitzt ein gleich großes **Play/
 ## Geräte auswählen
 
 1. Nach dieser Änderung das Add-on-Repository aktualisieren und HA Music **neu aufbauen**.
-2. HA Music einmal über den lokalen Einschaltbutton starten. Nach der 45-Sekunden-Wartezeit werden alle registrierten Alexa-Media-Player in der Add-on-Konfiguration ergänzt.
+2. HA Music einmal über den lokalen Einschaltbutton starten. Nach der 50-Sekunden-Wartezeit werden alle registrierten Alexa-Media-Player in der Add-on-Konfiguration ergänzt.
 3. **Add-on → Konfiguration** neu öffnen. Unter **Alexa-Geräte** beim gewünschten Eintrag den **Stift** öffnen und **In Ingress anzeigen und steuern** an-/ausschalten. **Nicht löschen**: Bei Aus bleibt das Gerät zur späteren Aktivierung in der Liste. Bei Bedarf sind Entity-ID und Anzeigename editierbar; die Entity muss in einer unterstützten Alexa-Integration registriert sein.
 4. **Speichern** und das Add-on **neu starten**. Anschließend HA Music wieder lokal einschalten.
 

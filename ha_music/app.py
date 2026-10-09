@@ -421,7 +421,7 @@ def radio_start_sequence(generation):
     global READY, STARTUP_ERROR, STARTED_AT
     try:
         startup_request(generation, "/services/input_boolean/turn_off", {"entity_id": RADIO_READY})
-        if not wait_for_start(generation, 45):
+        if not wait_for_start(generation, 50):
             return
         if state_snapshot().get(RADIO_SWITCH, {}).get("state") != "on":
             raise RuntimeError("Radioschalter bestätigt Einschalten nicht")
