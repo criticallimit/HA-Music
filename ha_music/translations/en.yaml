@@ -25,6 +25,6 @@ configuration:
       enabled:
         name: Previous selection (automatically migrated)
         description: >-
-          Only for older configurations. The next power-on converts this value
+          Only for older configurations. The next add-on start converts this value
           to Aktiv or Inaktiv. An explicitly selected HA Music status takes precedence;
           the previous selection is removed.

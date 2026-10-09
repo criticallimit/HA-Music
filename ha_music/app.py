@@ -141,10 +141,11 @@ def merge_discovered_devices(config, found):
     return merged
 
 
-def supervisor_request(path, payload=None):
+def supervisor_request(path, payload=None, *, bootstrap=False):
     if path not in ("/addons/self/info", "/addons/self/options"):
         raise ValueError("Supervisor-Endpunkt nicht freigegeben")
-    response = ha_request(path, payload, supervisor=True)
+    kwargs = {"startup_configuration": True} if bootstrap else {}
+    response = ha_request(path, payload, supervisor=True, **kwargs)
     if not isinstance(response, dict) or response.get("result") != "ok":
         raise RuntimeError("Supervisor-Konfiguration konnte nicht gelesen/gespeichert werden")
     data = response.get("data") or {}
@@ -153,30 +154,41 @@ def supervisor_request(path, payload=None):
     return data
 
 
-def synchronize_device_configuration(generation):
+def synchronize_device_configuration(generation, *, migrate_only=False, bootstrap=False):
     global SUPERVISOR_OPTIONS
+    if bootstrap and (generation is not None or not migrate_only):
+        raise ValueError("Initialisierung darf nur vorhandene Geräteoptionen übernehmen")
+    def check_active():
+        if not bootstrap:
+            check_generation(generation)
+    def request(path, payload=None):
+        kwargs = {"bootstrap": True} if bootstrap else {}
+        return supervisor_request(path, payload, **kwargs)
     with DEVICE_SYNC_LOCK:
-        check_generation(generation)
-        current = supervisor_request("/addons/self/info").get("options")
+        check_active()
+        current = request("/addons/self/info").get("options")
         if not isinstance(current, dict):
             raise ValueError("Supervisor-Gerätekonfiguration fehlt")
-        found = detected_devices()
-        print("[HA Music] Alexa discovery: " + str(len(found)) + " media players: " +
-              ", ".join(device["entity_id"] for device in found), flush=True)
-        check_generation(generation)
+        found = [] if migrate_only else detected_devices()
+        if not migrate_only:
+            print("[HA Music] Alexa discovery: " + str(len(found)) + " media players: " +
+                  ", ".join(device["entity_id"] for device in found), flush=True)
+        check_active()
         merged = merge_discovered_devices(current, found)
         if merged != current:
             # Read again immediately before the write; preserve intervening edits.
-            latest = supervisor_request("/addons/self/info").get("options")
+            latest = request("/addons/self/info").get("options")
             if not isinstance(latest, dict):
                 raise ValueError("Supervisor-Gerätekonfiguration fehlt")
             merged = merge_discovered_devices(latest, found)
-            check_generation(generation)
+            check_active()
             if merged != latest:
-                supervisor_request("/addons/self/options", {"options": merged})
-        check_generation(generation)
+                request("/addons/self/options", {"options": merged})
+        check_active()
         with CONFIG_LOCK:
             SUPERVISOR_OPTIONS = deepcopy(merged)
+        if migrate_only:
+            print("[HA Music] Device status migration completed: Aktiv/Inaktiv", flush=True)
         print(f"[HA Music] Device configuration: {len(merged.get('devices', []))} entries", flush=True)
 def integration_inventory():
     """Expand loaded Alexa sources to each account's complete entity registry."""
@@ -558,9 +570,12 @@ def options():
     except (OSError, ValueError):
         return {}
 
-def ha_request(path, payload=None, *, supervisor=False):
+def ha_request(path, payload=None, *, supervisor=False, startup_configuration=False):
     global STATE_CACHE
-    if STANDBY.is_set():
+    configuration_access = startup_configuration and supervisor and path in ("/addons/self/info", "/addons/self/options")
+    if startup_configuration and not configuration_access:
+        raise ValueError("Initialisierung erlaubt nur die eigenen Supervisor-Optionen")
+    if STANDBY.is_set() and not configuration_access:
         raise RuntimeError("HA Music standby: outbound network disabled")
     if not TOKEN:
         raise RuntimeError("Home Assistant API token unavailable")
@@ -572,7 +587,7 @@ def ha_request(path, payload=None, *, supervisor=False):
     timeout = 30 if path == "/services/homeassistant/reload_config_entry" else 8
     with urlopen(req, timeout=timeout) as response:
         with RESPONSE_LOCK:
-            if STANDBY.is_set():
+            if STANDBY.is_set() and not configuration_access:
                 raise RuntimeError("HA Music standby: response cancelled")
             ACTIVE_RESPONSES.add(response)
         try:
@@ -1085,5 +1100,9 @@ class Handler(BaseHTTPRequestHandler):
             return self.reply(502, {"error": str(exc)})
 
 if __name__ == "__main__":
+    try:
+        synchronize_device_configuration(None, migrate_only=True, bootstrap=True)
+    except NETWORK_ERRORS as exc:
+        print(f"[HA Music] Device status migration pending: {exc}", flush=True)
     threading.Thread(target=radio_switch_monitor, daemon=True).start()
     ThreadingHTTPServer(("0.0.0.0", PORT), Handler).serve_forever()

@@ -104,6 +104,29 @@ class RuntimeTests(unittest.TestCase):
         self.assertIn("Alexa-Integration konnte nicht neu geladen", app.STARTUP_ERROR)
         self.assertEqual([c.args[0] for c in calls], ["/services/input_boolean/turn_off", "/services/homeassistant/reload_config_entry"])
 
+    def test_boot_migration_works_with_radio_off_and_no_alexa_queries(self):
+        original = app.options()
+        app.STANDBY.set()
+        app.LAST_POWER = "off"
+        with patch.object(app, "detected_devices", side_effect=AssertionError("No Alexa queries")), patch.object(app, "supervisor_request", side_effect=[{"options": original}, {"options": original}, {}]) as request:
+            SYNCHRONIZE(None, migrate_only=True, bootstrap=True)
+        self.assertTrue(all(call.kwargs.get("bootstrap") for call in request.call_args_list))
+        self.assertTrue(all(entry["status"] == "Aktiv" and "enabled" not in entry for entry in app.options()["devices"]))
+        self.assertTrue(app.STANDBY.is_set())
+        self.assertEqual(app.LAST_POWER, "off")
+        self.assertFalse(app.READY)
+
+    def test_boot_access_cannot_query_home_assistant_or_other_supervisor_paths(self):
+        app.STANDBY.set()
+        for path, supervisor in (("/states", False), ("/services/homeassistant/reload_config_entry", False), ("/addons/other/info", True)):
+            with self.subTest(path=path), self.assertRaises(ValueError):
+                app.ha_request(path, supervisor=supervisor, startup_configuration=True)
+        with patch.object(app, "TOKEN", "test"), patch.object(app, "urlopen") as opened:
+            opened.return_value.__enter__.return_value.read.return_value = b'{"result":"ok","data":{}}'
+            self.assertEqual(app.supervisor_request("/addons/self/info", bootstrap=True), {})
+            self.assertEqual(opened.call_count, 1)
+        self.assertTrue(app.STANDBY.is_set())
+
     def test_cancel_during_reload_stops_wait_and_all_later_commands(self):
         def request(path, body=None):
             if path.endswith("reload_config_entry"):
@@ -507,6 +530,15 @@ class DeviceConfigurationTests(unittest.TestCase):
         with patch.object(app, "detected_devices", return_value=self.found), patch.object(app, "supervisor_request", return_value={"options": config}) as request:
             SYNCHRONIZE(10)
         self.assertEqual(request.call_count, 1)
+
+    def test_migration_only_does_not_query_alexa_or_discover_devices(self):
+        original = app.options()
+        with patch.object(app, "detected_devices", side_effect=AssertionError("Alexa must not be queried")), patch.object(app, "supervisor_request", side_effect=[{"options": original}, {"options": original}, {}]) as request:
+            SYNCHRONIZE(10, migrate_only=True)
+        posted = request.call_args_list[-1].args[1]["options"]
+        self.assertEqual(len(posted["devices"]), len(original["devices"]))
+        self.assertTrue(all(entry["status"] == "Aktiv" and "enabled" not in entry for entry in posted["devices"]))
+        self.assertEqual(app.options(), posted)
 
     def test_status_selection_filters_devices_and_overrides_legacy_value(self):
         self.config([{"entity_id": "media_player.wohnzimmer", "name": "Wohnzimmer", "status": "Aktiv", "enabled": False},

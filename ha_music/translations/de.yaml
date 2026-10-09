@@ -25,6 +25,6 @@ configuration:
       enabled:
         name: Bisherige Auswahl (wird automatisch übernommen)
         description: >-
-          Nur für ältere Konfigurationen. Beim nächsten Einschalten wird dieser Wert
+          Nur für ältere Konfigurationen. Beim nächsten Start des Add-ons wird dieser Wert
           in Aktiv oder Inaktiv übernommen. Wenn der HA-Music-Status bereits gewählt
           ist, gilt dieser; die bisherige Auswahl wird entfernt.

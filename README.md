@@ -61,4 +61,6 @@ node --check ha_music/lovelace/ha-music-card-loader.js
 
 Die CI führt diese Prüfungen bei Push auf `main` aus. Entwicklung direkt auf `main`; Releases nur nach ausdrücklicher Freigabe. Befunde, Änderungen, Testumfang und verbleibende Risiken: [Codeprüfung vom 9. Oktober 2026](AUDIT.md).
 
-Alte Gerätewerte `enabled: true/false` bleiben beim Umstieg gültig. Beim nächsten Einschalten werden sie automatisch in `status: Aktiv/Inaktiv` umgewandelt und aus der gespeicherten Liste entfernt. Anschließend die Konfigurationsseite neu öffnen. Das optionale Feld „Bisherige Auswahl“ dient nur der Kompatibilität; wenn ein HA-Music-Status gesetzt ist, gilt dieser. Neu erkannte Geräte erhalten `Inaktiv`.
+Alte Gerätewerte `enabled: true/false` bleiben beim Umstieg gültig. Beim nächsten Start des Add-ons werden sie automatisch in `status: Aktiv/Inaktiv` umgewandelt und aus der gespeicherten Liste entfernt. Anschließend die Konfigurationsseite neu öffnen. Das optionale Feld „Bisherige Auswahl“ dient nur der Kompatibilität; wenn ein HA-Music-Status gesetzt ist, gilt dieser. Neu erkannte Geräte erhalten `Inaktiv`.
+
+Die Konfiguration lässt sich bei ausgeschaltetem Radio bearbeiten. Zur Übernahme älterer Werte muss nur das Add-on gestartet werden, nicht das Radio. Dabei werden einmalig ausschließlich die lokalen Supervisor-Optionen gelesen/gespeichert; Alexa und der Radioschalter bleiben unangetastet. Nach Änderungen speichern und das Add-on neu starten.
