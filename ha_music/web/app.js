@@ -319,13 +319,26 @@ function closeRadioEvents() {
 setInterval(updateSong, 6000);
 const previous = new Map();
 let errorNoticeEpoch = 0;
+let lastNoticeText = "";
+let pendingVolumeSignature = "";
 function status(text) {
+  // Repeated polling must not restart the lifetime of the same message.
+  if (text && text === lastNoticeText) return;
+  lastNoticeText = text;
   const epoch = ++errorNoticeEpoch;
   $("error-text").textContent = text;
   $("error-notice").hidden = !text;
   if (text) setTimeout(() => {
     if (epoch === errorNoticeEpoch) $("error-notice").hidden = true;
-  }, 12000);
+  }, 30000);
+}
+function showVolumeNotice(players, saved) {
+  const signature = players.filter(p => roomView(p, saved).pending)
+    .map(p => p.entity_id).sort().join("|");
+  if (signature && signature !== pendingVolumeSignature && $("error-notice").hidden)
+    status("* Gespeicherter Sollwert; von Home Assistant noch nicht bestätigt.");
+  if (!signature && pendingVolumeSignature && lastNoticeText.startsWith("* Gespeicherter Sollwert")) status("");
+  pendingVolumeSignature = signature;
 }
 $("error-close").addEventListener("click", () => status(""));
 const stationButtons = new Map();
@@ -597,12 +610,13 @@ async function refreshPlayers() {
     $("groups").textContent = groups.length ? "Gruppe: " + groups.map(p => p.name).join(", ") + " · Alexa-Multiroom" : "Master-Gruppe Wohnung ist nicht aktiviert oder nicht verfügbar.";
     const wrap = $("players"); wrap.replaceChildren();
     if (!players.length) wrap.textContent = "Keine Raumgeräte aktiviert. Bitte Geräte in der Add-on-Konfiguration auswählen.";
-    $("volume-hint").hidden = !players.some(p => roomView(p, saved_levels).pending);
+    showVolumeNotice(players, saved_levels);
     for (const p of players) wrap.appendChild(volumeRow(roomView(p, saved_levels), remembered, false));
   } catch (e) {
     if (generation === uiGeneration) {
-      $("players").textContent = "Lautsprecher nicht verfügbar: " + e.message;
+      $("players").textContent = "Lautsprecher derzeit nicht verfügbar.";
       $("master-volume").textContent = "Master-Lautstärke nicht verfügbar";
+      status("Lautsprecher konnten nicht geladen werden: " + e.message);
     }
   } finally { playersRequestRunning = false; }
 }

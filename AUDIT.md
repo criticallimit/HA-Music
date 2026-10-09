@@ -5,6 +5,8 @@ Geprüft: sämtliche Python-Module, Ingress-Frontend (HTML/CSS/JS), Lovelace-Kar
 
 ## Abschließende Ablaufprüfung und neue Startvorgabe
 
+Nachtrag zur Anzeige: Die Logokarte beschneidet alle Ebenen zusätzlich mit einer gemeinsamen runden Clip-Fläche. Der Verlauf endet deckend und überlappt den unteren Rand um einen Pixel, damit der weiße Artwork-Hintergrund an den Rundungen nicht durchscheint. Der bisherige dauerhafte Inline-Hinweis zur Lautstärkebestätigung wurde entfernt. Er erscheint bei einer neuen ausstehenden Bestätigung in derselben unteren, festen Meldungsanzeige wie Fehler und verschwindet nach 30 Sekunden. Wiederholte identische Meldungen verlängern die Frist nicht; ältere Timer können keine neuere Meldung verstecken. Drei neue Frontend-Tests prüfen diese Abläufe (nun 22 Frontend-Tests). Die automatisierte visuelle Browserprüfung war in der lokalen Sandbox nicht ausführbar; die endgültige Darstellung muss auf der Installation geprüft werden.
+
 Ausgangspunkt dieser Nachprüfung: `8456d7a` auf `main`. Die folgende aktuelle Vorgabe ersetzt die ältere, weiter unten dokumentierte Verfügbarkeitsprüfung und deren Ready-Bedeutung.
 
 Nach dem einmaligen Alexa-Reload-Versuch und 50 Sekunden Wartezeit wird die Oberfläche freigegeben. Weder Playerzustand noch Ready-Helfer oder Schalterbestätigung entscheiden über diese Freigabe. Die zusätzliche Zwölf-Sekunden-Wartephase wurde entfernt. Ein Reload-/Helferfehler wird protokolliert, verhindert aber die zeitliche Freigabe nicht. Ausschalten bricht die Wartezeit und nachfolgende Befehle weiterhin ab. Der Schaltermonitor berücksichtigt bestätigtes externes Ausschalten; externes Einschalten startet weiterhin keine Wiedergabe.
