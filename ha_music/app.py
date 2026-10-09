@@ -53,8 +53,48 @@ ACTIVE_RESPONSES = set()
 CONFIG_LOCK = threading.RLock()
 DEVICE_SYNC_LOCK = threading.Lock()
 SUPERVISOR_OPTIONS = None
+REGISTERED_DEVICE_NAMES = {}
 MEDIA_FEATURE_PAUSE = 1
 MEDIA_FEATURE_PLAY = 16384
+INVENTORY_TEMPLATE = """
+{% set result = namespace(data={}, names={}) %}
+{% for domain in ['alexa_devices', 'alexa_media'] %}
+  {% set catalog = namespace(entities=integration_entities(domain) | list, entries=[]) %}
+  {% for entity in catalog.entities %}
+    {% set entry = config_entry_id(entity) %}
+    {% if entry and entry not in catalog.entries and config_entry_attr(entry, 'domain') == domain %}
+      {% set catalog.entries = catalog.entries + [entry] %}
+      {% set title = config_entry_attr(entry, 'title') %}
+      {% if title %}
+        {% for registered in integration_entities(title) %}
+          {% set registered_entry = config_entry_id(registered) %}
+          {% if registered_entry and config_entry_attr(registered_entry, 'domain') == domain %}
+            {% set catalog.entities = catalog.entities + [registered] %}
+          {% endif %}
+        {% endfor %}
+      {% endif %}
+    {% endif %}
+  {% endfor %}
+  {% set verified = namespace(entities=[]) %}
+  {% for entity in catalog.entities | unique %}
+    {% set entry = config_entry_id(entity) %}
+    {% if not entry or config_entry_attr(entry, 'domain') == domain %}
+      {% set verified.entities = verified.entities + [entity] %}
+    {% endif %}
+  {% endfor %}
+  {% set catalog.entities = verified.entities %}
+  {% for entity in catalog.entities %}
+    {% if entity.startswith('media_player.') %}
+      {% set name = device_attr(entity, 'name_by_user') or device_attr(entity, 'name') %}
+      {% if name %}
+        {% set result.names = dict(result.names, **{entity: name}) %}
+      {% endif %}
+    {% endif %}
+  {% endfor %}
+  {% set result.data = dict(result.data, **{domain: catalog.entities}) %}
+{% endfor %}
+{{ dict(result.data, device_names=result.names) | to_json }}
+"""
 
 
 def configured_devices(config=None):
@@ -110,6 +150,8 @@ def synchronize_device_configuration(generation):
         if not isinstance(current, dict):
             raise ValueError("Supervisor-Gerätekonfiguration fehlt")
         found = detected_devices()
+        print("[HA Music] Alexa discovery: " + str(len(found)) + " media players: " +
+              ", ".join(device["entity_id"] for device in found), flush=True)
         check_generation(generation)
         merged = merge_discovered_devices(current, found)
         if merged != current:
@@ -126,10 +168,8 @@ def synchronize_device_configuration(generation):
             SUPERVISOR_OPTIONS = deepcopy(merged)
         print(f"[HA Music] Device configuration: {len(merged.get('devices', []))} entries", flush=True)
 def integration_inventory():
-    """Discover registered Alexa entities from both supported integration domains."""
-    response = ha_request("/template", {
-        "template": "{{ dict(alexa_devices=integration_entities('alexa_devices'), alexa_media=integration_entities('alexa_media')) | to_json }}"
-    })
+    """Expand loaded Alexa sources to each account's complete entity registry."""
+    response = ha_request("/template", {"template": INVENTORY_TEMPLATE})
     if not isinstance(response, str):
         raise ValueError("Unerwartete Antwort der Home-Assistant-Template-API")
     data = json.loads(response)
@@ -137,6 +177,12 @@ def integration_inventory():
         raise ValueError("Ungültiges Alexa-Inventar")
     if any(not isinstance(data.get(domain, []), list) for domain in ("alexa_devices", "alexa_media")):
         raise ValueError("Ungültige Alexa-Entity-Liste")
+    names = data.get("device_names", {})
+    if not isinstance(names, dict) or any(not isinstance(k, str) or not isinstance(v, str) for k, v in names.items()):
+        raise ValueError("Ungültige Alexa-Gerätenamen")
+    with CONFIG_LOCK:
+        REGISTERED_DEVICE_NAMES.clear()
+        REGISTERED_DEVICE_NAMES.update({k: v for k, v in names.items() if ENTITY_RE.fullmatch(k)})
     return {domain: [eid for eid in data.get(domain, []) if isinstance(eid, str)]
             for domain in ("alexa_devices", "alexa_media")}
 
@@ -149,11 +195,13 @@ def detected_devices(inventory=None):
     inventory = inventory if inventory is not None else integration_inventory()
     ids = {eid for values in inventory.values() for eid in values if ENTITY_RE.fullmatch(eid)}
     states = state_snapshot()
+    with CONFIG_LOCK:
+        names = dict(REGISTERED_DEVICE_NAMES)
     found = []
     for entity in ids:
         state = states.get(entity, {})
         attributes = state.get("attributes") or {}
-        name = str(attributes.get("friendly_name") or entity)
+        name = str(attributes.get("friendly_name") or names.get(entity) or entity)
         found.append({"entity_id": entity, "name": name,
                       "state": state.get("state", "unavailable"),
                       "volume": attributes.get("volume_level"),

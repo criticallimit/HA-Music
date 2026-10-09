@@ -30,6 +30,7 @@ class RuntimeTests(unittest.TestCase):
         for name in ("VOLUME_FILE", "STATION_FILE", "SPEAKER_FILE", "VIEW_FILE", "OPTIONS"):
             self.stack.enter_context(patch.object(app, name, folder / (name + ".json")))
         self.stack.enter_context(patch.object(app, "SUPERVISOR_OPTIONS", None))
+        self.stack.enter_context(patch.dict(app.REGISTERED_DEVICE_NAMES, {}, clear=True))
         app.OPTIONS.write_text(json.dumps({"devices": [{"entity_id": entity, "name": entity, "enabled": True} for entity in ("media_player.wohnung", "media_player.wohnzimmer", "media_player.kueche", "media_player.bad", "media_player.buero")]}))
         self.stack.enter_context(patch.object(app, "synchronize_device_configuration"))
         self.monitor = self.stack.enter_context(patch.object(app, "MONITOR"))
@@ -391,6 +392,17 @@ class DeviceConfigurationTests(unittest.TestCase):
             devices = {p["entity_id"]: p for p in app.detected_devices(inventory)}
         self.assertEqual(devices["media_player.reserve"]["state"], "unavailable")
         self.assertEqual(devices["media_player.bad"]["state"], "off")
+
+    def test_registry_names_survive_missing_live_states(self):
+        response = json.dumps({"alexa_media": ["media_player.mo", "media_player.fire_tv", "media_player.this_device"],
+                               "alexa_devices": [], "device_names": {"media_player.mo": "Mo", "media_player.fire_tv": "Dirks Fire TV", "media_player.this_device": "This Device"}})
+        with patch.object(app, "ha_request", return_value=response), patch.object(app, "state_snapshot", return_value={}):
+            found = app.detected_devices()
+        self.assertEqual({p["name"] for p in found}, {"Mo", "Dirks Fire TV", "This Device"})
+        self.assertTrue(all(p["state"] == "unavailable" for p in found))
+        config = app.merge_discovered_devices({"devices": []}, found)
+        self.assertEqual(len(config["devices"]), 3)
+        self.assertTrue(all(not entry["enabled"] for entry in config["devices"]))
 
     def test_new_devices_are_disabled_and_existing_settings_unchanged(self):
         initial = {"show_dashboard_setup": True, "devices": [

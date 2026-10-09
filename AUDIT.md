@@ -5,6 +5,14 @@ Geprüft: sämtliche Python-Module, Ingress-Frontend (HTML/CSS/JS), Lovelace-Kar
 
 ## Belegte Befunde und Korrekturen
 
+### Vollständiger Alexa-Katalog statt ausschließlich geladener Entitäten
+
+Die bisherige `integration_entities(domain)`-Abfrage ist keine garantierte vollständige Registry-Abfrage. Home Assistant verwendet bei Domain-Suche `entity_sources`; die Suche nach dem Titel eines Integrationseintrags verwendet dagegen dessen Entity-Registry. Die Erkennung ermittelt daher aus den vorhandenen Entitäten die Alexa-Kontoeinträge und ergänzt die vollständigen registrierten Entitäten dieser Konten. Kandidaten werden erneut auf die Alexa-Integrationsdomain geprüft, damit gleiche Kontotitel anderer Integrationen keine fremden Media Player aufnehmen. [HA-Implementierung](https://github.com/home-assistant/core/blob/dev/homeassistant/helpers/template/extensions/config_entries.py).
+
+Fehlende Live-Zustände verhindern den Katalogeintrag nicht. In diesem Fall liefert `device_attr` den Namen aus der Geräte-Registry. Zwei gleich benannte Fire TVs bleiben durch unterschiedliche Entity-IDs getrennt. „Mo“ und „This Device“ werden nicht herausgefiltert. Ergänzungen behalten vorhandene Anzeigenamen/Schalter und sind zunächst deaktiviert. Die Protokollzeile `Alexa discovery` nennt gefundene Media-Player-IDs; `Device configuration` bestätigt den gespeicherten Gesamtumfang. Keine zusätzlichen periodischen Abfragen, keine Abfragen im Standby.
+
+Fünf ausführbare Sandbox-Template-Tests decken acht Geräte bei nur vier geladenen Media Playern, einen nur durch Sensoren erreichbaren Konto-Eintrag, mehrere Konten/beide Alexa-Domains, gleiche Titel fremder Integrationen und alte Quellen ohne Config-Entry ab. Ein zusätzlicher Runtime-Test prüft Registry-Gerätenamen bei fehlenden Live-Zuständen und deaktivierte Ergänzungen. Jinja2 ist ausschließlich Testabhängigkeit; das Add-on verwendet weiterhin Home Assistants Template-API ohne zusätzliches Laufzeitpaket. Die tatsächlichen acht HA-Entity-IDs der Zielinstallation sind hier nicht zugänglich. Ein vollständig deaktiviertes Konto ohne geladene Entitäten lässt sich über diesen Abfrageweg nicht neu ermitteln; bereits gespeicherte Geräte bleiben erhalten. Geräte ohne registrierten Media Player werden nicht als steuerbare Player erfunden.
+
 ### Ingress-Einschalten: „Invalid request length“
 
 Mit `ingress_stream: true` reicht der Supervisor POST-Inhalte als Stream weiter und entfernt die ursprüngliche Content-Length-Angabe; die HTTP-Clientbibliothek kann dafür `Transfer-Encoding: chunked` verwenden. Unser Handler akzeptierte ausschließlich Content-Length und wies solche gültigen Einschaltbefehle mit HTTP 400 ab. Dadurch kann der Start vor dem Einschalten und vor der Geräteerkennung scheitern. Belegt durch [Supervisor-Weiterleitung](https://github.com/home-assistant/supervisor/blob/main/supervisor/api/ingress.py) und einen reproduzierten Einschalt-POST über eine echte lokale HTTP-Verbindung.
@@ -48,7 +56,8 @@ Ingress-Gegenstellenprüfung gemäß [Home-Assistant-Entwicklerdokumentation](ht
 ## Verifiziert
 
 - Python-Syntax aller vier Module, bestehende Scaffold-/Smoke-Prüfungen.
-- 62 Python-Regressionstests: Startreihenfolge, 45+2 Sekunden Warteparameter, Fehler, Abbruch, alte Timer, stumme Räume/Master, Persistenz, Cache, Verifikation, Ingress inklusive gestückelter POSTs/Framing-Grenzen, ICY-Lebenszyklus, Angleichung an den Master ausschließlich beim Start, Geräteauswahl, Raum-Schalter und Gruppensteuerung.
+- 63 Python-Regressionstests: Startreihenfolge, 45+2 Sekunden Warteparameter, Fehler, Abbruch, alte Timer, stumme Räume/Master, Persistenz, Cache, Verifikation, Ingress inklusive gestückelter POSTs/Framing-Grenzen, ICY-Lebenszyklus, Angleichung an den Master ausschließlich beim Start, Geräteauswahl, Registry-Namen, Raum-Schalter und Gruppensteuerung.
+- 5 Sandbox-Tests für die tatsächlich ausgeführte Geräteerkennungs-Vorlage, einschließlich aller acht Beispielgeräte trotz fehlender geladener Media Player.
 - 14 JavaScript-Verhaltenstests: Countdown, Fehlerzustände, parallele Polls, verspätete Antworten, gespeicherte Ansicht, Artwork-URL-Prüfung, Soll-/Ist-Lautstärke, unabhängige Raumregelung bei Master 0 sowie Raum-/Gruppensteuerung.
 - JavaScript-Syntax für Frontend, Lovelace-Karte und Loader; `git diff --check`.
 - Die Tests verwenden keine reale HA-/Alexa-Steuerung. Der Socket-Test verwendet ausschließlich eine lokale Verbindung. Unter Windows kann ein Reader erst nach seinem Socket-Timeout zurückkehren; der Standby-Pfad wartet darauf nicht mehr unbegrenzt.
