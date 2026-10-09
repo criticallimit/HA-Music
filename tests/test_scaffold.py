@@ -18,7 +18,10 @@ assert "api/events" in js
 assert "echo_entities" not in config
 assert "save_remembered" in source
 assert "detected_devices" in source
-assert "send_text_command" not in source
+# Registered Alexa Devices uses its text-command service for configured presets.
+# Detailed routing, mapping and standby restrictions are tested in test_runtime.
+assert "/services/alexa_devices/send_text_command" in source
+assert "alexa_devices" in source and "alexa_media" in source
 print("Scaffold validation passed")
 
 # The container must ship every local Python module imported by the entrypoint.
@@ -55,3 +58,4 @@ assert "metadata-probe" not in source
 # Station pictures must never be overwritten by delayed Alexa radio artwork.
 assert "if (!isRadio) {\n      const cover" in js
 print("Radio event-stream and Amazon artwork contracts passed")
+

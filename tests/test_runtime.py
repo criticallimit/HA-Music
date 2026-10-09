@@ -50,8 +50,9 @@ class RuntimeTests(unittest.TestCase):
         app.LAST_POWER = "on"
         app.READY = False
         app.PREPARING = False
-        self.stack.enter_context(patch.object(app, "INVENTORY_CACHE", (0.0, None)))
+        self.stack.enter_context(patch.object(app, "INVENTORY_CACHE", (time.monotonic(), {"alexa_media":list(app.enabled_device_ids()), "alexa_devices":[]})))
         app.ROOM_TARGETS.clear()
+        app.VOLUME_CONFIRMATION.clear()
         app.STARTUP_ERROR = None
         app.STARTED_AT = None
         app.STATE_CACHE = (0, None)
@@ -483,6 +484,39 @@ class RuntimeTests(unittest.TestCase):
             app.perform("apple_music", {"favorite":favorite})
         self.assertEqual(request.call_args.args[1]["media"]["media_content_id"], "spiele das Album Abendmusik von Dirk auf Apple Music")
 
+    def test_official_alexa_apple_uses_text_command_for_same_registered_device(self):
+        app.READY = True
+        favorite = self.apple_favorite()
+        app.INVENTORY_CACHE = (time.monotonic(), {"alexa_devices":["media_player.wohnzimmer"], "alexa_media":[]})
+        device = "a" * 32
+        with patch.object(app, "ha_request", side_effect=[json.dumps({"domain":"alexa_devices", "device_id":device}), {}]) as request:
+            app.perform("apple_music", {"favorite":favorite})
+        self.assertEqual(request.call_args_list[0].args[0], "/template")
+        self.assertEqual(request.call_args_list[1].args, ("/services/alexa_devices/send_text_command", {
+            "device_id":device, "text_command":"spiele meine Playlist Abendmusik von Dirk auf Apple Music auf Wohnung"}))
+        self.assertEqual(app.ACTIVE_APPLE["id"], favorite)
+
+    def test_official_alexa_radio_uses_text_command_without_other_device_or_volume(self):
+        app.READY = True
+        app.INVENTORY_CACHE = (time.monotonic(), {"alexa_devices":["media_player.wohnzimmer"], "alexa_media":[]})
+        device = "b" * 32
+        with patch.object(app, "ha_request", side_effect=[json.dumps({"domain":"alexa_devices", "device_id":device}), {}]) as request:
+            app.perform("radio_direct", {"station":"1live"})
+        self.assertEqual(request.call_count, 2)
+        self.assertEqual(request.call_args.args, ("/services/alexa_devices/send_text_command", {
+            "device_id":device, "text_command":app.DIRECT_STATIONS["1live"]["media_content_id"]}))
+
+    def test_official_alexa_missing_or_changed_mapping_cannot_send_playback(self):
+        app.READY = True
+        favorite = self.apple_favorite()
+        app.INVENTORY_CACHE = (time.monotonic(), {"alexa_devices":["media_player.wohnzimmer"], "alexa_media":[]})
+        for mapping in ({"domain":"alexa_media", "device_id":"a"*32}, {"domain":"alexa_devices", "device_id":None}):
+            with self.subTest(mapping=mapping), patch.object(app, "ha_request", return_value=json.dumps(mapping)) as request:
+                with self.assertRaises(ValueError):
+                    app.perform("apple_music", {"favorite":favorite})
+                self.assertEqual(request.call_count, 1)
+                self.assertIsNone(app.ACTIVE_APPLE)
+
     def test_apple_unknown_favorite_cannot_send_an_arbitrary_command(self):
         app.READY = True
         self.apple_favorite()
@@ -553,6 +587,7 @@ class RuntimeTests(unittest.TestCase):
         self.assertEqual(app.apple_music_selection()["items"][0]["id"], first)
 
     def test_inventory_cache_returns_copies_expires_and_respects_standby(self):
+        app.INVENTORY_CACHE = (0.0, None)
         inventory = {"media_player.wohnung": {"integration": "alexa_media"}}
         with patch.object(app, "read_integration_inventory", return_value=inventory) as read, patch.object(app.time, "monotonic", return_value=100) as now:
             first = app.integration_inventory()
@@ -568,6 +603,7 @@ class RuntimeTests(unittest.TestCase):
             self.assertEqual(read.call_count, 2)
 
     def test_inventory_parallel_requests_share_one_registry_read(self):
+        app.INVENTORY_CACHE = (0.0, None)
         entered, release = threading.Event(), threading.Event()
         results = []
         def read():
@@ -958,6 +994,35 @@ class RuntimeTests(unittest.TestCase):
             VERIFY(10, {"media_player.wohnzimmer": 0.4})
         states.assert_not_called()
 
+    def test_unconfirmed_startup_volume_retries_only_same_level_twice(self):
+        entity = "media_player.wohnzimmer"
+        app.ROOM_TARGETS[entity] = 0.4
+        self.states[entity]["attributes"]["volume_level"] = 0.01
+        with patch.object(app, "wait_for_start", return_value=True), patch.object(app, "state_snapshot", return_value=self.states) as snapshot, patch.object(app, "ha_request", return_value={}) as request:
+            VERIFY(10, {entity:0.4})
+        self.assertEqual(snapshot.call_count, 3)
+        self.assertTrue(all(c.kwargs == {"fresh":True} for c in snapshot.call_args_list))
+        self.assertEqual(request.call_count, 2)
+        self.assertTrue(all(c.args == ("/services/media_player/volume_set", {"entity_id":entity, "volume_level":0.4}) for c in request.call_args_list))
+        self.assertEqual(app.VOLUME_CONFIRMATION[entity], {"expected":0.4, "observed":0.01})
+
+    def test_confirmed_startup_volume_stops_retry_and_clears_warning(self):
+        entity = "media_player.wohnzimmer"
+        app.ROOM_TARGETS[entity] = 0.4
+        app.VOLUME_CONFIRMATION[entity] = {"expected":0.4, "observed":0.01}
+        with patch.object(app, "wait_for_start", return_value=True), patch.object(app, "state_snapshot", return_value=self.states), patch.object(app, "ha_request") as request:
+            VERIFY(10, {entity:0.4})
+        request.assert_not_called()
+        self.assertNotIn(entity, app.VOLUME_CONFIRMATION)
+
+    def test_startup_volume_retry_cannot_overwrite_later_manual_change(self):
+        entity = "media_player.wohnzimmer"
+        app.ROOM_TARGETS[entity] = 0.2
+        with patch.object(app, "wait_for_start", return_value=True), patch.object(app, "state_snapshot", return_value=self.states), patch.object(app, "ha_request") as request:
+            VERIFY(10, {entity:0.4})
+        request.assert_not_called()
+        self.assertFalse(app.VOLUME_CONFIRMATION)
+
     def test_standby_closes_inflight_ha_response(self):
         stream = Mock()
         with patch.object(app, "ACTIVE_RESPONSES", {stream}):
@@ -1154,6 +1219,7 @@ class DeviceConfigurationTests(unittest.TestCase):
         self.assertEqual(devices["media_player.bad"]["state"], "off")
 
     def test_registry_names_survive_missing_live_states(self):
+        app.INVENTORY_CACHE = (0.0, None)
         response = json.dumps({"alexa_media": ["media_player.mo", "media_player.fire_tv", "media_player.this_device"],
                                "alexa_devices": [], "device_names": {"media_player.mo": "Mo", "media_player.fire_tv": "Dirks Fire TV", "media_player.this_device": "This Device"}})
         with patch.object(app, "ha_request", return_value=response), patch.object(app, "state_snapshot", return_value={}):

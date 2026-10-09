@@ -411,6 +411,37 @@ test('Apple favorite commands coalesce and cannot wake standby', async () => {
   assert.equal(h.run('activeApple'),null);
 });
 
+test('accepted Apple click removes radio branding even when state polling is already running', async () => {
+  const h = harness();
+  h.context.reply=async()=>({ok:true});
+  h.run('api=reply; radioReadyForViews=true; selectedStation="1live"; updateStationLogo("1live"); stateRequestRunning=true; updateSong=async()=>{}; renderAppleSelection({available:true,items:[{id:"one",name:"Abendmusik",kind:"Playlist"}]})');
+  await h.run('startAppleFavorite("one")');
+  assert.equal(h.run('selectedStation'),'');
+  assert.equal(h.run('activeApple.id'),'one');
+  assert.equal(h.get('current-cover').hidden,true);
+  assert.equal(h.get('current-title').textContent,'Abendmusik');
+  assert.match(h.get('current-artist').textContent,/Rückmeldung ausstehend/);
+});
+
+test('unconfirmed echo volumes do not claim audible playback', async () => {
+  const h = harness();
+  h.context.reply=async()=>({playing:true,volume_confirmation:{'media_player.bad':{expected:.4,observed:.01}}});
+  h.run('api=reply; radioReadyForViews=true');
+  await h.run('updateSong()');
+  assert.match(h.get('playback-state').textContent,/Hörbare Wiedergabe nicht bestätigt/);
+  const row=h.run('volumeRow({entity_id:"media_player.bad",name:"Bad",state:"playing",volume:.4,pending:true,observed:.01},{},false)');
+  assert.equal(row.children[2].textContent,'40% (HA: 1%)');
+});
+
+test('stale 1LIVE artwork cannot return after an accepted Apple selection', async () => {
+  const h = harness();
+  h.context.reply=async()=>({playing:true,details:{title:'1LIVE',image:'/1live.svg',content_type:'radio'}});
+  h.run('api=reply; radioReadyForViews=true; activeApple={id:"one",name:"Abendmusik"}; selectedStation=""');
+  await h.run('updateSong()');
+  assert.equal(h.get('current-cover').hidden,true);
+  assert.equal(h.get('current-title').textContent,'Abendmusik');
+});
+
 test('Apple title and cover use Alexa metadata without changing radio selection', async () => {
   const h = harness();
   h.context.reply=async()=>({playing:true,details:{title:'Mein Titel',artist:'Mein Interpret',image:'https://example.com/cover.jpg'}});

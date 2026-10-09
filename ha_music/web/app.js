@@ -298,7 +298,8 @@ async function updateSong() {
       trackTransport = info.track_transport || null;
       renderGroupTransport();
     }
-    const details = info.details;
+    let details = info.details;
+    if (activeApple && (Object.values(STATION_LOGOS).some(logo => details?.image === logo || details?.image === "/" + logo) || ["radio", "channel"].includes(details?.content_type))) details = null;
     const isRadio = !activeApple && ["wdr2","1live","swr3"].includes(station);
     if (isRadio && info.radio_metadata) applyRadioMetadata(info.radio_metadata);
     $("current-title").textContent = activeApple ? (details?.title || activeApple.name) : STATIONS.find(s => s[0] === station)?.[1] || details?.title || "Kein Sender ausgewählt";
@@ -322,7 +323,10 @@ async function updateSong() {
         cover.removeAttribute("src");
       }
     }
-    $("playback-state").textContent = info.playing ? "Wiedergabe aktiv" : "Alexa meldet derzeit keine aktive Wiedergabe";
+    const unconfirmedVolumes = Object.keys(info.volume_confirmation || {});
+    $("playback-state").textContent = unconfirmedVolumes.length
+      ? "Lautstärke von " + unconfirmedVolumes.length + " Echo-Gerät(en) noch nicht bestätigt. Hörbare Wiedergabe nicht bestätigt."
+      : info.playing ? "Alexa meldet Wiedergabe" : "Alexa meldet derzeit keine aktive Wiedergabe";
   } catch(e) {
     if (generation === uiGeneration && stationEpoch === epoch && transportRequestEpoch === transportEpoch) {
       $("playback-state").textContent = "Wiedergabestatus nicht verfügbar: " + e.message;
@@ -430,6 +434,8 @@ function renderAppleSelection(selection) {
 }
 async function startAppleFavorite(id) {
   if (stationPending || transportPending || !radioReadyForViews || mediaPreparing || strictStandby || !appleSelection.available || !appleButtons.has(id)) return;
+  const favorite = appleSelection.items.find(item => item.id === id);
+  if (!favorite) return;
   stationPending = true;
   trackTransport = null;
   renderTrackTransport();
@@ -439,6 +445,16 @@ async function startAppleFavorite(id) {
   try {
     await api("apple_music", {favorite:id});
     if (generation !== uiGeneration) return;
+    activeApple = favorite;
+    selectedStation = "";
+    stationEpoch++;
+    songRequestEpoch++;
+    updateStationLogo("");
+    setActiveStation("");
+    $("now-ticker").hidden = true;
+    $("now-ticker-text").textContent = "";
+    $("current-title").textContent = activeApple.name;
+    $("current-artist").textContent = "Apple-Music-Befehl gesendet; Rückmeldung ausstehend";
     // Backend state is shared by all open clients; the next poll selects Apple
     // metadata and stops restoring the previous radio logo.
     groupTransport = null; trackTransport = null; transportEpoch++;
@@ -672,6 +688,7 @@ function volumeRow(p, remembered, master) {
   const slider = document.createElement("input"); slider.type="range"; slider.min=0; slider.max=100; slider.step=1;
       slider.value = Math.round((p.volume ?? 0) * 100);
       const label = document.createElement("span"); label.textContent=slider.value+"%";
+      if (p.pending) label.textContent += " (HA: " + Math.round(p.observed*100) + "%)";
       if (p.pending) label.title = "Gespeicherter Sollwert; Home Assistant meldet " + Math.round(p.observed*100) + "%. Bestätigung steht aus.";
       const mute = document.createElement("button"); mute.type="button"; mute.textContent="Stumm";
       slider.setAttribute("aria-label", (master ? "Master" : p.name) + " Lautstärke");

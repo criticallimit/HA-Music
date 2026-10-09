@@ -51,6 +51,7 @@ RECOVERING = False
 RECOVERED_SESSION = False
 SOURCE_UNCONFIRMED = False
 RECOVERY_MESSAGE = None
+VOLUME_CONFIRMATION = {}
 RADIO_PLAYERS = ("media_player.wohnung", "media_player.wohnzimmer", "media_player.kueche", "media_player.bad")
 LOCK = threading.Lock()
 CACHE_LOCK = threading.RLock()
@@ -366,11 +367,11 @@ def startup_request(generation, path, payload=None):
 
 def verify_restored_volumes(generation, expected):
     expected = dict(expected)
-    for _ in range(3):
+    for attempt in range(3):
         if not wait_for_start(generation, 2):
             return
         try:
-            states = state_snapshot()
+            states = state_snapshot(fresh=True)
             check_generation(generation)
         except StartupCancelled:
             return
@@ -380,8 +381,28 @@ def verify_restored_volumes(generation, expected):
         for entity, level in list(expected.items()):
             entry = states.get(entity, {})
             observed = (entry.get("attributes") or {}).get("volume_level")
-            if entry.get("state") not in ("unknown", "unavailable") and type(observed) in (float, int) and abs(observed - level) <= 0.011:
-                expected.pop(entity)
+            with COMMAND_LOCK:
+                with STATE_LOCK:
+                    if generation != RESTORE_GENERATION or LAST_POWER != "on" or STANDBY.is_set():
+                        return
+                    # A later manual change always wins over startup verification.
+                    if entity not in enabled_device_ids() or ROOM_TARGETS.get(entity) != level:
+                        expected.pop(entity)
+                        VOLUME_CONFIRMATION.pop(entity, None)
+                        continue
+                    confirmed = entry.get("state") not in ("unknown", "unavailable") and type(observed) in (float, int) and abs(observed - level) <= 0.011
+                    if confirmed:
+                        expected.pop(entity)
+                        VOLUME_CONFIRMATION.pop(entity, None)
+                        continue
+                    VOLUME_CONFIRMATION[entity] = {"expected":level, "observed":observed}
+                if attempt < 2:
+                    try:
+                        startup_request(generation, "/services/media_player/volume_set", {"entity_id":entity, "volume_level":level})
+                    except StartupCancelled:
+                        return
+                    except NETWORK_ERRORS as exc:
+                        print(f"[HA Music] Volume restore retry failed for {entity}: {exc}", flush=True)
         if not expected:
             return
     for entity in expected:
@@ -416,6 +437,7 @@ def restore_speakers(generation, use_master=False):
             with STATE_LOCK:
                 check_generation(generation)
                 ROOM_TARGETS[entity] = level
+                VOLUME_CONFIRMATION[entity] = {"expected":level, "observed":None}
                 if use_master and level > 0:
                     save_speaker_levels({entity: level})
                     save_remembered(entity, level)
@@ -720,6 +742,7 @@ def transition_power(on):
         SOURCE_UNCONFIRMED = False
         RECOVERY_MESSAGE = None
         ROOM_TARGETS.clear()
+        VOLUME_CONFIRMATION.clear()
         STARTED_AT = time.monotonic() if on else None
         STANDBY_UNTIL = 0 if on else time.monotonic() + 10
         if on:
@@ -866,6 +889,30 @@ def apple_music_selection():
             "target": target, "group": group, "active": active}
 
 
+def play_on_target(generation, target, media_type, content):
+    if target not in enabled_device_ids():
+        raise ValueError("Alexa-Abspielgerät ist deaktiviert")
+    if media_type == "custom":
+        inventory = integration_inventory()
+        sources = [domain for domain in ("alexa_media", "alexa_devices") if target in inventory.get(domain, [])]
+        if len(sources) != 1:
+            raise ValueError("Alexa-Integration des Abspielgeräts nicht eindeutig erkannt")
+        if sources[0] == "alexa_devices":
+            template = "{{ {'domain': config_entry_attr(config_entry_id('" + target + "'), 'domain'), 'device_id': device_id('" + target + "')} | to_json }}"
+            raw = startup_request(generation, "/template", {"template":template})
+            if not isinstance(raw, str):
+                raise ValueError("Ungültige Antwort zur Alexa-Devices-Zuordnung")
+            mapping = json.loads(raw)
+            if not isinstance(mapping, dict) or mapping.get("domain") != "alexa_devices" or not isinstance(mapping.get("device_id"), str) or not re.fullmatch(r"[0-9a-f]{32}", mapping["device_id"]):
+                raise ValueError("Alexa-Devices-Zuordnung des Abspielgeräts fehlt oder hat sich geändert")
+            if target not in enabled_device_ids():
+                raise ValueError("Alexa-Abspielgerät wurde deaktiviert")
+            return startup_request(generation, "/services/alexa_devices/send_text_command", {
+                "device_id":mapping["device_id"], "text_command":content})
+    return startup_request(generation, "/services/media_player/play_media", {
+        "entity_id":target, "media":{"media_content_type":media_type, "media_content_id":content, "metadata":{}}})
+
+
 def play_apple_music(favorite_id, generation):
     global ACTIVE_APPLE, SOURCE_UNCONFIRMED
     selection = apple_music_selection()
@@ -877,9 +924,7 @@ def play_apple_music(favorite_id, generation):
     phrase = ("spiele meine Playlist " if favorite["kind"] == "Playlist" else "spiele das Album ") + favorite["search"] + " auf Apple Music"
     if selection["group"]:
         phrase += " auf " + selection["group"]
-    result = startup_request(generation, "/services/media_player/play_media", {
-        "entity_id": selection["target"], "media": {
-            "media_content_type": "custom", "media_content_id": phrase, "metadata": {}}})
+    result = play_on_target(generation, selection["target"], "custom", phrase)
     with STATE_LOCK:
         check_generation(generation)
         ACTIVE_APPLE = {**favorite, "target": selection["target"]}
@@ -1014,6 +1059,12 @@ def playback_status():
     states = state_snapshot()
     with STATE_LOCK:
         target = ACTIVE_APPLE["target"] if ACTIVE_APPLE else "media_player.wohnzimmer"
+        for entity, confirmation in list(VOLUME_CONFIRMATION.items()):
+            entry = states.get(entity, {})
+            observed_volume = (entry.get("attributes") or {}).get("volume_level")
+            if entry.get("state") not in ("unknown", "unavailable") and type(observed_volume) in (int, float) and abs(observed_volume - confirmation["expected"]) <= 0.011:
+                VOLUME_CONFIRMATION.pop(entity, None)
+        volume_confirmation = deepcopy(VOLUME_CONFIRMATION)
     candidates = sorted(enabled_device_ids(), key=lambda entity: (entity != target, entity))
     observed = []
     for entity in candidates:
@@ -1037,6 +1088,7 @@ def playback_status():
             "radio_metadata": {"station": station, "metadata": payload},
             "transport": group_transport_state(states),
             "track_transport": track_transport_state(states),
+            "volume_confirmation":volume_confirmation,
             "details": active if active and (active["title"] or active["artist"]) else details}
 
 
@@ -1048,10 +1100,7 @@ def play_station(key, generation):
     target = preset["target"]
     if target not in enabled_device_ids():
         raise ValueError(f"Alexa-Senderziel {target} ist in der Add-on-Konfiguration deaktiviert")
-    result = startup_request(generation, "/services/media_player/play_media", {
-        "entity_id": target, "media": {
-            "media_content_id": preset["media_content_id"],
-            "media_content_type": preset["media_content_type"], "metadata": {}}})
+    result = play_on_target(generation, target, preset["media_content_type"], preset["media_content_id"])
     with STATE_LOCK:
         check_generation(generation)
         ACTIVE_APPLE = None
@@ -1198,6 +1247,8 @@ def perform_control(action, body, generation):
                 check_generation(generation)
                 save_speaker_levels({"media_player.wohnung": float(level),
                                      **(changed if level > 0 else {})})
+                for changed_entity in changed:
+                    VOLUME_CONFIRMATION.pop(changed_entity, None)
                 if level > 0:
                     save_remembered(entity, level)
             if failed:
@@ -1209,6 +1260,7 @@ def perform_control(action, body, generation):
             check_generation(generation)
             save_speaker_levels({entity: float(level)})
             ROOM_TARGETS[entity] = float(level)
+            VOLUME_CONFIRMATION.pop(entity, None)
         print(f"[HA Music] Saved speaker {entity}: {round(level * 100)}%", flush=True)
         if level > 0: save_remembered(entity, level)
         return result
