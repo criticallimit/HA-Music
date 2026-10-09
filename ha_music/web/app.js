@@ -477,7 +477,7 @@ function scheduleVolumeReconciliation(value) {
     const name = row.querySelector("span")?.textContent || "";
     if (!slider || slider.disabled) continue;
     slider.value = Math.round(value * 100);
-    if (label) label.textContent = Math.round(value * 100) + "%*";
+    if (label) label.textContent = Math.round(value * 100) + "%";
   }
   setTimeout(async () => {
     if (generation !== volumeReconcileGeneration) return;
@@ -506,7 +506,7 @@ function volumeRow(p, remembered, master) {
   const title = document.createElement("span"); title.textContent = (master ? "Master Volume" : p.name + " (" + p.state + ")");
   const slider = document.createElement("input"); slider.type="range"; slider.min=0; slider.max=100; slider.step=1;
       slider.value = Math.round((p.volume ?? 0) * 100);
-      const label = document.createElement("span"); label.textContent=slider.value+(p.pending ? "%*" : "%");
+      const label = document.createElement("span"); label.textContent=slider.value+"%";
       if (p.pending) label.title = "Gespeicherter Sollwert; Home Assistant meldet " + Math.round(p.observed*100) + "%. Bestätigung steht aus.";
       const mute = document.createElement("button"); mute.type="button"; mute.textContent="Stumm";
       slider.setAttribute("aria-label", (master ? "Master" : p.name) + " Lautstärke");
