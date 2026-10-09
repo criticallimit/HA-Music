@@ -1,15 +1,17 @@
 configuration:
   apple_music_target:
-    name: Apple-Music-Steuergerät
+    name: Abweichendes Apple-Music-Steuergerät (optional)
     description: >-
-      Entity-ID eines aktiven Echo-Geräts, an das der Abspielbefehl gesendet wird.
-      Das Gerät muss auch unter Alexa-Geräte auf Aktiv stehen. Standard ist Wohnzimmer.
+      Ohne diese Option verwendet Apple Music wie Radio das Wohnzimmer.
+      Nur für eine bewusst abweichende Einrichtung: Entity-ID eines aktiven Echo-Geräts.
+      Das Gerät muss auch unter Alexa-Geräte auf Aktiv stehen.
   apple_music_group:
-    name: Apple-Music-Lautsprechergruppe
+    name: Abweichende Apple-Music-Lautsprechergruppe (optional)
     description: >-
-      Exakter Name der Multiroom-Gruppe in der Alexa-App, zum Beispiel Wohnung.
-      Leer lassen für Wiedergabe direkt auf dem Steuergerät. Die Gerätauswahl unten
-      ändert die Alexa-Gruppenmitgliedschaft nicht.
+      Ohne diese Option verwendet Apple Music wie Radio die Alexa-Gruppe Wohnung.
+      Nur für eine bewusst abweichende Einrichtung: exakter Alexa-Gruppenname.
+      Ein ausdrücklich leerer Wert bedeutet Wiedergabe direkt auf dem Steuergerät.
+      Die Gerätauswahl unten ändert die Alexa-Gruppenmitgliedschaft nicht.
   apple_music_favorites:
     name: Apple-Music-Favoriten
     description: >-
@@ -35,11 +37,12 @@ configuration:
       Erkannte Geräte werden beim Einschalten von HA Music ergänzt, auch wenn sie nicht verfügbar sind.
       Dazu gehören registrierte Echo Dots und Fire TVs. Neue Geräte sind zunächst deaktiviert.
       Zum Ändern den Stift öffnen und den HA-Music-Status auf Aktiv oder Inaktiv setzen, nicht den Papierkorb verwenden.
+      Die Liste zeigt Gerätename, Status und technische Zuordnung. Wohnzimmer muss für die Standardwiedergabe aktiv bleiben.
       Ausgeblendete Geräte bleiben in dieser Liste. Anschließend speichern und das Add-on neu starten.
     fields:
       entity_id:
         name: Entity-ID
-        description: Die media_player-Entity aus der Alexa-Integration.
+        description: Technische Zuordnung aus der Alexa-Integration. Für eine reine Namensänderung nicht ändern; dafür Gerätename verwenden.
       name:
         name: Gerätename
         description: Angezeigter Name in der Geräteliste und in HA Music.
@@ -55,3 +58,4 @@ configuration:
           Nur für ältere Konfigurationen. Beim nächsten Start des Add-ons wird dieser Wert
           in Aktiv oder Inaktiv übernommen. Wenn der HA-Music-Status bereits gewählt
           ist, gilt dieser; die bisherige Auswahl wird entfernt.
+

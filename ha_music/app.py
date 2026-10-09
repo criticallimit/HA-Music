@@ -21,6 +21,8 @@ HA_API = os.environ.get("HA_API", "http://supervisor/core/api").rstrip("/")
 SUPERVISOR_API = os.environ.get("SUPERVISOR_API", "http://supervisor").rstrip("/")
 TOKEN = os.environ.get("SUPERVISOR_TOKEN", "") or os.environ.get("HASSIO_TOKEN", "")
 ENTITY_RE = re.compile(r"^media_player\.[a-z0-9_]+$")
+DEFAULT_PLAYBACK_TARGET = "media_player.wohnzimmer"
+DEFAULT_PLAYBACK_GROUP = "Wohnung"
 
 VOLUME_FILE = Path(os.environ.get("VOLUME_FILE", "/data/volumes.json"))
 STATION_FILE = Path(os.environ.get("STATION_FILE", "/data/last_station.json"))
@@ -141,6 +143,11 @@ def enabled_device_ids():
 def merge_discovered_devices(config, found):
     """Append discoveries; keep user labels, toggles and unavailable entries."""
     merged = deepcopy(config)
+    # Standard routing is built in; retain explicit nonstandard installations.
+    for key, default in (("apple_music_target", DEFAULT_PLAYBACK_TARGET),
+                         ("apple_music_group", DEFAULT_PLAYBACK_GROUP)):
+        if merged.get(key) == default:
+            merged.pop(key)
     known = configured_devices(config)
     entries = merged.setdefault("devices", [])
     for entry in entries:
@@ -201,7 +208,7 @@ def synchronize_device_configuration(generation, *, migrate_only=False, bootstra
         with CONFIG_LOCK:
             SUPERVISOR_OPTIONS = deepcopy(merged)
         if migrate_only:
-            print("[HA Music] Device status migration completed: Aktiv/Inaktiv", flush=True)
+            print("[HA Music] Configuration migration completed", flush=True)
         print(f"[HA Music] Device configuration: {len(merged.get('devices', []))} entries", flush=True)
 def integration_inventory():
     """Coalesce registry reads; never serve the cache as a standby wake-up."""
@@ -855,13 +862,13 @@ RADIO_SWITCH = "switch.alexa_alle"
 RADIO_READY = "input_boolean.alexa_hochgefahren"
 # Initial provider phrases copied exactly from the user's existing radio scripts.
 DIRECT_STATIONS = {
-    "1live": {"name": "1LIVE", "target": "media_player.wohnzimmer", "media_content_type": "custom", "media_content_id": "spiele eins live aus der ARD Audiothek auf Wohnung"},
-    "wdr2": {"name": "WDR 2", "target": "media_player.wohnzimmer", "media_content_type": "custom", "media_content_id": "spiele wdr zwei aus der ARD Audiothek auf Wohnung"},
-    "swr3": {"name": "SWR3", "target": "media_player.wohnzimmer", "media_content_type": "custom", "media_content_id": "spiele swr3 aus der ard audiothek auf Wohnung"},
-    "sommerhits": {"name": "Sommerhits", "target": "media_player.wohnzimmer", "media_content_type": "custom", "media_content_id": "spiele amazon Sommerhits auf Wohnung"},
-    "charts": {"name": "Charts", "target": "media_player.wohnzimmer", "media_content_type": "AMAZON_MUSIC", "media_content_id": "spiele  die charts auf Wohnung"},
-    "80s": {"name": "80er", "target": "media_player.wohnzimmer", "media_content_type": "AMAZON_MUSIC", "media_content_id": "spiele best of achtziger auf Wohnung"},
-    "90s": {"name": "90er", "target": "media_player.wohnzimmer", "media_content_type": "AMAZON_MUSIC", "media_content_id": "spiele hits der neunziger auf Wohnung"},
+    "1live": {"name": "1LIVE", "target": DEFAULT_PLAYBACK_TARGET, "media_content_type": "custom", "media_content_id": f"spiele eins live aus der ARD Audiothek auf {DEFAULT_PLAYBACK_GROUP}"},
+    "wdr2": {"name": "WDR 2", "target": DEFAULT_PLAYBACK_TARGET, "media_content_type": "custom", "media_content_id": f"spiele wdr zwei aus der ARD Audiothek auf {DEFAULT_PLAYBACK_GROUP}"},
+    "swr3": {"name": "SWR3", "target": DEFAULT_PLAYBACK_TARGET, "media_content_type": "custom", "media_content_id": f"spiele swr3 aus der ard audiothek auf {DEFAULT_PLAYBACK_GROUP}"},
+    "sommerhits": {"name": "Sommerhits", "target": DEFAULT_PLAYBACK_TARGET, "media_content_type": "custom", "media_content_id": f"spiele amazon Sommerhits auf {DEFAULT_PLAYBACK_GROUP}"},
+    "charts": {"name": "Charts", "target": DEFAULT_PLAYBACK_TARGET, "media_content_type": "AMAZON_MUSIC", "media_content_id": f"spiele  die charts auf {DEFAULT_PLAYBACK_GROUP}"},
+    "80s": {"name": "80er", "target": DEFAULT_PLAYBACK_TARGET, "media_content_type": "AMAZON_MUSIC", "media_content_id": f"spiele best of achtziger auf {DEFAULT_PLAYBACK_GROUP}"},
+    "90s": {"name": "90er", "target": DEFAULT_PLAYBACK_TARGET, "media_content_type": "AMAZON_MUSIC", "media_content_id": f"spiele hits der neunziger auf {DEFAULT_PLAYBACK_GROUP}"},
 }
 
 def last_selected_station():
@@ -875,8 +882,8 @@ def last_selected_station():
 def apple_music_selection():
     """Local configured favorites; never accepts arbitrary browser commands."""
     config = options()
-    target = config.get("apple_music_target", "media_player.wohnzimmer")
-    group = config.get("apple_music_group", "Wohnung")
+    target = config.get("apple_music_target", DEFAULT_PLAYBACK_TARGET)
+    group = config.get("apple_music_group", DEFAULT_PLAYBACK_GROUP)
     target = target if isinstance(target, str) and ENTITY_RE.fullmatch(target) else ""
     group = group.strip() if isinstance(group, str) else ""
     if len(group) > 100 or any(ord(c) < 32 for c in group):

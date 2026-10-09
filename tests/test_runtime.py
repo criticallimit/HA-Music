@@ -1555,6 +1555,44 @@ class DeviceConfigurationTests(unittest.TestCase):
         self.assertTrue(posted["show_dashboard_setup"])
         self.assertEqual(app.options(), posted)
 
+    def test_standard_routing_migration_removes_redundant_fields_without_commands(self):
+        original = app.options()
+        original.update(apple_music_target=app.DEFAULT_PLAYBACK_TARGET,
+                        apple_music_group=app.DEFAULT_PLAYBACK_GROUP,
+                        apple_music_favorites=[{"name":"Dirk", "kind":"Playlist"}])
+        with patch.object(app, "detected_devices", side_effect=AssertionError("No Alexa discovery")), \
+             patch.object(app, "supervisor_request", side_effect=[{"options": original}, {"options": original}, {}]) as request:
+            SYNCHRONIZE(None, migrate_only=True, bootstrap=True)
+        posted = request.call_args_list[-1].args[1]["options"]
+        self.assertNotIn("apple_music_target", posted)
+        self.assertNotIn("apple_music_group", posted)
+        self.assertEqual(posted["apple_music_favorites"], original["apple_music_favorites"])
+        selection = app.apple_music_selection()
+        self.assertEqual((selection["target"], selection["group"]),
+                         (app.DEFAULT_PLAYBACK_TARGET, app.DEFAULT_PLAYBACK_GROUP))
+        self.assertEqual(len(selection["items"]), 1)
+        self.assertTrue(all(call.args[0] in ("/addons/self/info", "/addons/self/options") for call in request.call_args_list))
+        self.assertEqual(app.merge_discovered_devices(posted, []), posted)
+
+    def test_routing_migration_preserves_custom_device_group_and_direct_playback(self):
+        for target, group in (("media_player.bad", "Oben"), ("media_player.bad", ""),
+                              (app.DEFAULT_PLAYBACK_TARGET, ""), ("media_player.bad", app.DEFAULT_PLAYBACK_GROUP)):
+            with self.subTest(target=target, group=group):
+                original = {"devices":[], "apple_music_target":target, "apple_music_group":group}
+                merged = app.merge_discovered_devices(original, [])
+                self.assertEqual(merged.get("apple_music_target", app.DEFAULT_PLAYBACK_TARGET), target)
+                self.assertEqual(merged.get("apple_music_group", app.DEFAULT_PLAYBACK_GROUP), group)
+                self.assertEqual(original["apple_music_group"], group)
+
+    def test_routing_migration_preserves_latest_custom_user_edit(self):
+        initial = app.merge_discovered_devices(app.options(), [])
+        initial.update(apple_music_target=app.DEFAULT_PLAYBACK_TARGET, apple_music_group=app.DEFAULT_PLAYBACK_GROUP)
+        latest = {**initial, "apple_music_target":"media_player.bad", "apple_music_group":""}
+        with patch.object(app, "supervisor_request", side_effect=[{"options":initial}, {"options":latest}]) as request:
+            SYNCHRONIZE(None, migrate_only=True, bootstrap=True)
+        self.assertEqual(request.call_count, 2)
+        self.assertEqual(app.options(), latest)
+
     def test_unchanged_inventory_does_not_write_options(self):
         config = app.merge_discovered_devices({"show_dashboard_setup": False, "devices": []}, self.found)
         with patch.object(app, "detected_devices", return_value=self.found), patch.object(app, "supervisor_request", return_value={"options": config}) as request:

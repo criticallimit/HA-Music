@@ -1,10 +1,10 @@
 configuration:
   apple_music_target:
-    name: Apple Music command device
-    description: Entity ID of an Echo enabled in Alexa devices. Playback commands are sent to this device.
+    name: Alternate Apple Music command device (optional)
+    description: Omit this option to use Wohnzimmer, as radio does. Only for an intentionally different setup; specify the entity ID of an Echo enabled in Alexa devices.
   apple_music_group:
-    name: Apple Music speaker group
-    description: Exact Alexa multiroom group name. Leave empty to play directly on the command device. Device visibility does not change Alexa group membership.
+    name: Alternate Apple Music speaker group (optional)
+    description: Omit this option to use the Alexa group Wohnung, as radio does. Only for an intentionally different setup; specify the exact Alexa group name. An explicitly empty value plays directly on the command device. Device visibility does not change Alexa group membership.
   apple_music_favorites:
     name: Apple Music favorites
     description: Link your Apple Music account in Alexa first. Add playlists or albums here, save and restart the add-on. No account credentials are needed in HA Music.
@@ -27,11 +27,12 @@ configuration:
       Detected devices are added when you turn on HA Music, including unavailable devices.
       This includes registered Echo Dots and Fire TVs. New devices are disabled initially.
       Use the pencil to select the HA Music status Aktiv (active) or Inaktiv (inactive), rather than deleting the entry.
+      Rows show the device name, status and technical mapping. Keep Wohnzimmer active for default playback.
       Hidden devices remain in this list. Save changes and restart the add-on.
     fields:
       entity_id:
         name: Entity ID
-        description: The media_player entity registered by the Alexa integration.
+        description: Technical mapping registered by Alexa. To change only the display name, edit Device name instead.
       name:
         name: Device name
         description: Display name in the device list and HA Music.
@@ -47,3 +48,4 @@ configuration:
           Only for older configurations. The next add-on start converts this value
           to Aktiv or Inaktiv. An explicitly selected HA Music status takes precedence;
           the previous selection is removed.
+
