@@ -27,7 +27,7 @@ class RuntimeTests(unittest.TestCase):
         self.stack = ExitStack()
         self.addCleanup(self.stack.close)
         folder = Path(self.stack.enter_context(tempfile.TemporaryDirectory(dir=ROOT)))
-        for name in ("VOLUME_FILE", "STATION_FILE", "SPEAKER_FILE", "VIEW_FILE", "SESSION_FILE", "SOURCE_FILE", "OPTIONS"):
+        for name in ("VOLUME_FILE", "STATION_FILE", "SPEAKER_FILE", "VIEW_FILE", "SESSION_FILE", "SOURCE_FILE", "OPTIONS", "LIBRARY_FILE"):
             self.stack.enter_context(patch.object(app, name, folder / (name + ".json")))
         self.stack.enter_context(patch.object(app, "SUPERVISOR_OPTIONS", None))
         self.stack.enter_context(patch.object(app, "ACTIVE_APPLE", None))
@@ -862,27 +862,26 @@ class RuntimeTests(unittest.TestCase):
         self.assertIsNone(app.ACTIVE_APPLE)
         self.assertEqual(app.last_selected_station(), "wdr2")
 
-    def test_saved_favorites_add_edit_remove_without_replacing_other_settings(self):
+    def test_library_add_edit_remove_is_durable_and_does_not_change_options(self):
         original = app.options()
-        original.update(apple_music_target="media_player.wohnzimmer", apple_music_group="Wohnung", show_dashboard_setup=False)
-        app.SUPERVISOR_OPTIONS = original
-        for favorites in ([{"name":"Neu", "kind":"Playlist"}], [{"name":"Album", "kind":"Album", "search":"Artist Album"}], []):
-            saved = {"devices":[], "apple_music_target":"media_player.bad", "apple_music_group":"Andere Gruppe", "show_dashboard_setup":True, "apple_music_favorites":favorites}
-            with patch.object(app, "supervisor_request", return_value={"options":saved}) as request:
-                self.assertTrue(app.refresh_saved_favorites())
-                self.assertFalse(app.refresh_saved_favorites())
-            self.assertTrue(all(c.args == ("/addons/self/info",) and c.kwargs == {"favorites_read":True} for c in request.call_args_list))
-            self.assertEqual(app.options(), {**original, "apple_music_favorites":favorites})
-            self.assertEqual(len(app.apple_music_selection()["items"]), len(favorites))
+        for entries in ([{"name":"Neu", "kind":"Playlist"}],
+                        [{"name":"Album", "kind":"Album", "search":"Artist Album"}], []):
+            snapshot = app.library_snapshot()
+            saved = app.save_library({"items":entries, "revision":snapshot["revision"]})
+            self.assertEqual(saved, app.library_snapshot())
+            self.assertEqual(json.loads(app.LIBRARY_FILE.read_text()), saved["items"])
+            self.assertEqual(len(app.apple_music_selection()["items"]), len(entries))
+            self.assertEqual(app.options(), original)
 
-    def test_favorites_refresh_in_standby_does_not_wake_or_touch_playback(self):
+    def test_library_standby_save_never_wakes_or_changes_playback(self):
         app.STANDBY.set()
         app.LAST_POWER, app.READY = "off", False
         app.ACTIVE_APPLE = {"id":"old", "target":"media_player.wohnzimmer", "name":"Playing"}
         app.save_selected_source("apple", "a"*24)
-        with patch.object(app, "supervisor_request", return_value={"options":{"apple_music_favorites":[{"name":"Neu", "kind":"Playlist"}]}}) as request:
-            app.refresh_saved_favorites()
-        request.assert_called_once_with("/addons/self/info", favorites_read=True)
+        with patch.object(app, "ha_request", side_effect=AssertionError("No network")), \
+             patch.object(app, "supervisor_request", side_effect=AssertionError("No Supervisor")):
+            app.save_library({"items":[{"name":"Neu", "kind":"Playlist"}],
+                              "revision":app.library_snapshot()["revision"]})
         self.assertTrue(app.STANDBY.is_set())
         self.assertEqual(app.LAST_POWER, "off")
         self.assertFalse(app.READY)
@@ -890,50 +889,71 @@ class RuntimeTests(unittest.TestCase):
         self.assertEqual(app.last_selected_source(), {"kind":"apple", "id":"a"*24})
         self.monitor.select.assert_not_called()
 
-    def test_invalid_or_unavailable_saved_favorites_retain_previous_config(self):
-        app.SUPERVISOR_OPTIONS = {**app.options(), "apple_music_favorites":[{"name":"Alt", "kind":"Playlist"}]}
-        original = app.options()
-        for response in ({}, {"options":None}, {"options":{"apple_music_favorites":None}}, {"options":{"apple_music_favorites":["invalid"]}}):
-            with self.subTest(response=response), patch.object(app, "supervisor_request", return_value=response), self.assertRaises(ValueError):
-                app.refresh_saved_favorites()
-            self.assertEqual(app.options(), original)
-        with patch.object(app, "supervisor_request", side_effect=OSError("offline")), self.assertRaises(OSError):
-            app.refresh_saved_favorites()
-        self.assertEqual(app.options(), original)
+    def test_library_stale_editor_cannot_overwrite_newer_save(self):
+        old = app.library_snapshot()
+        app.save_library({"items":[{"name":"New", "kind":"Album"}], "revision":old["revision"]})
+        with self.assertRaisesRegex(ValueError, "inzwischen"):
+            app.save_library({"items":[], "revision":old["revision"]})
+        self.assertEqual(app.library_snapshot()["items"][0]["name"], "New")
 
-    def test_favorites_watcher_retries_failure_and_logs_repeated_error_once(self):
-        stop = Mock()
-        stop.wait.side_effect = [False, False, False, True]
-        with patch.object(app, "refresh_saved_favorites", side_effect=[OSError("offline"), OSError("offline"), True]) as refresh, patch("builtins.print") as log:
-            app.watch_saved_favorites(stop)
-        self.assertEqual(refresh.call_count, 3)
-        log.assert_called_once()
-        self.assertTrue(all(call.args == (5,) for call in stop.wait.call_args_list))
+    def test_library_invalid_entries_or_failed_write_preserve_saved_data(self):
+        saved = app.save_library({"items":[{"name":"Saved", "kind":"Playlist"}],
+                                  "revision":app.library_snapshot()["revision"]})
+        for items in (None, [{}], [{"name":"Bad\nName", "kind":"Album"}],
+                      [{"name":"x", "kind":"Invalid"}], ["bad"],
+                      [{"name":"x", "kind":"Album"}] * 51):
+            with self.subTest(items=items), self.assertRaises(ValueError):
+                app.save_library({"items":items, "revision":saved["revision"]})
+        with patch.object(app, "write_durable_json", side_effect=OSError("disk full")), self.assertRaises(OSError):
+            app.save_library({"items":[], "revision":saved["revision"]})
+        self.assertEqual(app.library_snapshot(), saved)
 
-    def test_favorites_access_only_reads_own_supervisor_info_even_in_standby(self):
-        app.STANDBY.set()
-        for path, payload, supervisor in (("/states",None,False), ("/addons/self/options",{},True),
-                                          ("/addons/other/info",None,True), ("/addons/self/info",{},True),
-                                          ("/services/media_player/play_media",{},False)):
-            with self.subTest(path=path), self.assertRaises(ValueError):
-                app.ha_request(path, payload, supervisor=supervisor, favorites_read=True)
-        with patch.object(app, "TOKEN", "test"), patch.object(app, "urlopen") as opened:
-            opened.return_value.__enter__.return_value.read.return_value = b'{"result":"ok","data":{"options":{}}}'
-            self.assertEqual(app.supervisor_request("/addons/self/info", favorites_read=True), {"options":{}})
-            request = opened.call_args.args[0]
-            self.assertEqual(request.get_method(), "GET")
-            self.assertEqual(request.full_url, app.SUPERVISOR_API + "/addons/self/info")
-        self.assertTrue(app.STANDBY.is_set())
+    def test_library_migrates_legacy_ids_once_and_empty_library_stays_empty(self):
+        favorite = self.apple_favorite()
+        config = app.options()
+        app.migrate_library(config)
+        self.assertEqual(app.apple_music_selection()["items"][0]["id"], favorite)
+        app.save_library({"items":[], "revision":app.library_snapshot()["revision"]})
+        app.migrate_library(config)
+        self.assertEqual(app.apple_music_selection()["items"], [])
+
+    def test_corrupt_library_is_not_replaced_by_legacy_or_editor(self):
+        app.LIBRARY_FILE.write_text("broken")
         with self.assertRaises(ValueError):
-            app.supervisor_request("/addons/self/options", {"options":{}}, favorites_read=True)
+            app.library_snapshot()
+        with self.assertRaises(ValueError):
+            app.save_library({"items":[], "revision":"x"})
+        with self.assertRaises(ValueError):
+            app.migrate_library({"apple_music_favorites":[]})
+        self.assertEqual(app.LIBRARY_FILE.read_text(), "broken")
 
-    def test_favorites_refresh_preserves_local_config_change_during_read(self):
-        def saved(*args, **kwargs):
-            app.SUPERVISOR_OPTIONS = {**app.options(), "apple_music_group":"New local group"}
-            return {"options":{"apple_music_favorites":[{"name":"New", "kind":"Album"}]}}
-        with patch.object(app, "supervisor_request", side_effect=saved):
-            app.refresh_saved_favorites()
-        self.assertEqual(app.options()["apple_music_group"], "New local group")
+    def test_library_http_endpoints_save_and_read_locally_in_standby(self):
+        app.STANDBY.set()
+        snapshot = app.library_snapshot()
+        body = json.dumps({"items":[{"name":"Album", "kind":"Album"}], "revision":snapshot["revision"]}).encode()
+        handler = object.__new__(app.Handler)
+        handler.client_address = ("172.30.32.2", 1)
+        handler.path = "/api/apple-library"
+        handler.headers = Message()
+        handler.headers["Content-Type"] = "application/json"
+        handler.headers["Content-Length"] = str(len(body))
+        handler.rfile = io.BytesIO(body)
+        handler.reply = Mock()
+        with patch.object(app, "ha_request", side_effect=AssertionError("No network")):
+            handler.do_POST()
+            self.assertEqual(handler.reply.call_args.args[0], 200)
+            self.assertEqual(handler.reply.call_args.args[1]["selection"]["items"][0]["name"], "Album")
+            self.assertFalse(handler.reply.call_args.args[1]["selection"]["available"])
+            handler.reply.reset_mock()
+            handler.do_GET()
+            handler.reply.assert_called_once_with(200, app.library_snapshot())
+
+    def test_corrupt_library_keeps_legacy_supervisor_options(self):
+        app.LIBRARY_FILE.write_text("broken")
+        legacy = {**app.options(), "apple_music_favorites":[{"name":"Saved", "kind":"Playlist"}]}
+        with patch.object(app, "supervisor_request", return_value={"options":legacy}) as request, self.assertRaises(ValueError):
+            SYNCHRONIZE(None, migrate_only=True, bootstrap=True)
+        self.assertEqual(request.call_count, 1)
 
     def test_apple_configuration_filters_invalid_entries_and_is_local_in_standby(self):
         app.OPTIONS.write_text(json.dumps({"apple_music_favorites":[{},None,{"name":"Test", "kind":[]},{"name":"Bad\nName","kind":"Playlist"},{"name":"Guter Name","kind":"Album"}]}))
@@ -1756,7 +1776,8 @@ class DeviceConfigurationTests(unittest.TestCase):
         posted = request.call_args_list[-1].args[1]["options"]
         self.assertNotIn("apple_music_target", posted)
         self.assertNotIn("apple_music_group", posted)
-        self.assertEqual(posted["apple_music_favorites"], original["apple_music_favorites"])
+        self.assertNotIn("apple_music_favorites", posted)
+        self.assertEqual(app.library_snapshot()["items"][0]["name"], "Dirk")
         selection = app.apple_music_selection()
         self.assertEqual((selection["target"], selection["group"]),
                          (app.DEFAULT_PLAYBACK_TARGET, app.DEFAULT_PLAYBACK_GROUP))
@@ -2000,6 +2021,15 @@ class MetadataTests(unittest.TestCase):
 
 
 class SecurityTests(unittest.TestCase):
+    def test_library_body_limit_is_bounded_without_raising_control_limits(self):
+        payload = b"x" * 3000
+        for headers, body in (([("Content-Length", "3000")], payload),
+                              ([("Transfer-Encoding", "chunked")], b"BB8\r\n" + payload + b"\r\n0\r\n\r\n")):
+            self.assertEqual(self.body_handler(headers, body).read_request_body(65536), payload)
+            with self.assertRaises(ValueError):
+                self.body_handler(headers, body).read_request_body()
+        with self.assertRaises(ValueError):
+            self.body_handler([("Content-Length", "65537")], b"").read_request_body(65536)
     def body_handler(self, headers, body):
         handler = object.__new__(app.Handler)
         handler.headers = Message()

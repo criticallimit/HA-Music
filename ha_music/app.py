@@ -30,6 +30,8 @@ SPEAKER_FILE = Path(os.environ.get("SPEAKER_FILE", "/data/speaker_levels.json"))
 VIEW_FILE = Path(os.environ.get("VIEW_FILE", "/data/selected_view.json"))
 SESSION_FILE = Path(os.environ.get("SESSION_FILE", "/data/session.json"))
 SOURCE_FILE = Path(os.environ.get("SOURCE_FILE", "/data/last_source.json"))
+LIBRARY_FILE = Path(os.environ.get("LIBRARY_FILE", "/data/apple_music_library.json"))
+LIBRARY_LOCK = threading.RLock()
 CARD_INSTALLED_FILE = Path("/data/dashboard_card_installed")
 STARTED_AT = None
 RESTORE_GENERATION = 0
@@ -162,14 +164,10 @@ def merge_discovered_devices(config, found):
     return merged
 
 
-def supervisor_request(path, payload=None, *, bootstrap=False, favorites_read=False):
+def supervisor_request(path, payload=None, *, bootstrap=False):
     if path not in ("/addons/self/info", "/addons/self/options"):
         raise ValueError("Supervisor-Endpunkt nicht freigegeben")
     kwargs = {"startup_configuration": True} if bootstrap else {}
-    if favorites_read:
-        if path != "/addons/self/info" or payload is not None:
-            raise ValueError("Favoritenübernahme erlaubt nur das Lesen der eigenen Konfiguration")
-        kwargs["favorites_read"] = True
     response = ha_request(path, payload, supervisor=True, **kwargs)
     if not isinstance(response, dict) or response.get("result") != "ok":
         raise RuntimeError("Supervisor-Konfiguration konnte nicht gelesen/gespeichert werden")
@@ -199,13 +197,17 @@ def synchronize_device_configuration(generation, *, migrate_only=False, bootstra
             print("[HA Music] Alexa discovery: " + str(len(found)) + " media players: " +
                   ", ".join(device["entity_id"] for device in found), flush=True)
         check_active()
+        migrate_library(current)
         merged = merge_discovered_devices(current, found)
+        merged.pop("apple_music_favorites", None)
         if merged != current:
             # Read again immediately before the write; preserve intervening edits.
             latest = request("/addons/self/info").get("options")
             if not isinstance(latest, dict):
                 raise ValueError("Supervisor-Gerätekonfiguration fehlt")
+            migrate_library(latest)
             merged = merge_discovered_devices(latest, found)
+            merged.pop("apple_music_favorites", None)
             check_active()
             if merged != latest:
                 request("/addons/self/options", {"options": merged})
@@ -215,38 +217,70 @@ def synchronize_device_configuration(generation, *, migrate_only=False, bootstra
         if migrate_only:
             print("[HA Music] Configuration migration completed", flush=True)
         print(f"[HA Music] Device configuration: {len(merged.get('devices', []))} entries", flush=True)
-def refresh_saved_favorites():
-    """Read saved favorites only; never change routing, devices or playback."""
-    global SUPERVISOR_OPTIONS
-    with DEVICE_SYNC_LOCK:
-        saved = supervisor_request("/addons/self/info", favorites_read=True).get("options")
-        if not isinstance(saved, dict):
-            raise ValueError("Gespeicherte Favoritenkonfiguration fehlt")
-        favorites = saved.get("apple_music_favorites", [])
-        if not isinstance(favorites, list) or any(not isinstance(item, dict) for item in favorites):
-            raise ValueError("Ungültige gespeicherte Favoritenliste")
-        with CONFIG_LOCK:
-            current = options()
-            if current.get("apple_music_favorites", []) == favorites:
-                return False
-            current["apple_music_favorites"] = deepcopy(favorites)
-            SUPERVISOR_OPTIONS = current
-        print("[HA Music] Saved Apple Music favorites applied without restart", flush=True)
-        return True
+def normalize_library(entries, *, legacy=False):
+    if not isinstance(entries, list) or (not legacy and len(entries) > 50):
+        raise ValueError("Bitte höchstens 50 Playlists und Alben eintragen")
+    result = []
+    for entry in entries:
+        if not isinstance(entry, dict):
+            if legacy:
+                continue
+            raise ValueError("Ungültiger Eintrag")
+        name, kind = entry.get("name"), entry.get("kind")
+        search = entry.get("search") or name
+        valid = kind in ("Playlist", "Album") and all(
+            isinstance(value, str) and value.strip() and len(value) <= 200
+            and not any(ord(c) < 32 for c in value) for value in (name, search))
+        if not valid:
+            if legacy:
+                continue
+            raise ValueError("Name und Alexa-Name müssen 1 bis 200 Zeichen enthalten; Art: Playlist oder Album")
+        item = {"name": name.strip(), "kind": kind, "search": search.strip()}
+        if item not in result:
+            result.append(item)
+    return result
 
 
-def watch_saved_favorites(stop_event=None):
-    stop_event = stop_event if stop_event is not None else threading.Event()
-    last_error = None
-    while not stop_event.wait(5):
+def library_snapshot(config=None):
+    """Local data only, including in standby; a corrupt file is never overwritten."""
+    with LIBRARY_LOCK:
         try:
-            refresh_saved_favorites()
-            last_error = None
-        except NETWORK_ERRORS as exc:
-            message = str(exc)
-            if message != last_error:
-                print(f"[HA Music] Favorites refresh pending; existing favorites retained: {message}", flush=True)
-            last_error = message
+            data = json.loads(LIBRARY_FILE.read_text(encoding="utf-8"))
+        except FileNotFoundError:
+            config = options() if config is None else config
+            data = normalize_library(config.get("apple_music_favorites", []), legacy=True)
+        else:
+            # Existing migrated libraries may contain more than the editor limit.
+            if not isinstance(data, list):
+                raise ValueError("Gespeicherte Musikbibliothek ist beschädigt")
+            normalized = normalize_library(data, legacy=True)
+            if len(normalized) != len(data):
+                raise ValueError("Gespeicherte Musikbibliothek ist beschädigt")
+            data = normalized
+        revision = hashlib.sha256(json.dumps(data, sort_keys=True).encode()).hexdigest()
+        return {"items": deepcopy(data), "revision": revision}
+
+
+def migrate_library(config):
+    with LIBRARY_LOCK:
+        if LIBRARY_FILE.exists():
+            library_snapshot(config)  # Keep legacy options intact if local storage is damaged.
+            return
+        if not LIBRARY_FILE.exists() and "apple_music_favorites" in config:
+            data = library_snapshot(config)["items"]
+            with LOCK:
+                write_durable_json(LIBRARY_FILE, data)
+
+
+def save_library(body):
+    entries = normalize_library(body.get("items"))
+    with LIBRARY_LOCK:
+        current = library_snapshot()
+        if body.get("revision") != current["revision"]:
+            raise ValueError("Die Liste wurde inzwischen geändert. Bitte Fenster schließen und erneut öffnen.")
+        with LOCK:
+            write_durable_json(LIBRARY_FILE, entries)
+        return library_snapshot()
 
 
 def integration_inventory():
@@ -861,7 +895,7 @@ def options():
     except (OSError, ValueError):
         return {}
 
-def ha_request(path, payload=None, *, supervisor=False, startup_configuration=False, recovery_read=False, favorites_read=False):
+def ha_request(path, payload=None, *, supervisor=False, startup_configuration=False, recovery_read=False):
     global STATE_CACHE, INVENTORY_CACHE
     configuration_access = startup_configuration and supervisor and path in ("/addons/self/info", "/addons/self/options")
     if startup_configuration and not configuration_access:
@@ -869,10 +903,7 @@ def ha_request(path, payload=None, *, supervisor=False, startup_configuration=Fa
     recovery_access = recovery_read and RECOVERING and path == "/states" and payload is None and not supervisor
     if recovery_read and not recovery_access:
         raise ValueError("Wiederanbindung erlaubt nur das Lesen der HA-Zustände")
-    favorites_access = favorites_read and supervisor and path == "/addons/self/info" and payload is None
-    if favorites_read and not favorites_access:
-        raise ValueError("Favoritenübernahme erlaubt nur das Lesen der eigenen Supervisor-Konfiguration")
-    if STANDBY.is_set() and not (configuration_access or recovery_access or favorites_access):
+    if STANDBY.is_set() and not (configuration_access or recovery_access):
         raise RuntimeError("HA Music standby: outbound network disabled")
     if not TOKEN:
         raise RuntimeError("Home Assistant API token unavailable")
@@ -884,7 +915,7 @@ def ha_request(path, payload=None, *, supervisor=False, startup_configuration=Fa
     timeout = 30 if path == "/services/homeassistant/reload_config_entry" else 8
     with urlopen(req, timeout=timeout) as response:
         with RESPONSE_LOCK:
-            if STANDBY.is_set() and not (configuration_access or (recovery_access and RECOVERING) or favorites_access):
+            if STANDBY.is_set() and not (configuration_access or (recovery_access and RECOVERING)):
                 raise RuntimeError("HA Music standby: response cancelled")
             ACTIVE_RESPONSES.add(response)
         try:
@@ -939,23 +970,11 @@ def apple_music_selection():
     if len(group) > 100 or any(ord(c) < 32 for c in group):
         group = ""
         target = ""
-    favorites = config.get("apple_music_favorites", [])
     items = []
-    if isinstance(favorites, list):
-        for favorite in favorites:
-            if not isinstance(favorite, dict):
-                continue
-            name, kind = favorite.get("name"), favorite.get("kind")
-            search = favorite.get("search") or name
-            if kind not in ("Playlist", "Album") or not all(
-                isinstance(value, str) and value.strip() and len(value) <= 200
-                and not any(ord(c) < 32 for c in value) for value in (name, search)
-            ):
-                continue
-            item = {"name": name.strip(), "kind": kind, "search": search.strip()}
-            item["id"] = hashlib.sha256(json.dumps(item, sort_keys=True).encode()).hexdigest()[:24]
-            if not any(existing["id"] == item["id"] for existing in items):
-                items.append(item)
+    for favorite in library_snapshot(config)["items"]:
+        item = dict(favorite)
+        item["id"] = hashlib.sha256(json.dumps(item, sort_keys=True).encode()).hexdigest()[:24]
+        items.append(item)
     with STATE_LOCK:
         active = deepcopy(ACTIVE_APPLE)
         available = LAST_POWER == "on" and READY and not PREPARING and not STANDBY.is_set()
@@ -1420,7 +1439,7 @@ def perform_control(action, body, generation):
     raise ValueError("Unbekannte Aktion")
 
 class Handler(BaseHTTPRequestHandler):
-    def read_request_body(self):
+    def read_request_body(self, max_size=2048):
         """Accept bounded JSON bodies, including Supervisor's streamed POSTs."""
         deadline = time.monotonic() + 20
 
@@ -1472,7 +1491,7 @@ class Handler(BaseHTTPRequestHandler):
                     if not body:
                         raise ValueError("Invalid request length")
                     return bytes(body)
-                if len(body) + size > 2048:
+                if len(body) + size > max_size:
                     raise ValueError("Invalid request length")
                 part = read(size)
                 if len(part) != size or read(2) != b"\r\n":
@@ -1482,7 +1501,7 @@ class Handler(BaseHTTPRequestHandler):
         if len(lengths) != 1 or not re.fullmatch(r"[0-9]{1,10}", lengths[0].strip()):
             raise ValueError("Invalid request length")
         size = int(lengths[0])
-        if not 0 < size <= 2048:
+        if not 0 < size <= max_size:
             raise ValueError("Invalid request length")
         body = read(size)
         if len(body) != size:
@@ -1514,6 +1533,11 @@ class Handler(BaseHTTPRequestHandler):
         if name == "status" and "/api/" in path:
             return self.reply(200, {"radio": "direct_presets",
                                     "apple_music": "alexa_favorites", "backend": "connected" if TOKEN else "unavailable"})
+        if name == "apple-library" and "/api/" in path:
+            try:
+                return self.reply(200, library_snapshot())
+            except NETWORK_ERRORS as exc:
+                return self.reply(503, {"error": str(exc)})
         if name == "events" and "/api/" in path:
             if STANDBY.is_set():
                 return self.reply(503, {"error":"Standby"})
@@ -1586,16 +1610,19 @@ class Handler(BaseHTTPRequestHandler):
             return self.reply(403, {"error": "Ingress only"})
         path = unquote(urlsplit(self.path).path)
         action = path.rsplit("/", 1)[-1]
-        if "/api/" not in path or action not in ("volume", "room_audio", "group_transport", "track_transport", "radio_direct", "apple_music", "radio_power", "selected_view", "dashboard_card_installed"):
+        if "/api/" not in path or action not in ("volume", "room_audio", "group_transport", "track_transport", "radio_direct", "apple_music", "radio_power", "selected_view", "dashboard_card_installed", "apple-library"):
             return self.reply(404, {"error": "Not found"})
         if self.headers.get("Sec-Fetch-Site") == "cross-site":
             return self.reply(403, {"error": "Cross-site request rejected"})
         if self.headers.get_content_type() != "application/json":
             return self.reply(415, {"error": "JSON required"})
         try:
-            body = json.loads(self.read_request_body())
+            body = json.loads(self.read_request_body(65536) if action == "apple-library" else self.read_request_body())
             if not isinstance(body, dict):
                 raise ValueError("Invalid body")
+            if action == "apple-library":
+                saved = save_library(body)
+                return self.reply(200, {**saved, "selection": apple_music_selection()})
             if action == "dashboard_card_installed":
                 mark_dashboard_card_installed()
             elif action == "selected_view":
@@ -1614,11 +1641,14 @@ class Handler(BaseHTTPRequestHandler):
 
 if __name__ == "__main__":
     try:
+        migrate_library(options())
+    except NETWORK_ERRORS as exc:
+        print(f"[HA Music] Music library migration pending: {exc}", flush=True)
+    try:
         synchronize_device_configuration(None, migrate_only=True, bootstrap=True)
     except NETWORK_ERRORS as exc:
         print(f"[HA Music] Device status migration pending: {exc}", flush=True)
     threading.Thread(target=radio_switch_monitor, daemon=True).start()
-    threading.Thread(target=watch_saved_favorites, daemon=True).start()
     start_session_recovery()
     ThreadingHTTPServer(("0.0.0.0", PORT), Handler).serve_forever()
 

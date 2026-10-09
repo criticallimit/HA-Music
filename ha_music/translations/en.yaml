@@ -5,19 +5,6 @@ configuration:
   apple_music_group:
     name: Alternate Apple Music speaker group (optional)
     description: Omit this option to use the Alexa group Wohnung, as radio does. Only for an intentionally different setup; specify the exact Alexa group name. An explicitly empty value plays directly on the command device. Device visibility does not change Alexa group membership.
-  apple_music_favorites:
-    name: Apple Music favorites
-    description: Link your Apple Music account in Alexa first. Save playlists or albums here; favorites are applied within a few seconds without restarting. Decline the restart suggestion for favorites-only edits. No account credentials are needed in HA Music.
-    fields:
-      name:
-        name: Display name
-        description: Tile label; also used for the playback request unless a search phrase is provided.
-      kind:
-        name: Type
-        description: Personal playlist or Apple Music album.
-      search:
-        name: Search phrase (optional)
-        description: Exact playlist name or album title and artist. Leave empty to use the display name.
   show_dashboard_setup:
     name: Show dashboard setup
     description: Show Lovelace card setup in HA Music.

@@ -21,7 +21,6 @@ map:
     read_only: false
 options:
   show_dashboard_setup: false
-  apple_music_favorites: []
   devices:
     - entity_id: media_player.wohnung
       name: Wohnung
@@ -39,10 +38,6 @@ schema:
   show_dashboard_setup: bool
   apple_music_target: "match(^media_player\\.[a-z0-9_]+$)?"
   apple_music_group: "str?"
-  apple_music_favorites:
-    - name: str
-      kind: "list(Playlist|Album)"
-      search: "str?"
   devices:
     - name: str
       status: "list(Aktiv|Inaktiv)?"

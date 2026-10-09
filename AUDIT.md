@@ -59,3 +59,13 @@ Keine Verbindung zur produktiven HA-/Alexa-Installation, keine echte Apple-/Amaz
 
 Kein Release, Versionssprung oder Installation. Eine Rückkehr erfolgt über einen neuen Commit mit dem gesicherten Dateistand nach erneuter Sicherung des dann aktuellen `main`, ohne die Historie zurückzusetzen.
 
+
+## 2026-10-09: Favoritenverwaltung in der Oberfläche
+
+- Plus neben Playlists und Alben öffnet ein gemeinsames modales Formular für die jeweilige Kategorie: vorhandene Einträge, Hinzufügen, Bearbeiten, Entfernen, Abbrechen und Übernehmen.
+- Eigene dauerhaft atomar gespeicherte Bibliothek unter `/data/apple_music_library.json`; bestehende gültige Konfigurationseinträge werden vor deren Entfernung migriert, IDs bleiben identisch. Eine beschädigte Datei wird nicht automatisch überschrieben; alte Optionen werden dann nicht gelöscht.
+- Favoritenfelder aus Schema, Standardoptionen und Übersetzungen entfernt. Supervisor-Favoritenpolling, dessen Standby-Ausnahme und dazugehörige veraltete Tests ersetzt.
+- Neue GET/POST-Schnittstelle ist ingressbeschränkt; POST schützt vor Cross-site-Anfragen, validiert Einträge und prüft die gelesene Revision gegen konkurrierende Änderungen. Größeres, weiterhin begrenztes JSON nur für den Bibliotheksendpunkt; Steueranfragen bleiben bei 2048 Bytes begrenzt.
+- Speichern verändert keine laufende Quelle, Lautstärken oder Power/Ready; Netzwerk-Standby bleibt erhalten. Erfolg aktualisiert Kacheln sofort, Fehler behalten den Entwurf. Ältere Zustandsantworten können die neue Liste nicht rückgängig anzeigen.
+- Lokale Regressionen prüfen Migration, absichtlich leere Liste, Neustartpersistenz, Schreibfehler, beschädigte Daten, konkurrierende Entwürfe, lokale Standby-Verwaltung, HTTP-Grenzen und UI-Bedienung. Kein Live-Test an den Echos; Version bleibt 0.0.6.
+

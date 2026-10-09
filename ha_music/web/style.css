@@ -175,3 +175,18 @@ html.ha-dashboard-card .power-buttons button{background:var(--surface)}
 html.ha-dashboard-card .station:hover:not(:disabled){background:var(--secondary-background-color,var(--surface));border-color:var(--border)}
 html.ha-dashboard-card .station.active,html.ha-dashboard-card nav button.active{color:var(--text)}
 
+/* Music library editor */
+.library-heading{display:flex;align-items:center;gap:8px;margin-bottom:8px}
+.library-heading h2{margin:0}
+.library-plus{width:28px;height:28px;padding:0;border-radius:8px;border:1px solid var(--border);background:var(--surface);color:var(--accent);font-size:23px;line-height:1;cursor:pointer}
+.library-plus:hover{border-color:var(--accent)}
+.library-editor{box-sizing:border-box;width:min(660px,calc(100vw - 24px))}
+.library-editor-row{border:1px solid var(--border);border-radius:10px;padding:12px;margin:12px 0;display:grid;grid-template-columns:1fr 1fr auto;gap:10px;align-items:end}
+.library-editor-row label{margin:0;font-size:12px}
+.library-editor-row input{display:block;box-sizing:border-box;width:100%;min-width:0;margin-top:6px;padding:9px;border:1px solid var(--border);border-radius:7px;background:var(--bg);color:var(--text);font:inherit}
+.library-editor-row button{font-size:12px}
+.library-editor-actions{display:flex;flex-wrap:wrap;gap:8px;justify-content:flex-end;margin-top:18px}
+#library-editor-save{background:var(--accent);color:var(--text)}
+#library-editor-feedback{min-height:20px}
+@media(max-width:550px){.library-editor-row{grid-template-columns:1fr}.library-editor-row button{justify-self:end}.library-editor{padding:16px}}
+

@@ -10,6 +10,7 @@ function harness() {
   function element() {
     const classes = new Set();
     return {hidden:false, disabled:false, textContent:'', value:'', children:[], attributes:{}, listeners:{},
+      open:false, showModal(){this.open=true;}, close(){this.open=false;}, remove(){this.removed=true;},
       classList:{toggle(name,on){if(on) classes.add(name); else classes.delete(name);},add(name){classes.add(name);},contains(name){return classes.has(name);}}, style:{setProperty(){}},
       addEventListener(name,handler){this.listeners[name]=handler;}, appendChild(e){this.children.push(e);},
       append(...items){this.children.push(...items);}, replaceChildren(...items){this.children = items;},
@@ -720,5 +721,68 @@ test('cached radio snapshot cannot overwrite another station or wake standby', a
   assert.equal(h.get('now-ticker-text').textContent,'');
   h.run('radioReadyForViews=false; applyRadioMetadata({station:"wdr2",metadata:{status:"available",title:"Wrong",artist:"Artist"}})');
   assert.equal(h.get('now-ticker-text').textContent,'');
+});
+
+test('library editor saves current category and preserves albums without playback commands', async () => {
+  const h=harness(), calls=[];
+  h.context.reply=async(action,body)=>{
+    calls.push({action,body});
+    if (!body) return {revision:'r',items:[{name:'Old',kind:'Playlist'},{name:'Album',kind:'Album'}]};
+    return {selection:{items:[{id:'new',name:'New',kind:'Playlist'}],available:true}};
+  };
+  h.run('api=reply; radioReadyForViews=true');
+  await h.run('openLibraryEditor("Playlist")');
+  assert.equal(h.get('library-editor').open,true);
+  h.run('libraryEditorRows[0].name.value="New"');
+  await h.run('submitLibraryEditor({preventDefault(){}})');
+  assert.equal(h.get('library-editor').open,false);
+  assert.equal(calls[1].body.revision,'r');
+  assert.equal(calls[1].body.items.find(i=>i.kind==='Album').name,'Album');
+  assert.equal(calls[1].body.items.find(i=>i.kind==='Playlist').name,'New');
+  assert.equal(h.run('appleButtons.has("new")'),true);
+  assert.ok(calls.every(c=>c.action==='apple-library'));
+});
+
+test('library cancel discards edits and failed save retains editable draft', async () => {
+  const h=harness(), calls=[];
+  h.context.reply=async(action,body)=>{calls.push(body);if(body) throw new Error('disk full');return {revision:'r',items:[]};};
+  h.run('api=reply');await h.run('openLibraryEditor("Album")');
+  h.run('libraryEditorRows[0].name.value="My Album"');
+  await h.run('submitLibraryEditor({preventDefault(){}})');
+  assert.equal(h.get('library-editor').open,true);
+  assert.match(h.get('library-editor-feedback').textContent,/disk full/);
+  assert.equal(h.run('libraryEditorRows[0].name.value'),'My Album');
+  assert.equal(h.get('library-editor-save').disabled,false);
+  h.run('closeLibraryEditor()');assert.equal(calls.length,2);
+});
+
+test('library removes entries and renders untrusted labels as text', async () => {
+  const h=harness();let posted;
+  h.context.reply=async(action,body)=>{if(!body)return {revision:'r',items:[{name:'<img src=x>',kind:'Album'}]};posted=body;return {selection:{items:[],available:false}};};
+  h.run('api=reply');await h.run('openLibraryEditor("Album")');
+  assert.equal(h.run('libraryEditorRows[0].name.value'),'<img src=x>');
+  h.run('libraryEditorRows[0].remove.listeners.click()');
+  await h.run('submitLibraryEditor({preventDefault(){}})');
+  assert.equal(posted.items.length,0);
+  assert.equal(h.get('library-editor').open,false);
+});
+
+test('failed library load prevents replacing existing entries with an empty draft', async () => {
+  const h=harness();h.context.reply=async()=>{throw new Error('offline');};
+  h.run('api=reply');await h.run('openLibraryEditor("Playlist")');
+  assert.equal(h.get('library-editor-save').disabled,true);
+  assert.equal(h.get('library-editor-add').disabled,true);
+  assert.match(h.get('library-editor-feedback').textContent,/offline/);
+});
+
+test('old state poll cannot remove newly saved library tiles', async () => {
+  const h=harness(); let resolve;
+  h.context.reply=()=>new Promise(r=>{resolve=r;});
+  h.run('api=reply; refreshPlayers=async()=>{}');
+  const pending=h.run('loadRadioState()');
+  h.run('libraryEpoch++; renderAppleSelection({items:[{id:"new",kind:"Album",name:"New"}],available:true})');
+  resolve({stations:[],power:'on',ready:'on',apple_music:{items:[],available:true}});
+  await pending;
+  assert.equal(h.run('appleButtons.has("new")'),true);
 });
 

@@ -392,6 +392,82 @@ function reportError(text) {
   if (text) console.warn("[HA Music] " + text);
 }
 const stationButtons = new Map();
+let libraryEpoch = 0;
+let libraryEditorKind = "Playlist";
+let libraryEditorSnapshot = null;
+let libraryEditorRows = [];
+let libraryEditorBusy = false;
+function libraryEditorControls(busy) {
+  libraryEditorBusy = busy;
+  for (const id of ["library-editor-save", "library-editor-add", "library-editor-close", "library-editor-cancel"])
+    $(id).disabled = busy;
+  for (const row of libraryEditorRows) {
+    row.name.disabled = busy; row.search.disabled = busy; row.remove.disabled = busy;
+  }
+}
+function addLibraryEditorRow(item = {}) {
+  const container = document.createElement("div"); container.className = "library-editor-row";
+  const row = {container};
+  for (const [field, text] of [["name", "Anzeigename"], ["search", "Alexa-Name (optional)"]]) {
+    const label = document.createElement("label"); label.textContent = text;
+    const input = document.createElement("input"); input.type = "text"; input.maxLength = 200;
+    input.required = field === "name"; input.value = item[field] || "";
+    label.appendChild(input); container.appendChild(label); row[field] = input;
+  }
+  row.remove = document.createElement("button"); row.remove.type = "button"; row.remove.textContent = "Entfernen";
+  row.remove.addEventListener("click", () => {
+    if (libraryEditorBusy) return;
+    libraryEditorRows = libraryEditorRows.filter(existing => existing !== row);
+    container.remove();
+  });
+  container.appendChild(row.remove); libraryEditorRows.push(row); $("library-editor-rows").appendChild(container);
+  return row;
+}
+async function openLibraryEditor(kind) {
+  if (libraryEditorBusy || $("library-editor").open) return;
+  libraryEditorKind = kind; libraryEditorSnapshot = null; libraryEditorRows = [];
+  $("library-editor-rows").replaceChildren();
+  $("library-editor-title").textContent = kind === "Playlist" ? "Playlists verwalten" : "Alben verwalten";
+  $("library-editor-feedback").textContent = "Lade gespeicherte Einträge …";
+  $("library-editor").showModal(); libraryEditorControls(true);
+  try {
+    libraryEditorSnapshot = await api("apple-library");
+    for (const item of libraryEditorSnapshot.items.filter(item => item.kind === kind)) addLibraryEditorRow(item);
+    if (!libraryEditorRows.length) addLibraryEditorRow();
+    $("library-editor-feedback").textContent = "";
+  } catch (e) {
+    $("library-editor-feedback").textContent = "Einträge konnten nicht geladen werden: " + e.message;
+  } finally {
+    libraryEditorControls(false);
+    if (!libraryEditorSnapshot) { $("library-editor-save").disabled = true; $("library-editor-add").disabled = true; }
+  }
+}
+function closeLibraryEditor() {
+  if (!libraryEditorBusy) $("library-editor").close();
+}
+async function submitLibraryEditor(event) {
+  event.preventDefault();
+  if (libraryEditorBusy || !libraryEditorSnapshot) return;
+  const items = libraryEditorSnapshot.items.filter(item => item.kind !== libraryEditorKind);
+  for (const row of libraryEditorRows)
+    items.push({kind:libraryEditorKind, name:row.name.value.trim(), search:row.search.value.trim()});
+  libraryEditorControls(true); $("library-editor-feedback").textContent = "Speichere …";
+  try {
+    const result = await api("apple-library", {items, revision:libraryEditorSnapshot.revision});
+    libraryEpoch++;
+    renderAppleSelection(result.selection);
+    $("library-editor").close();
+  } catch (e) {
+    $("library-editor-feedback").textContent = "Speichern fehlgeschlagen: " + e.message;
+  } finally { libraryEditorControls(false); }
+}
+$("apple-playlists-edit").addEventListener("click", () => openLibraryEditor("Playlist"));
+$("apple-albums-edit").addEventListener("click", () => openLibraryEditor("Album"));
+$("library-editor-add").addEventListener("click", () => { if (!libraryEditorBusy && libraryEditorSnapshot) addLibraryEditorRow(); });
+$("library-editor-close").addEventListener("click", closeLibraryEditor);
+$("library-editor-cancel").addEventListener("click", closeLibraryEditor);
+$("library-editor").addEventListener("cancel", event => { event.preventDefault(); closeLibraryEditor(); });
+$("library-editor-form").addEventListener("submit", submitLibraryEditor);
 function renderAppleSelection(selection) {
   appleSelection = selection || {items:[], available:false};
   const items = Array.isArray(appleSelection.items) ? appleSelection.items : [];
@@ -428,7 +504,7 @@ function renderAppleSelection(selection) {
   }
   $("apple-library-note").textContent = items.length && !appleSelection.available && radioReadyForViews && !mediaPreparing
     ? "Apple-Music-Steuergerät unter Add-on → Konfiguration auswählen und unter Alexa-Geräte auf Aktiv setzen."
-    : "Playlists und Alben unter Add-on → Konfiguration → Apple-Music-Favoriten hinzufügen und speichern. Favoriten werden ohne Neustart übernommen. Dein Apple-Music-Konto muss in Alexa verknüpft sein.";
+    : "Playlists und Alben über das Plus neben der Überschrift verwalten. Dein Apple-Music-Konto muss in Alexa verknüpft sein.";
 }
 async function startAppleFavorite(id) {
   if (stationPending || transportPending || !radioReadyForViews || mediaPreparing || strictStandby || !appleSelection.available || !appleButtons.has(id)) return;
@@ -521,6 +597,7 @@ async function loadRadioState() {
   if (stateRequestRunning || powerPending) return;
   stateRequestRunning = true;
   const generation = uiGeneration;
+  const requestedLibraryEpoch = libraryEpoch;
   try {
     const data = await api("radio-state");
     if (generation !== uiGeneration) return;
@@ -562,7 +639,7 @@ async function loadRadioState() {
         $("current-artist").textContent = "Jetzt läuft";
       }
     }
-    renderAppleSelection(data.apple_music);
+    if (requestedLibraryEpoch === libraryEpoch) renderAppleSelection(data.apple_music);
     if (radioReady) connectRadioEvents();
     if (becameReady || controlsBecameReady) refreshPlayers();
     if (!viewPending) preferredView = data.selected_view === "apple" ? "apple" : "radio";
