@@ -122,17 +122,19 @@ test('protocol-relative artwork is rejected', async () => {
   assert.equal(h.get('current-cover').hidden,true);
 });
 
-test('stale HA volume does not move desired room slider to 50 percent', () => {
+test('room slider and percentage show only the current HA volume', () => {
   const h = harness();
   const room = h.run('roomView({entity_id:"media_player.wohnzimmer",volume:0.5,state:"idle"},{"media_player.wohnzimmer":0.2})');
-  assert.equal(room.volume,0.2);
-  assert.equal(room.observed,0.5);
-  assert.equal(room.pending,true);
+  const row = h.run('volumeRow(roomView({entity_id:"media_player.wohnzimmer",volume:0.5,state:"idle"},{"media_player.wohnzimmer":0.2}),{},false)');
+  assert.equal(room.volume,0.5);
+  assert.equal(row.children[1].value,50);
+  assert.equal(row.children[2].textContent,'50%');
+  assert.equal(row.children[2].title,undefined);
 });
 
-test('room target supplied by backend renders startup mute', () => {
+test('saved mute does not replace the HA room volume', () => {
   const h = harness();
-  assert.equal(h.run('roomView({entity_id:"media_player.wohnzimmer",volume:0.4},{"media_player.wohnung":0,"media_player.wohnzimmer":0}).volume'),0);
+  assert.equal(h.run('roomView({entity_id:"media_player.wohnzimmer",volume:0.4},{"media_player.wohnung":0,"media_player.wohnzimmer":0}).volume'),0.4);
 });
 
 test('individual volume remains independent of master zero after startup', () => {
@@ -429,8 +431,14 @@ test('unconfirmed echo volumes do not claim audible playback', async () => {
   h.run('api=reply; radioReadyForViews=true');
   await h.run('updateSong()');
   assert.match(h.get('playback-state').textContent,/Hörbare Wiedergabe nicht bestätigt/);
-  const row=h.run('volumeRow({entity_id:"media_player.bad",name:"Bad",state:"playing",volume:.4,pending:true,observed:.01},{},false)');
-  assert.equal(row.children[2].textContent,'40% (HA: 1%)');
+  const row=h.run('volumeRow(roomView({entity_id:"media_player.bad",name:"Bad",state:"playing",volume:.01},{"media_player.bad":.4}),{},false)');
+  assert.equal(row.children[2].textContent,'1%');
+});
+
+test('missing HA room volume does not pretend a saved percentage is current', () => {
+  const h = harness();
+  const row=h.run('volumeRow(roomView({entity_id:"media_player.bad",name:"Bad",state:"unknown",volume:null},{"media_player.bad":.4}),{},false)');
+  assert.equal(row.children[2].textContent,'–');
 });
 
 test('stale 1LIVE artwork cannot return after an accepted Apple selection', async () => {

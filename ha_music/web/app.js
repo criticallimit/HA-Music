@@ -676,20 +676,15 @@ function masterView(groups, players, saved) {
   const volume = saved?.["media_player.wohnung"] ?? group.volume ?? 0;
   return {...group, volume};
 }
-function roomView(player, saved) {
-  const desired = saved?.[player.entity_id];
-  if (typeof player.volume !== "number") return {...player, volume:desired ?? 0.01};
-  if (typeof desired !== "number" || typeof player.volume !== "number" || Math.abs(desired-player.volume) <= 0.011) return player;
-  return {...player, volume:desired, pending:true, observed:player.volume};
+function roomView(player) {
+  return player;
 }
 function volumeRow(p, remembered, master) {
   const row = document.createElement("div"); row.className = "player-row";
   const title = document.createElement("span"); title.textContent = (master ? "Master Volume" : p.name + " (" + p.state + ")");
   const slider = document.createElement("input"); slider.type="range"; slider.min=0; slider.max=100; slider.step=1;
       slider.value = Math.round((p.volume ?? 0) * 100);
-      const label = document.createElement("span"); label.textContent=slider.value+"%";
-      if (p.pending) label.textContent += " (HA: " + Math.round(p.observed*100) + "%)";
-      if (p.pending) label.title = "Gespeicherter Sollwert; Home Assistant meldet " + Math.round(p.observed*100) + "%. Bestätigung steht aus.";
+      const label = document.createElement("span"); label.textContent=typeof p.volume === "number" ? slider.value+"%" : "–";
       const mute = document.createElement("button"); mute.type="button"; mute.textContent="Stumm";
       slider.setAttribute("aria-label", (master ? "Master" : p.name) + " Lautstärke");
       slider.disabled = mediaPreparing;
@@ -775,7 +770,7 @@ async function refreshPlayers() {
     $("groups").textContent = groups.length ? "Gruppe: " + groups.map(p => p.name).join(", ") + " · Alexa-Multiroom" : "Master-Gruppe Wohnung ist nicht aktiviert oder nicht verfügbar.";
     const wrap = $("players"); wrap.replaceChildren();
     if (!players.length) wrap.textContent = "Keine Raumgeräte aktiviert. Bitte Geräte in der Add-on-Konfiguration auswählen.";
-    for (const p of players) wrap.appendChild(volumeRow(roomView(p, saved_levels), remembered, false));
+    for (const p of players) wrap.appendChild(volumeRow(roomView(p), remembered, false));
   } catch (e) {
     if (generation === uiGeneration) {
       $("players").textContent = "Lautsprecher derzeit nicht verfügbar.";
