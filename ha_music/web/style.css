@@ -176,6 +176,11 @@ html.ha-dashboard-card .station:hover:not(:disabled){background:var(--secondary-
 html.ha-dashboard-card .station.active,html.ha-dashboard-card nav button.active{color:var(--text)}
 
 /* Music library editor */
+.station.apple-favorite{position:relative;aspect-ratio:1 / 1;width:100%;min-width:0;min-height:0;padding:0;border:0;overflow:hidden;gap:0}
+.station.apple-favorite.active{box-shadow:inset 0 0 0 3px var(--accent)}
+.apple-favorite .station-icon{position:absolute;left:50%;top:38%;transform:translate(-50%,-50%);pointer-events:none}
+.apple-favorite-label{position:absolute;inset:auto 0 0;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:3;overflow:hidden;padding:8px;white-space:normal;overflow-wrap:anywhere;line-height:1.25;font-size:clamp(11px,1.2vw,14px);background:linear-gradient(transparent,#0008);pointer-events:none}
+.apple-favorite:focus-visible{outline:3px solid var(--accent);outline-offset:3px}
 .library-heading{display:flex;align-items:center;gap:8px;margin-bottom:8px}
 .library-heading h2{margin:0}
 .library-plus{width:28px;height:28px;padding:0;border-radius:8px;border:1px solid var(--border);background:var(--surface);color:var(--accent);font-size:23px;line-height:1;cursor:pointer}

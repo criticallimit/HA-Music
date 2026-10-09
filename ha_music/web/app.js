@@ -489,7 +489,7 @@ function renderAppleSelection(selection) {
         button.className = "station apple-favorite";
         const icon = document.createElement("span"); icon.className = "station-icon"; icon.setAttribute("aria-hidden","true");
         icon.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>';
-        const label = document.createElement("span"); label.textContent = favorite.name;
+        const label = document.createElement("span"); label.className = "apple-favorite-label"; label.textContent = favorite.name;
         button.title = favorite.name;
         button.append(icon,label);
         button.addEventListener("click", () => startAppleFavorite(favorite.id));

@@ -176,3 +176,12 @@ Alte Gerätewerte `enabled: true/false` bleiben beim Umstieg gültig. Beim näch
 
 Die Konfiguration lässt sich bei ausgeschaltetem Radio bearbeiten. Zur Übernahme älterer Werte muss nur das Add-on gestartet werden, nicht das Radio. Die Optionsmigration liest/speichert ausschließlich die eigenen Supervisor-Optionen; die separate Wiederanbindung liest gegebenenfalls HA-Zustände wie oben beschrieben. Alexa und der Radioschalter erhalten dabei keine Befehle. Nach Änderungen speichern und das Add-on neu starten.
 
+
+### Quadratische Apple-Music-Kacheln
+
+Playlist- und Albumkacheln haben ein Seitenverhältnis von 1:1 ohne Innenabstand oder sichtbaren Rahmen. Der Name liegt unten innerhalb der Kachel, die aktive Auswahl bleibt markiert. Coverabruf ist damit noch nicht implementiert. Alexa liefert das Bild der laufenden Wiedergabe; dieses ist keine verlässliche Identifikation eines Playlistcovers. Vorababruf persönlicher Playlists benötigt Apple Music API/MusicKit mit Developer- und Music-User-Token; öffentliche Albumcover können über die iTunes-Suche ermittelt werden, müssen bei mehrdeutigen Treffern bestätigt werden. Alternativ ist eine eigene Coverdatei pro Favorit möglich.
+
+Quellen: [Apple Music API](https://developer.apple.com/documentation/applemusicapi/), [persönliche Playlists](https://developer.apple.com/documentation/applemusicapi/get-all-library-playlists), [iTunes-Suche](https://performance-partners.apple.com/search-api), [Alexa Media Player](https://github.com/alandtse/alexa_media_player).
+
+Sicherung davor: [backup/main-2026-10-09-before-square-tiles-0987f50](https://github.com/criticallimit/HA-Music/tree/backup/main-2026-10-09-before-square-tiles-0987f50), Commit 0987f5066209bc35d3a1e93525324e5f4053098c.
+
