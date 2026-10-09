@@ -152,19 +152,26 @@ class RuntimeTests(unittest.TestCase):
         self.assertTrue(all(c["volume_level"] == 0 for c in volumes if c["entity_id"].endswith("kueche")))
         self.assertEqual(app.speaker_levels()["media_player.wohnzimmer"], 0.4)
 
-    def test_reload_once_before_start_wait_even_with_unavailable_target(self):
+    def test_reload_once_after_power_wait_and_before_probe(self):
         app.save_selected_station("wdr2")
         self.states["media_player.wohnzimmer"]["state"] = "unavailable"
         phases = []
         def request(path, body=None):
             phases.append(path)
             if path.endswith("reload_config_entry"):
+                self.assertIn("wait:50", phases)
+                self.assertTrue(app.READY)
+                self.assertTrue(app.PREPARING)
                 self.assertEqual(body, {"entity_id": "media_player.wohnzimmer"})
                 self.states["media_player.wohnzimmer"]["state"] = "idle"
             return {}
         def wait(generation, seconds):
             if seconds == 50:
+                self.assertNotIn("/services/homeassistant/reload_config_entry", phases)
+            if seconds == 10:
                 self.assertEqual(phases[-1], "/services/homeassistant/reload_config_entry")
+                self.assertFalse(any(p.endswith("volume_set") for p in phases))
+            phases.append(f"wait:{seconds}")
             return True
         with patch.object(app, "wait_for_start", side_effect=wait), patch.object(app, "state_snapshot", return_value=self.states), patch.object(app, "allowed_entities", return_value={"media_player.wohnung", "media_player.wohnzimmer"}), patch.object(app, "ha_request", side_effect=request):
             app.radio_start_sequence(10)
@@ -216,7 +223,7 @@ class RuntimeTests(unittest.TestCase):
         calls = self.startup(request).call_args_list
         self.assertFalse(app.READY)
         self.assertIsNone(app.STARTUP_ERROR)
-        self.assertEqual([c.args[0] for c in calls], ["/services/input_boolean/turn_off", "/services/homeassistant/reload_config_entry"])
+        self.assertEqual([c.args[0] for c in calls], ["/services/input_boolean/turn_off", "/services/input_boolean/turn_on", "/services/homeassistant/reload_config_entry"])
 
     def test_failed_station_restores_but_keeps_interface_visible(self):
         app.save_selected_station("wdr2")
@@ -232,15 +239,15 @@ class RuntimeTests(unittest.TestCase):
         self.assertTrue(any("Station timed out" in str(c) for c in log.call_args_list))
         self.assertTrue(any(c.args[0].endswith("volume_set") and c.args[1]["volume_level"] == 0.4 for c in calls))
 
-    def test_unavailable_target_does_not_add_waits_or_hide_interface(self):
+    def test_unavailable_target_keeps_interface_visible_without_unprobed_sender(self):
         app.save_selected_station("wdr2")
         self.states["media_player.wohnzimmer"]["state"] = "unavailable"
         with patch.object(app, "wait_for_start", return_value=True) as wait, patch.object(app, "state_snapshot", return_value=self.states), patch.object(app, "allowed_entities", return_value={"media_player.wohnung", "media_player.wohnzimmer"}), patch.object(app, "ha_request", return_value={}) as calls:
             app.radio_start_sequence(10)
         self.assertTrue(app.READY)
         self.assertFalse(app.PREPARING)
-        self.assertEqual([c.args[1] for c in wait.call_args_list], [50, 2])
-        self.assertEqual(sum(c.args[0].endswith("play_media") for c in calls.call_args_list), 1)
+        self.assertEqual([c.args[1] for c in wait.call_args_list], [50, 10, 2])
+        self.assertEqual(sum(c.args[0].endswith("play_media") for c in calls.call_args_list), 0)
 
     def test_time_release_precedes_probe_and_manual_controls_wait_for_preparation(self):
         app.save_selected_station("wdr2")
@@ -264,7 +271,19 @@ class RuntimeTests(unittest.TestCase):
             app.radio_start_sequence(10)
         self.assertFalse(app.READY)
         self.assertFalse(app.PREPARING)
-        self.assertEqual([c.args[0] for c in calls.call_args_list], ["/services/input_boolean/turn_off", "/services/homeassistant/reload_config_entry"])
+        self.assertEqual([c.args[0] for c in calls.call_args_list], ["/services/input_boolean/turn_off"])
+
+    def test_cancel_after_late_reload_prevents_all_media_commands(self):
+        def wait(generation, seconds):
+            if seconds == 10:
+                app.transition_power(False)
+                return False
+            return True
+        with patch.object(app, "wait_for_start", side_effect=wait), patch.object(app, "ha_request", return_value={}) as calls:
+            app.radio_start_sequence(10)
+        self.assertFalse(app.READY)
+        self.assertFalse(app.PREPARING)
+        self.assertEqual([c.args[0] for c in calls.call_args_list], ["/services/input_boolean/turn_off", "/services/input_boolean/turn_on", "/services/homeassistant/reload_config_entry"])
 
     def test_restore_failure_is_logged_without_hiding_interface(self):
         def request(path, body=None):
@@ -302,7 +321,7 @@ class RuntimeTests(unittest.TestCase):
             if path.endswith("update_entity"):
                 app.transition_power(False)
         calls = self.startup(request).call_args_list
-        self.assertEqual([c.args[0] for c in calls], ["/services/input_boolean/turn_off", "/services/homeassistant/reload_config_entry", "/services/input_boolean/turn_on", "/services/homeassistant/update_entity"])
+        self.assertEqual([c.args[0] for c in calls], ["/services/input_boolean/turn_off", "/services/input_boolean/turn_on", "/services/homeassistant/reload_config_entry", "/services/homeassistant/update_entity"])
         self.assertFalse(app.READY)
 
     def test_no_stored_station_does_not_play(self):
@@ -372,10 +391,10 @@ class RuntimeTests(unittest.TestCase):
         app.CANCEL.set()
         self.assertFalse(app.wait_for_start(10, 50))
 
-    def test_delays_are_50_then_2_seconds(self):
+    def test_delays_are_power_50_reload_10_probe_2_seconds(self):
         with patch.object(app, "wait_for_start", return_value=True) as wait, patch.object(app, "state_snapshot", return_value=self.states), patch.object(app, "allowed_entities", return_value=set()), patch.object(app, "ha_request"):
             app.radio_start_sequence(10)
-        self.assertEqual([c.args for c in wait.call_args_list], [(10, 50), (10, 2)])
+        self.assertEqual([c.args for c in wait.call_args_list], [(10, 50), (10, 10), (10, 2)])
 
     def test_verification_cancellation_does_not_poll(self):
         with patch.object(app, "wait_for_start", return_value=False), patch.object(app, "state_snapshot") as states:
@@ -735,11 +754,11 @@ class MetadataTests(unittest.TestCase):
         stream.read.assert_not_called()
         stream.__exit__.assert_called_once()
 
-    def test_stop_shutdown_before_close(self):
+    def test_icy_stop_leaves_final_close_to_reader(self):
         stream = Mock()
         with patch.dict(metadata.ICY_CONNECTIONS, {"wdr2": stream}, clear=True):
             metadata.stop_icy_workers()
-        self.assertEqual([c[0] for c in stream.mock_calls], ["fp.raw._sock.shutdown", "close"])
+        self.assertEqual([c[0] for c in stream.mock_calls], ["fp.raw._sock.shutdown"])
 
     def test_real_blocked_response_is_interrupted(self):
         client, peer = socket.socketpair()
@@ -765,6 +784,42 @@ class MetadataTests(unittest.TestCase):
             self.assertLess(time.monotonic()-before, 0.5, "Stop waited on the reader lock")
         thread.join(3)
         self.assertFalse(thread.is_alive(), "Blocked stream reader survived shutdown")
+
+    def test_icy_response_read_and_close_have_one_owner_during_cancellation(self):
+        client, peer = socket.socketpair()
+        client.settimeout(2)
+        self.addCleanup(client.close)
+        self.addCleanup(peer.close)
+        peer.sendall(b"HTTP/1.1 200 OK\r\nicy-metaint: 8192\r\nContent-Length: 100000\r\n\r\n")
+        entered = threading.Event()
+        closes, errors = [], []
+        class Response(HTTPResponse):
+            def read(self, amount):
+                entered.set()
+                return super().read(amount)
+            def close(self):
+                closes.append(threading.get_ident())
+                super().close()
+        response = Response(client)
+        response.begin()
+        cancel = threading.Event()
+        def read():
+            try:
+                list(metadata._icy_blocks("wdr2", cancel))
+            except (EOFError, OSError, ValueError):
+                pass
+            except Exception as exc:
+                errors.append(exc)
+        thread = threading.Thread(target=read, daemon=True)
+        with patch.object(metadata, "urlopen", return_value=response), patch.dict(metadata.ICY_CANCEL, {"wdr2": cancel}, clear=True):
+            thread.start()
+            self.assertTrue(entered.wait(1))
+            metadata.stop_icy_workers()
+            thread.join(3)
+        self.assertFalse(thread.is_alive())
+        self.assertEqual(errors, [])
+        self.assertTrue(closes)
+        self.assertEqual(set(closes), {thread.ident})
 
     def test_icy_partial_reads_and_eof(self):
         self.assertEqual(metadata._read_exact(io.BytesIO(b"abcd"), 4), b"abcd")

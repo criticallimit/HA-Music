@@ -451,6 +451,7 @@ def set_probe_volume(generation):
     if missing:
         save_speaker_levels(missing)
         saved.update(missing)
+    probed = {}
     for entity in sorted(permitted):
         check_generation(generation)
         if entity == "media_player.wohnung" or entity not in permitted or entity not in saved:
@@ -460,6 +461,9 @@ def set_probe_volume(generation):
         level = 0.0 if saved[entity] == 0 or saved.get("media_player.wohnung") == 0 else 0.01
         startup_request(generation, "/services/media_player/volume_set",
                         {"entity_id": entity, "volume_level": level})
+        probed[entity] = level
+    print(f"[HA Music] Startup probe applied: {json.dumps(probed, sort_keys=True)}", flush=True)
+    return probed
 
 
 def radio_start_sequence(generation):
@@ -474,6 +478,20 @@ def radio_start_sequence(generation):
             raise
         except NETWORK_ERRORS as exc:
             print(f"[HA Music] Ready helper reset failed: {exc}", flush=True)
+        print("[HA Music] Waiting 50 seconds before interface release", flush=True)
+        if not wait_for_start(generation, 50):
+            return
+        with STATE_LOCK:
+            check_generation(generation)
+            READY = True
+            STARTED_AT = None
+        print("[HA Music] Interface released after 50-second wait", flush=True)
+        try:
+            startup_request(generation, "/services/input_boolean/turn_on", {"entity_id": RADIO_READY})
+        except StartupCancelled:
+            raise
+        except NETWORK_ERRORS as exc:
+            print(f"[HA Music] Ready helper update failed: {exc}", flush=True)
         selected = enabled_device_ids()
         station = last_selected_station()
         preferred = DIRECT_STATIONS[station]["target"] if station else "media_player.wohnung"
@@ -489,20 +507,10 @@ def radio_start_sequence(generation):
                 print(f"[HA Music] Alexa integration reload failed: {exc}", flush=True)
             else:
                 print("[HA Music] Alexa integration reload completed", flush=True)
-        print("[HA Music] Waiting 50 seconds before interface release", flush=True)
-        if not wait_for_start(generation, 50):
-            return
-        with STATE_LOCK:
-            check_generation(generation)
-            READY = True
-            STARTED_AT = None
-        print("[HA Music] Interface released after 50-second wait", flush=True)
-        try:
-            startup_request(generation, "/services/input_boolean/turn_on", {"entity_id": RADIO_READY})
-        except StartupCancelled:
-            raise
-        except NETWORK_ERRORS as exc:
-            print(f"[HA Music] Ready helper update failed: {exc}", flush=True)
+        if reload_target:
+            print("[HA Music] Waiting 10 seconds after Alexa reload before media commands", flush=True)
+            if not wait_for_start(generation, 10):
+                return
         try:
             synchronize_device_configuration(generation)
         except StartupCancelled:
@@ -516,10 +524,13 @@ def radio_start_sequence(generation):
         station = last_selected_station()
         startup_completed = False
         try:
-            set_probe_volume(generation)
+            probed = set_probe_volume(generation)
             if not wait_for_start(generation, 2):
                 return
             if station and DIRECT_STATIONS[station]["target"] in enabled_device_ids():
+                target = DIRECT_STATIONS[station]["target"]
+                if target not in probed:
+                    raise RuntimeError(f"Senderstart nicht gesendet: keine sichere Startlautstärke für {target}")
                 play_station(station, generation, check_availability=False)
             startup_completed = True
         finally:

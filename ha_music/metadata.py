@@ -106,14 +106,19 @@ def _icy_worker(station, cancel):
             return
         retry = min(retry * 2, 30)
 
-def close_stream(stream):
+def close_stream(stream, *, reader_owned=False):
     """Shutdown now; never wait on another thread's BufferedReader lock."""
+    sock = None
     try:
         sock = getattr(getattr(getattr(stream, "fp", None), "raw", None), "_sock", None)
         if sock is not None:
             sock.shutdown(socket.SHUT_RDWR)
     except OSError:
         pass
+    if reader_owned and sock is not None:
+        # HTTPResponse.read() may itself close fp on EOF. A concurrent close()
+        # races its _close_conn(). ICY's context manager owns final cleanup.
+        return
     def finish():
         try:
             stream.close()
@@ -136,7 +141,7 @@ def stop_icy_workers():
         streams = list(ICY_CONNECTIONS.values())
         ICY_CONNECTIONS.clear()
     for stream in streams:
-        close_stream(stream)
+        close_stream(stream, reader_owned=True)
 
 
 def resume_icy_workers():
