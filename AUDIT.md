@@ -128,3 +128,10 @@ Auf Nutzerwunsch entspricht der Playlist-Text jetzt exakt dem erfolgreichen Spra
 
 Sicherung davor: [backup/main-2026-10-09-before-simple-playlist-ecf912a](https://github.com/criticallimit/HA-Music/tree/backup/main-2026-10-09-before-simple-playlist-ecf912a), Commit `ecf912aa81cc416e14105b0f657dac8877c6f94f`.
 Validierung: 281 Tests und alle vorgeschriebenen Syntax-/Vertragsprüfungen erfolgreich. Exakter Wortlaut, unveränderter Alexa-Name, Einzel-/Gruppenkonfiguration ohne Zusatz, Wiederanlauf, beide Integrationen und Albumweg geprüft. Keine automatische Befehlswiederholung oder Shuffle-Zustandsannahme. Kein Release oder Versionswechsel.
+
+### Apple-Favoriten als Textbefehl mit Listenname
+
+Playlists und Alben verwenden auf Nutzerwunsch wieder ausschließlich den custom-Textbefehlweg. Verwendet wird der sichtbare Name aus der Liste, nicht das bisherige separate Alexa-/Suchnamenfeld: `spiel playlist <Name>` bzw. `spiel album <Name>`. Keine Gruppen-, Shuffle- oder Dienstzusätze; Alexa bestimmt den Dienst anhand ihrer Einstellungen. Das Bearbeitungsfenster benennt den Namen für Anzeige und Wiedergabe entsprechend. Das Suchnamenfeld ist bei Playlists ausgeblendet und bei Alben nur als Cover-Suchname beschriftet. Bestehende Suchnamen und Favoriten-IDs bleiben für gespeicherte Auswahlen/Cover erhalten; keine Datenmigration oder Löschung. Normales Wiederanlaufen verwendet denselben Befehl, Add-on-Recovery bleibt rein lesend. Tatsächliche Alexa-Erkennung muss live geprüft werden.
+
+Sicherung davor: [backup/main-2026-10-09-before-custom-list-names-0ec281a](https://github.com/criticallimit/HA-Music/tree/backup/main-2026-10-09-before-custom-list-names-0ec281a), Commit `0ec281ab0cf290c2483519c71bdc5616b258daa3`.
+Validierung: 281 Tests und vorgeschriebene Syntax-/Vertragsprüfungen erfolgreich. Abweichender gespeicherter Suchname wird für beide Arten ignoriert; Dirk/Dirk Favoriten, Wiederanlauf, beide Integrationen, Einmalstart und unveränderte Cover-Persistenz geprüft. Kein Release oder Versionswechsel.

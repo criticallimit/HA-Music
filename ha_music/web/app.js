@@ -468,11 +468,13 @@ function libraryEditorControls(busy) {
 function addLibraryEditorRow(item = {}) {
   const container = document.createElement("div"); container.className = "library-editor-row";
   const row = {container, albumId:item.album_id};
-  for (const [field, text] of [["name", "Anzeigename"], ["search", "Alexa-Name (optional)"]]) {
+  for (const [field, text] of [["name", "Name für Anzeige und Wiedergabe"], ["search", "Cover-Suchname (optional)"]]) {
     const label = document.createElement("label"); label.textContent = text;
     const input = document.createElement("input"); input.type = "text"; input.maxLength = 200;
     input.required = field === "name"; input.value = item[field] || "";
-    label.appendChild(input); container.appendChild(label); row[field] = input;
+    label.appendChild(input);
+    if (field === "name" || libraryEditorKind === "Album") container.appendChild(label);
+    row[field] = input;
   }
   row.remove = document.createElement("button"); row.remove.type = "button"; row.remove.textContent = "Entfernen";
   row.remove.addEventListener("click", () => {
@@ -1003,4 +1005,3 @@ async function refreshPlayers() {
 }
 refresh();
 setInterval(() => { if (!strictStandby && radioReadyForViews && !document.querySelector("input[type=range]:active")) refreshPlayers(); }, 30000);
-

@@ -1284,18 +1284,11 @@ def play_apple_music(favorite_id, generation, *, startup=False):
     startup_allowed = startup and READY and PREPARING and selection["target"] in enabled_device_ids()
     if not selection["available"] and not startup_allowed:
         raise ValueError("Apple-Music-Steuergerät ist nicht freigegeben oder HA Music ist noch nicht bereit")
-    if favorite["kind"] == "Playlist":
-        # Match the user's working spoken request without additional qualifiers.
-        media_type = "custom"
-        phrase = "spiel playlist " + favorite["search"]
-    else:
-        media_type = "APPLE_MUSIC"
-        phrase = "Album " + favorite["search"]
-        if selection["group"]:
-            phrase += " auf " + selection["group"]
+    media_type = "custom"
+    phrase = ("spiel playlist " if favorite["kind"] == "Playlist" else "spiel album ") + favorite["name"]
     print("[HA Music] Apple playback request: " + json.dumps({"name":favorite["name"],
-          "alexa_name":favorite["search"], "kind":favorite["kind"], "target":selection["target"],
-          "group":selection["group"] if favorite["kind"] != "Playlist" else "",
+          "playback_name":favorite["name"], "kind":favorite["kind"], "target":selection["target"],
+          "group":"",
           "media_type":media_type, "command":phrase}, ensure_ascii=False), flush=True)
     result = play_on_target(generation, selection["target"], media_type, phrase)
     with STATE_LOCK:
