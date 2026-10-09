@@ -419,14 +419,8 @@ def restore_speakers(generation):
     master = levels.get("media_player.wohnung")
     available = enabled_device_ids()
     sent, failed = {}, []
-    if "media_player.wohnung" in available and master is not None:
-        try:
-            startup_request(generation, "/services/media_player/volume_set",
-                            {"entity_id": "media_player.wohnung", "volume_level": master})
-        except StartupCancelled:
-            raise
-        except NETWORK_ERRORS:
-            failed.append("media_player.wohnung")
+    # Wohnung is a virtual master. A real Alexa group-volume command can
+    # finish after room commands and overwrite their independent levels.
     for entity in sorted(e for e in levels if e != "media_player.wohnung"):
         check_generation(generation)
         if entity not in available:
@@ -471,7 +465,7 @@ def wait_for_start(generation, seconds):
         return False
 
 
-def set_probe_volume(generation):
+def prepare_speaker_levels(generation):
     saved = speaker_levels()
     try:
         states = state_snapshot()
@@ -489,19 +483,23 @@ def set_probe_volume(generation):
     with STATE_LOCK:
         check_generation(generation)
         save_speaker_levels(saved)
-    probed = {}
-    for entity in sorted(permitted, key=lambda entity: (entity != "media_player.wohnung", entity)):
-        level = 0.0 if saved[entity] == 0 or saved["media_player.wohnung"] == 0 else 0.01
+    # Capture settings without queuing temporary 1% commands. Alexa may
+    # acknowledge them before execution and apply them after the restore.
+    # Only pre-mute rooms whose saved intent is silent, before media starts.
+    muted = {}
+    for entity in sorted(permitted - {"media_player.wohnung"}):
+        if saved[entity] != 0 and saved["media_player.wohnung"] != 0:
+            continue
         try:
             startup_request(generation, "/services/media_player/volume_set",
-                            {"entity_id": entity, "volume_level": level})
-            probed[entity] = level
+                            {"entity_id": entity, "volume_level": 0.0})
+            muted[entity] = 0.0
         except StartupCancelled:
             raise
         except NETWORK_ERRORS as exc:
-            print(f"[HA Music] Startup volume failed for {entity}: {exc}", flush=True)
-    print(f"[HA Music] Startup probe applied: {json.dumps(probed, sort_keys=True)}", flush=True)
-    return probed
+            print(f"[HA Music] Startup mute failed for {entity}: {exc}", flush=True)
+    print(f"[HA Music] Startup room levels prepared: {json.dumps(saved, sort_keys=True)}; pre-muted: {json.dumps(muted, sort_keys=True)}", flush=True)
+    return saved
 
 
 def radio_start_sequence(generation):
@@ -556,7 +554,7 @@ def radio_start_sequence(generation):
         source = last_selected_source()
         station = source["id"] if source and source["kind"] == "radio" else ""
         try:
-            set_probe_volume(generation)
+            prepare_speaker_levels(generation)
             with STATE_LOCK:
                 check_generation(generation)
                 if source:
@@ -591,7 +589,7 @@ def radio_start_sequence(generation):
                     check_generation(generation)
                     SOURCE_RESTORE_ERROR = "Gespeicherte Wiedergabequelle ist nicht verfügbar. Bitte Sender oder Apple-Music-Favorit auswählen."
         finally:
-            # Even a failed station/probe command must not leave rooms at 1%.
+            # Restore individual levels even if the media request failed.
             check_generation(generation)
             restore_speakers(generation)
         try:
