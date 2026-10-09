@@ -717,10 +717,34 @@ class RuntimeTests(unittest.TestCase):
             app.perform("apple_music", {"favorite":favorite})
         request.assert_called_once_with("/services/media_player/play_media", {
             "entity_id":"media_player.wohnzimmer", "media":{
-                "media_content_type":"custom", "media_content_id":"spiele meine Playlist Abendmusik von Dirk auf Apple Music auf Wohnung", "metadata":{}}})
+                "media_content_type":"custom", "media_content_id":"spiele meine Playlist Abendmusik von Dirk auf Apple Music in zufälliger Reihenfolge auf Wohnung", "metadata":{}}})
         self.assertEqual(app.ACTIVE_APPLE["id"], favorite)
         self.assertEqual(app.last_selected_station(), "wdr2")
         self.monitor.select.assert_called_once_with("")
+
+    def test_playlist_shuffle_requested_once_for_single_echo_and_startup(self):
+        for group, startup in (("", False), ("Wohnung", True)):
+            with self.subTest(group=group, startup=startup):
+                app.READY, app.PREPARING = True, startup
+                favorite = self.apple_favorite(group=group)
+                with patch.object(app, "ha_request", return_value={}) as request:
+                    app.play_apple_music(favorite, 10, startup=startup)
+                request.assert_called_once()
+                phrase = request.call_args.args[1]["media"]["media_content_id"]
+                self.assertEqual(phrase, "spiele meine Playlist Abendmusik von Dirk auf Apple Music in zufälliger Reihenfolge" + (" auf " + group if group else ""))
+                self.assertEqual(app.last_selected_source(), {"kind":"apple", "id":favorite})
+                self.assertNotIn("shuffle", app.ACTIVE_APPLE)
+
+    def test_playlist_shuffle_request_does_not_fabricate_confirmed_shuffle(self):
+        app.READY = True
+        favorite = self.apple_favorite()
+        with patch.object(app, "ha_request", return_value={}):
+            app.play_apple_music(favorite, 10)
+        for reported, expected in ((False, False), (True, True), (None, None)):
+            with self.subTest(reported=reported):
+                states = {"media_player.wohnung": {"state":"playing", "attributes":{
+                    "supported_features":32768, "shuffle":reported}}}
+                self.assertEqual(app.track_transport_state(states)["shuffle"], expected)
 
     def test_apple_album_can_play_on_single_configured_echo(self):
         app.READY = True
@@ -738,7 +762,7 @@ class RuntimeTests(unittest.TestCase):
             app.perform("apple_music", {"favorite":favorite})
         self.assertEqual(request.call_args_list[0].args[0], "/template")
         self.assertEqual(request.call_args_list[1].args, ("/services/alexa_devices/send_text_command", {
-            "device_id":device, "text_command":"spiele meine Playlist Abendmusik von Dirk auf Apple Music auf Wohnung"}))
+            "device_id":device, "text_command":"spiele meine Playlist Abendmusik von Dirk auf Apple Music in zufälliger Reihenfolge auf Wohnung"}))
         self.assertEqual(app.ACTIVE_APPLE["id"], favorite)
 
     def test_official_alexa_radio_uses_text_command_without_other_device_or_volume(self):

@@ -946,6 +946,8 @@ def play_apple_music(favorite_id, generation, *, startup=False):
     if not selection["available"] and not startup_allowed:
         raise ValueError("Apple-Music-Steuergerät ist nicht freigegeben oder HA Music ist noch nicht bereit")
     phrase = ("spiele meine Playlist " if favorite["kind"] == "Playlist" else "spiele das Album ") + favorite["search"] + " auf Apple Music"
+    if favorite["kind"] == "Playlist":
+        phrase += " in zufälliger Reihenfolge"
     if selection["group"]:
         phrase += " auf " + selection["group"]
     result = play_on_target(generation, selection["target"], "custom", phrase)
