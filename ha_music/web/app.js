@@ -206,6 +206,10 @@ function setActiveStation(station) {
 }
 let ready = false;
 let selectedStation = "";
+let activeApple = null;
+let appleSelection = {items:[], available:false};
+let appleItemsSignature = "";
+const appleButtons = new Map();
 let stationEpoch = 0;
 let songRequestEpoch = 0;
 let songRequestRunning = false;
@@ -244,9 +248,9 @@ async function updateSong() {
       renderGroupTransport();
     }
     const details = info.details;
-    const isRadio = ["wdr2","1live","swr3"].includes(station);
+    const isRadio = !activeApple && ["wdr2","1live","swr3"].includes(station);
     if (isRadio && info.radio_metadata) applyRadioMetadata(info.radio_metadata);
-    $("current-title").textContent = STATIONS.find(s => s[0] === station)?.[1] || details?.title || "Kein Sender ausgewählt";
+    $("current-title").textContent = activeApple ? (details?.title || activeApple.name) : STATIONS.find(s => s[0] === station)?.[1] || details?.title || "Kein Sender ausgewählt";
     if (!isRadio) {
       const line = details?.artist && details?.title ? details.artist + " – " + details.title : "";
       $("now-ticker-text").textContent = line;
@@ -260,7 +264,7 @@ async function updateSong() {
       const image = details?.image;
       if (image && ((image.startsWith("/") && !image.startsWith("//")) || image.startsWith("https://"))) {
         if (cover.getAttribute("src") !== image) cover.src = image;
-        cover.alt = details?.album || details?.title || "Amazon Music";
+        cover.alt = details?.album || details?.title || (activeApple ? "Apple Music" : "Amazon Music");
         cover.hidden = false;
       } else {
         cover.hidden = true;
@@ -309,7 +313,7 @@ function connectRadioEvents() {
     if (radioEventSource !== source || !radioReadyForViews) return;
     try {
       const update = JSON.parse(event.data);
-      if (!selectedStation && STATION_LOGOS[update.station]) {
+      if (!selectedStation && !activeApple && STATION_LOGOS[update.station]) {
         selectedStation = update.station;
         stationEpoch++;
         setActiveStation(selectedStation);
@@ -334,6 +338,65 @@ function reportError(text) {
   if (text) console.warn("[HA Music] " + text);
 }
 const stationButtons = new Map();
+function renderAppleSelection(selection) {
+  appleSelection = selection || {items:[], available:false};
+  const items = Array.isArray(appleSelection.items) ? appleSelection.items : [];
+  const signature = JSON.stringify(items);
+  if (signature !== appleItemsSignature) {
+    appleItemsSignature = signature;
+    appleButtons.clear();
+    for (const [kind, id] of [["Playlist","apple-playlist-list"],["Album","apple-album-list"]]) {
+      const container = $(id);
+      container.replaceChildren();
+      const favorites = items.filter(item => item.kind === kind);
+      if (!favorites.length) {
+        const empty = document.createElement("p"); empty.className = "apple-empty";
+        empty.textContent = kind === "Playlist" ? "Noch keine Playlists hinterlegt." : "Noch keine Alben hinterlegt.";
+        container.appendChild(empty);
+      }
+      for (const favorite of favorites) {
+        const button = document.createElement("button"); button.type = "button";
+        button.className = "station apple-favorite";
+        const icon = document.createElement("span"); icon.className = "station-icon"; icon.setAttribute("aria-hidden","true");
+        icon.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>';
+        const label = document.createElement("span"); label.textContent = favorite.name;
+        button.title = favorite.name;
+        button.append(icon,label);
+        button.addEventListener("click", () => startAppleFavorite(favorite.id));
+        appleButtons.set(favorite.id,button); container.appendChild(button);
+      }
+    }
+  }
+  for (const [id,button] of appleButtons) {
+    button.disabled = stationPending || !radioReadyForViews || mediaPreparing || strictStandby || !appleSelection.available;
+    button.classList.toggle("active", activeApple?.id === id);
+    button.setAttribute("aria-pressed", String(activeApple?.id === id));
+  }
+  $("apple-library-note").textContent = items.length && !appleSelection.available && radioReadyForViews && !mediaPreparing
+    ? "Apple-Music-Steuergerät unter Add-on → Konfiguration auswählen und unter Alexa-Geräte auf Aktiv setzen."
+    : "Playlists und Alben unter Add-on → Konfiguration → Apple-Music-Favoriten hinzufügen. Dein Apple-Music-Konto muss in Alexa verknüpft sein.";
+}
+async function startAppleFavorite(id) {
+  if (stationPending || !radioReadyForViews || mediaPreparing || strictStandby || !appleSelection.available || !appleButtons.has(id)) return;
+  stationPending = true;
+  const generation = ++uiGeneration;
+  renderAppleSelection(appleSelection);
+  for (const button of stationButtons.values()) button.disabled = true;
+  try {
+    await api("apple_music", {favorite:id});
+    if (generation !== uiGeneration) return;
+    // Backend state is shared by all open clients; the next poll selects Apple
+    // metadata and stops restoring the previous radio logo.
+    groupTransport = null; transportEpoch++;
+    renderGroupTransport();
+  } catch(e) {
+    if (generation === uiGeneration) reportError("Apple-Music-Wiedergabe fehlgeschlagen: " + e.message);
+  } finally {
+    stationPending = false;
+    await loadRadioState();
+    if (generation === uiGeneration) updateSong();
+  }
+}
 for (const [id,name] of STATIONS) {
   const button = document.createElement("button");
   button.className = "station";
@@ -357,6 +420,7 @@ for (const [id,name] of STATIONS) {
       await api("radio_direct", {station:id});
       if (generation !== uiGeneration) return;
       selectedStation = id;
+      activeApple = null;
       updateStationLogo(id);
       setActiveStation(id);
       stationEpoch++;
@@ -406,6 +470,22 @@ async function loadRadioState() {
       if (radioReadyForViews) uiGeneration++;
     }
     radioReadyForViews = radioReady;
+    const nextApple = data.apple_music?.active || null;
+    if (activeApple?.id !== nextApple?.id) {
+      activeApple = nextApple;
+      selectedStation = "";
+      stationEpoch++;
+      songRequestEpoch++;
+      updateStationLogo("");
+      setActiveStation("");
+      $("now-ticker").hidden = true;
+      $("now-ticker-text").textContent = "";
+      if (activeApple) {
+        $("current-title").textContent = activeApple.name;
+        $("current-artist").textContent = "Jetzt läuft";
+      }
+    }
+    renderAppleSelection(data.apple_music);
     if (radioReady) connectRadioEvents();
     if (becameReady || controlsBecameReady) refreshPlayers();
     if (!viewPending) preferredView = data.selected_view === "apple" ? "apple" : "radio";
@@ -419,7 +499,7 @@ async function loadRadioState() {
       ? Date.now() + data.startup_remaining * 1000 : null;
     // Restore the actual HA Music preset after a power cycle, not merely its artwork.
     const restored = data.last_station;
-    if (radioReady && !stationPending && selectedStation !== restored && state.has(restored)) {
+    if (radioReady && !stationPending && !activeApple && selectedStation !== restored && state.has(restored)) {
       selectedStation = restored;
       stationEpoch++;
       setActiveStation(restored);
@@ -441,6 +521,7 @@ async function loadRadioState() {
     countdownEndsAt = null;
     uiGeneration++;
     radioReadyForViews = false;
+    renderAppleSelection(appleSelection);
     closeRadioEvents();
     $("radio-tab").disabled = true;
     $("apple-tab").disabled = true;
