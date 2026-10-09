@@ -114,3 +114,10 @@ Playlists verwenden jetzt genau `play MY playlist <Alexa-Name> on shuffle on App
 
 Sicherung davor: [backup/main-2026-10-09-before-english-playlists-de1a2e5](https://github.com/criticallimit/HA-Music/tree/backup/main-2026-10-09-before-english-playlists-de1a2e5), Commit `de1a2e51b1557bf792a6e443f3bda3f469705558`.
 Alle 281 Tests sowie die vorgeschriebenen Syntax-/Vertragsprüfungen erfolgreich. Regressionen decken beide Integrationen, Gruppen-/Einzelziel, Shuffle-Zustandsanzeige, Albumweg, gespeicherten Alexa-Namen und Wiederanlauf ab. Keine Versionsänderung, kein Release.
+
+### Rückkehr zum deutschen Apple-Anbieteraufruf
+
+Der englische custom-Playlistversuch wurde auf Nutzerwunsch zurückgenommen. Playlists und Alben verwenden wieder APPLE_MUSIC. Playlist-Suchanfrage: `meine Playlist <Alexa-Name> in zufälliger Reihenfolge auf <Gruppe>`; ohne konfigurierte Gruppe entfällt der letzte Zusatz. Alben verwenden weiter `Album <Alexa-Name> auf <Gruppe>`. Radio unverändert. Keine automatischen Fallbacks oder zusätzlichen Medienstarts; bestehende Standby-/Update- und Lautstärkesicherheit unverändert. Persönliche Playlist-Erkennung bleibt live unbestätigt.
+
+Sicherung davor: [backup/main-2026-10-09-before-german-provider-942cb3c](https://github.com/criticallimit/HA-Music/tree/backup/main-2026-10-09-before-german-provider-942cb3c), Commit `942cb3c243a7a726b00e8939e3e86d86add8f259`.
+Validierung: 280 Tests und alle vorgeschriebenen Syntax-/Vertragsprüfungen erfolgreich. Kein Release oder Versionswechsel.

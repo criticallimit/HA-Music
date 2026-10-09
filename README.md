@@ -48,7 +48,7 @@ Bei regulärem Einschalten werden nicht bestätigte Raumlautstärken anhand fris
 
 Sicherung vor der vereinfachten Raumlautstärke-Anzeige: [backup/main-2026-10-09-before-single-volume-4030c64](https://github.com/criticallimit/HA-Music/tree/backup/main-2026-10-09-before-single-volume-4030c64), Commit `4030c647d266327ec87a5d1ca87d30e769d976f6`.
 
-Apple-Alben verwenden `media_player.play_media` mit der Anbieterkennung `APPLE_MUSIC` für beide Alexa-Integrationen. Apple-Playlists und eigene Radiotexte verwenden `custom` für Alexa Media Player beziehungsweise `alexa_devices.send_text_command` für Alexa Devices. Gerät und Integration werden aus HA verifiziert; bei unklarer Zuordnung wird kein anderes Gerät verwendet. Quelle: [Alexa Devices-Abspielimplementierung](https://github.com/home-assistant/core/blob/dev/homeassistant/components/alexa_devices/media_player.py), [Textbefehl-Service](https://github.com/home-assistant/core/blob/dev/homeassistant/components/alexa_devices/services.yaml), [Alexa Media Player: Apple Music](https://github.com/alandtse/alexa_media_player/wiki#apple-music).
+Apple-Playlists und Alben verwenden `media_player.play_media` mit der Anbieterkennung `APPLE_MUSIC` für beide Alexa-Integrationen. Eigene Radiotexte verwenden `custom` für Alexa Media Player beziehungsweise `alexa_devices.send_text_command` für Alexa Devices. Gerät und Integration werden aus HA verifiziert; bei unklarer Zuordnung wird kein anderes Gerät verwendet. Quelle: [Alexa Devices-Abspielimplementierung](https://github.com/home-assistant/core/blob/dev/homeassistant/components/alexa_devices/media_player.py), [Textbefehl-Service](https://github.com/home-assistant/core/blob/dev/homeassistant/components/alexa_devices/services.yaml), [Alexa Media Player: Apple Music](https://github.com/alandtse/alexa_media_player/wiki#apple-music).
 
 Nach einem erfolgreich gesendeten Apple-Favoritenbefehl verschwindet das alte Senderlogo sofort, auch während einer bereits laufenden Zustandsabfrage. Bekannte alte Radio-Logos und Radio-/Channel-Metadaten werden in dieser Auswahl verworfen. Das bestätigt den gesendeten Befehl, nicht die tatsächliche Apple-Wiedergabe.
 
@@ -244,8 +244,14 @@ Apple-Favoriten starten jetzt mit `media_content_type: APPLE_MUSIC`. Die Suchanf
 
 Sicherung davor: [backup/main-2026-10-09-before-apple-provider-76b7012](https://github.com/criticallimit/HA-Music/tree/backup/main-2026-10-09-before-apple-provider-76b7012), Commit `76b70123329aa7679c24baa6020c2eb60f1d1d58`.
 
-### Englischer Playlist-Aufruf
+### Englischer Playlist-Aufruf (zurückgenommen)
 
 Playlists verwenden jetzt genau `play MY playlist <Alexa-Name> on shuffle on Apple Music`, bei eingestellter Gruppe ergänzt um ` on <Gruppenname>`. Dies ist ein vollständiger Textbefehl (`custom` bzw. offizieller Alexa-Devices-Textservice), keine APPLE_MUSIC-Suchanfrage. Alben behalten APPLE_MUSIC. Ein Medienstart je Auswahl, keine automatische zweite Variante; derselbe Aufruf bei normalem Einschalten. Shuffle bleibt ein Wunsch und wird nicht als Gerätebestätigung dargestellt. Die Erkennung persönlicher Playlists, englischer Befehle auf deutsch eingestellten Geräten sowie der Gruppe muss live geprüft werden.
 
 Sicherung davor: [backup/main-2026-10-09-before-english-playlists-de1a2e5](https://github.com/criticallimit/HA-Music/tree/backup/main-2026-10-09-before-english-playlists-de1a2e5), Commit `de1a2e51b1557bf792a6e443f3bda3f469705558`.
+
+### Rückkehr zum deutschen Apple-Anbieteraufruf
+
+Der englische custom-Playlistversuch wurde auf Nutzerwunsch zurückgenommen. Playlists und Alben verwenden wieder APPLE_MUSIC. Playlist-Suchanfrage: `meine Playlist <Alexa-Name> in zufälliger Reihenfolge auf <Gruppe>`; ohne konfigurierte Gruppe entfällt der letzte Zusatz. Alben verwenden weiter `Album <Alexa-Name> auf <Gruppe>`. Radio unverändert. Keine automatischen Fallbacks oder zusätzlichen Medienstarts; bestehende Standby-/Update- und Lautstärkesicherheit unverändert. Persönliche Playlist-Erkennung bleibt live unbestätigt.
+
+Sicherung davor: [backup/main-2026-10-09-before-german-provider-942cb3c](https://github.com/criticallimit/HA-Music/tree/backup/main-2026-10-09-before-german-provider-942cb3c), Commit `942cb3c243a7a726b00e8939e3e86d86add8f259`.
