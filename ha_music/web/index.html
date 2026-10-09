@@ -7,7 +7,11 @@
   <svg viewBox="0 0 96 96" width="120" height="120" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"><path d="M17 31 77 12"/><rect x="13" y="32" width="70" height="47" rx="10"/><circle cx="34" cy="57" r="12"/><path d="M60 51h12M60 59h12M60 67h12"/></svg>
   <span id="radio-standby-text" role="status">Radio ausgeschaltet</span>
 </div>
-<article class="now" hidden aria-label="Aktuelle Wiedergabe"><div class="art"><img id="current-cover" alt="Senderlogo oder Albumcover" hidden><span class="art-placeholder" aria-hidden="true">♫</span></div><div class="now-overlay"><div class="now-head"><small>Internetradio</small><h2 id="current-title">Noch kein Sender ausgewählt</h2></div><div class="now-description"><div id="current-artist">Aktuelle Programminformation nicht verfügbar</div><div id="now-ticker" class="now-ticker" hidden><span id="now-ticker-text"></span></div><small id="playback-state">Prüfe Wiedergabe …</small></div></div></article>
+<article class="now" hidden aria-label="Aktuelle Wiedergabe"><div class="art"><img id="current-cover" alt="Senderlogo oder Albumcover" hidden><span class="art-placeholder" aria-hidden="true">♫</span></div><div class="now-overlay"><div class="now-head"><small>Internetradio</small><h2 id="current-title">Noch kein Sender ausgewählt</h2></div><div class="now-description"><div id="current-artist">Aktuelle Programminformation nicht verfügbar</div><div id="now-ticker" class="now-ticker" hidden><span id="now-ticker-text"></span></div><div class="now-footer"><small id="playback-state">Prüfe Wiedergabe …</small><div class="track-controls" role="group" aria-label="Titelsteuerung">
+  <button id="track-previous" type="button" disabled aria-label="Vorheriger Titel"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 5v14m12-14L8 12l10 7Z"/></svg></button>
+  <button id="track-shuffle" type="button" disabled aria-label="Shuffle" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h3c5 0 7 12 12 12h3m-3-3 3 3-3 3M3 18h3c2 0 3.5-2 5-4m2-4c1.5-2 3-4 5-4h3m-3-3 3 3-3 3"/></svg></button>
+  <button id="track-next" type="button" disabled aria-label="Nächster Titel"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 5v14M6 5l10 7-10 7Z"/></svg></button>
+</div></div></div></div></article>
 <div class="dashboard-right" hidden>
 <div id="master-volume" class="players master-volume">Lade Master-Lautstärke …</div>
 <div id="groups" class="sr-info">Prüfe Wohnung …</div>
@@ -36,3 +40,4 @@
   <p id="settings-feedback" role="status"></p>
 </dialog>
 </main><script src="app.js"></script></body></html>
+

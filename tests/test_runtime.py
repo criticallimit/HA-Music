@@ -70,6 +70,94 @@ class RuntimeTests(unittest.TestCase):
             app.radio_start_sequence(app.RESTORE_GENERATION)
             return calls
 
+    def test_track_commands_target_live_group_and_never_change_volume(self):
+        app.READY = True
+        self.states["media_player.wohnung"] = {"state":"playing", "attributes":{
+            "supported_features":16 | 32 | 32768, "shuffle":False}}
+        for command, service in (("previous","media_previous_track"), ("next","media_next_track"), ("shuffle","shuffle_set")):
+            with self.subTest(command=command), patch.object(app, "state_snapshot", return_value=self.states) as snapshot, \
+                 patch.object(app, "allowed_entities", return_value=app.enabled_device_ids()), patch.object(app, "ha_request", return_value={}) as request:
+                body = {"command":command, "entity_id":"media_player.wohnung"}
+                if command == "shuffle":
+                    body["shuffle"] = True
+                app.perform("track_transport", body)
+                expected = {"entity_id":"media_player.wohnung"}
+                if command == "shuffle":
+                    expected["shuffle"] = True
+                request.assert_called_once_with("/services/media_player/" + service, expected)
+                snapshot.assert_called_once_with(fresh=True)
+
+    def test_track_capabilities_handle_official_alexa_without_shuffle(self):
+        self.states["media_player.wohnung"] = {"state":"paused", "attributes":{"supported_features":16 | 32}}
+        result = app.track_transport_state(self.states)
+        self.assertTrue(result["can_next"])
+        self.assertTrue(result["can_previous"])
+        self.assertFalse(result["can_shuffle"])
+        self.assertIsNone(result["shuffle"])
+
+    def test_track_transport_falls_back_only_to_configured_controller(self):
+        self.states["media_player.wohnzimmer"] = {"state":"playing", "attributes":{"supported_features":32}}
+        self.states["media_player.kueche"] = {"state":"playing", "attributes":{"supported_features":16 | 32 | 32768}}
+        self.assertEqual(app.track_transport_state(self.states)["entity_id"], "media_player.wohnzimmer")
+        self.states["media_player.wohnzimmer"]["state"] = "unavailable"
+        self.assertIsNone(app.track_transport_state(self.states)["entity_id"])
+
+    def test_apple_transport_uses_its_configured_target_if_group_unavailable(self):
+        app.ACTIVE_APPLE = {"target":"media_player.bad"}
+        self.states["media_player.bad"] = {"state":"playing", "attributes":{"supported_features":32}}
+        self.assertEqual(app.track_transport_state(self.states)["entity_id"], "media_player.bad")
+
+    def test_live_radio_has_no_track_controls_even_with_static_alexa_features(self):
+        app.save_selected_station("wdr2")
+        self.states["media_player.wohnung"] = {"state":"playing", "attributes":{"supported_features":16 | 32 | 32768, "shuffle":False}}
+        state = app.track_transport_state(self.states)
+        self.assertFalse(state["can_next"])
+        self.assertFalse(state["can_previous"])
+        self.assertFalse(state["can_shuffle"])
+
+    def test_unsupported_or_changed_track_target_cannot_send_service(self):
+        app.READY = True
+        self.states["media_player.wohnung"] = {"state":"playing", "attributes":{"supported_features":32}}
+        for body in ({"command":"next", "entity_id":"media_player.kueche"},
+                     {"command":"previous", "entity_id":"media_player.wohnung"},
+                     {"command":"shuffle", "entity_id":"media_player.wohnung", "shuffle":True},
+                     {"command":"turn_on", "entity_id":"media_player.wohnung"}):
+            with self.subTest(body=body), patch.object(app, "state_snapshot", return_value=self.states), \
+                 patch.object(app, "allowed_entities", return_value=app.enabled_device_ids()), patch.object(app, "ha_request") as request:
+                with self.assertRaises(ValueError):
+                    app.perform("track_transport", body)
+                request.assert_not_called()
+
+    def test_shuffle_requires_boolean_state_and_boolean_request(self):
+        app.READY = True
+        self.states["media_player.wohnung"] = {"state":"playing", "attributes":{"supported_features":32768}}
+        self.assertFalse(app.track_transport_state(self.states)["can_shuffle"])
+        self.states["media_player.wohnung"]["attributes"]["shuffle"] = False
+        for value in (None, "true", 1):
+            with self.subTest(value=value), patch.object(app, "state_snapshot", return_value=self.states), \
+                 patch.object(app, "allowed_entities", return_value=app.enabled_device_ids()), patch.object(app, "ha_request") as request:
+                with self.assertRaises(ValueError):
+                    app.perform("track_transport", {"command":"shuffle", "entity_id":"media_player.wohnung", "shuffle":value})
+                request.assert_not_called()
+
+    def test_track_commands_cannot_wake_standby_or_run_during_preparation(self):
+        for standby, ready, preparing in ((True,True,False), (False,False,False), (False,True,True)):
+            app.READY, app.PREPARING = ready, preparing
+            if standby:
+                app.STANDBY.set()
+            else:
+                app.STANDBY.clear()
+            with patch.object(app, "ha_request") as request:
+                with self.assertRaises((app.StartupCancelled, ValueError)):
+                    app.perform("track_transport", {"command":"next", "entity_id":"media_player.wohnung"})
+                request.assert_not_called()
+
+    def test_fresh_track_state_read_bypasses_old_cached_capabilities(self):
+        app.STATE_CACHE = (time.monotonic(), self.states)
+        with patch.object(app, "ha_request", return_value=[]) as request:
+            self.assertEqual(app.state_snapshot(fresh=True), {})
+        request.assert_called_once_with("/states")
+
     def recovery(self, replies=None):
         app.STANDBY.set()
         app.LAST_POWER = "off"

@@ -168,6 +168,78 @@ test('group controls reflect confirmed group state and feature availability', ()
   assert.equal(button.disabled,true);
 });
 
+test('cover controls reflect reported capabilities and confirmed shuffle state', () => {
+  const h = harness();
+  h.run('radioReadyForViews=true; trackTransport={entity_id:"media_player.wohnung",can_previous:true,can_next:true,can_shuffle:false,shuffle:null}; renderTrackTransport()');
+  assert.equal(h.get('track-previous').disabled,false);
+  assert.equal(h.get('track-next').disabled,false);
+  assert.equal(h.get('track-shuffle').disabled,true);
+  h.run('trackTransport.can_shuffle=true; trackTransport.shuffle=true; renderTrackTransport()');
+  assert.equal(h.get('track-shuffle').attributes['aria-pressed'],'true');
+  assert.equal(h.get('track-shuffle').attributes['aria-label'],'Shuffle ausschalten');
+  h.run('radioReadyForViews=false; displayRadioReadiness(false)');
+  assert.equal(h.get('track-next').disabled,true);
+  assert.equal(h.get('track-shuffle').attributes['aria-pressed'],'false');
+});
+
+test('track commands coalesce, include selected target and cannot wake standby', async () => {
+  const h = harness();
+  let resolve;
+  const calls=[];
+  h.context.reply=(action,body)=>{calls.push({action,body});return new Promise(r=>{resolve=r;});};
+  h.run('api=reply; radioReadyForViews=true; strictStandby=true; trackTransport={entity_id:"media_player.wohnung",can_next:true}; loadRadioState=async()=>{}; updateSong=async()=>{}');
+  await h.run('controlTrack("next")');
+  assert.equal(calls.length,0);
+  h.run('strictStandby=false');
+  const first=h.run('controlTrack("next")');
+  await h.run('controlTrack("next")');
+  assert.equal(calls.length,1);
+  assert.equal(calls[0].action,'track_transport');
+  assert.equal(calls[0].body.entity_id,'media_player.wohnung');
+  assert.equal(calls[0].body.command,'next');
+  assert.equal(h.get('track-next').disabled,true);
+  resolve({ok:true});
+  await first;
+  assert.equal(h.run('trackTransport'),null);
+});
+
+test('shuffle click sends explicit desired state and waits for HA confirmation', async () => {
+  const h = harness();
+  let resolve;
+  let desired;
+  h.context.reply=(action,body)=>{desired=body.shuffle;return new Promise(r=>{resolve=r;});};
+  h.run('api=reply; radioReadyForViews=true; trackTransport={entity_id:"media_player.wohnung",can_shuffle:true,shuffle:false}; renderTrackTransport(); loadRadioState=async()=>{}; updateSong=async()=>{}');
+  const request=h.get('track-shuffle').listeners.click();
+  assert.equal(desired,true);
+  assert.equal(h.get('track-shuffle').attributes['aria-pressed'],'false');
+  resolve({ok:true});
+  await request;
+  assert.equal(h.get('track-shuffle').attributes['aria-pressed'],'false');
+});
+
+test('old playback reply cannot re-enable cover controls after power off', async () => {
+  const h = harness();
+  let resolve;
+  h.context.reply=()=>new Promise(r=>{resolve=r;});
+  h.run('api=reply; radioReadyForViews=true');
+  const request=h.run('updateSong()');
+  h.run('uiGeneration++; radioReadyForViews=false; displayRadioReadiness(false)');
+  resolve({playing:true,track_transport:{entity_id:'media_player.wohnung',can_next:true}});
+  await request;
+  assert.equal(h.get('track-next').disabled,true);
+  assert.equal(h.run('trackTransport'),null);
+});
+
+test('playback polling renders cover controls for an active queue', async () => {
+  const h = harness();
+  h.context.reply=async()=>({playing:true,details:{title:'Titel'},track_transport:{entity_id:'media_player.wohnung',can_next:true,can_shuffle:true,shuffle:true}});
+  h.run('api=reply; radioReadyForViews=true');
+  await h.run('updateSong()');
+  assert.equal(h.get('track-next').disabled,false);
+  assert.equal(h.get('track-previous').disabled,true);
+  assert.equal(h.get('track-shuffle').attributes['aria-pressed'],'true');
+});
+
 test('group commands coalesce and cannot wake standby', async () => {
   const h = harness();
   let resolve, count = 0;

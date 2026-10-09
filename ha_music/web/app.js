@@ -77,8 +77,56 @@ let volumeRequests = 0;
 let transportPending = false;
 let transportEpoch = 0;
 let groupTransport = null;
+let trackTransport = null;
 let masterTransportButton = null;
+function renderTrackTransport() {
+  for (const [command,label] of [["previous","Vorheriger Titel"],["shuffle","Shuffle"],["next","Nächster Titel"]]) {
+    const button = $("track-" + command);
+    button.disabled = strictStandby || !radioReadyForViews || mediaPreparing || stationPending || transportPending || !trackTransport?.["can_" + command];
+    const shuffle = command === "shuffle";
+    const confirmed = shuffle && trackTransport?.shuffle === true;
+    if (shuffle) {
+      button.setAttribute("aria-pressed", String(confirmed));
+      button.classList.toggle("active", confirmed);
+    }
+    const description = transportPending ? "Befehl wird gesendet …" :
+      button.disabled ? label + " derzeit nicht verfügbar" :
+      shuffle ? (confirmed ? "Shuffle ausschalten" : "Shuffle einschalten") : label;
+    button.title = description;
+    button.setAttribute("aria-label", description);
+  }
+}
+async function controlTrack(command) {
+  if (strictStandby || !radioReadyForViews || mediaPreparing || stationPending || transportPending || !trackTransport?.["can_" + command]) return;
+  const body = {command, entity_id:trackTransport.entity_id};
+  if (command === "shuffle") body.shuffle = !trackTransport.shuffle;
+  const generation = uiGeneration;
+  transportPending = true;
+  transportEpoch++;
+  renderGroupTransport();
+  for (const button of stationButtons.values()) button.disabled = true;
+  renderAppleSelection(appleSelection);
+  try {
+    await api("track_transport", body);
+    if (generation !== uiGeneration || !radioReadyForViews) return;
+    // Do not optimistically flip shuffle: display HA's reported state only.
+    trackTransport = null;
+    groupTransport = null;
+  } catch (e) {
+    if (generation === uiGeneration) reportError("Titelsteuerung fehlgeschlagen: " + e.message);
+  } finally {
+    transportPending = false;
+    renderGroupTransport();
+    if (generation === uiGeneration && radioReadyForViews) {
+      await loadRadioState();
+      updateSong();
+    }
+  }
+}
+for (const command of ["previous","shuffle","next"])
+  $("track-" + command).addEventListener("click", () => controlTrack(command));
 function renderGroupTransport() {
+  renderTrackTransport();
   if (!masterTransportButton) return;
   const pause = groupTransport?.state === "playing";
   masterTransportButton.disabled = !radioReadyForViews || mediaPreparing || transportPending || !(pause ? groupTransport?.can_pause : groupTransport?.can_play);
@@ -245,6 +293,7 @@ async function updateSong() {
     if (generation !== uiGeneration || !radioReadyForViews || stationEpoch !== epoch || station !== selectedStation || transportRequestEpoch !== transportEpoch) return;
     if (!transportPending) {
       groupTransport = info.transport || null;
+      trackTransport = info.track_transport || null;
       renderGroupTransport();
     }
     const details = info.details;
@@ -276,6 +325,7 @@ async function updateSong() {
     if (generation === uiGeneration && stationEpoch === epoch && transportRequestEpoch === transportEpoch) {
       $("playback-state").textContent = "Wiedergabestatus nicht verfügbar: " + e.message;
       groupTransport = null;
+      trackTransport = null;
       renderGroupTransport();
     }
   } finally { songRequestRunning = false; }
@@ -368,7 +418,7 @@ function renderAppleSelection(selection) {
     }
   }
   for (const [id,button] of appleButtons) {
-    button.disabled = stationPending || !radioReadyForViews || mediaPreparing || strictStandby || !appleSelection.available;
+    button.disabled = stationPending || transportPending || !radioReadyForViews || mediaPreparing || strictStandby || !appleSelection.available;
     button.classList.toggle("active", activeApple?.id === id);
     button.setAttribute("aria-pressed", String(activeApple?.id === id));
   }
@@ -377,8 +427,10 @@ function renderAppleSelection(selection) {
     : "Playlists und Alben unter Add-on → Konfiguration → Apple-Music-Favoriten hinzufügen. Dein Apple-Music-Konto muss in Alexa verknüpft sein.";
 }
 async function startAppleFavorite(id) {
-  if (stationPending || !radioReadyForViews || mediaPreparing || strictStandby || !appleSelection.available || !appleButtons.has(id)) return;
+  if (stationPending || transportPending || !radioReadyForViews || mediaPreparing || strictStandby || !appleSelection.available || !appleButtons.has(id)) return;
   stationPending = true;
+  trackTransport = null;
+  renderTrackTransport();
   const generation = ++uiGeneration;
   renderAppleSelection(appleSelection);
   for (const button of stationButtons.values()) button.disabled = true;
@@ -387,7 +439,7 @@ async function startAppleFavorite(id) {
     if (generation !== uiGeneration) return;
     // Backend state is shared by all open clients; the next poll selects Apple
     // metadata and stops restoring the previous radio logo.
-    groupTransport = null; transportEpoch++;
+    groupTransport = null; trackTransport = null; transportEpoch++;
     renderGroupTransport();
   } catch(e) {
     if (generation === uiGeneration) reportError("Apple-Music-Wiedergabe fehlgeschlagen: " + e.message);
@@ -412,8 +464,10 @@ for (const [id,name] of STATIONS) {
   button.setAttribute("aria-pressed", "false");
   button.disabled = true;
   button.addEventListener("click", async () => {
-    if (stationPending || !radioReadyForViews || mediaPreparing) return;
+    if (stationPending || transportPending || !radioReadyForViews || mediaPreparing) return;
     stationPending = true;
+    trackTransport = null;
+    renderTrackTransport();
     const generation = ++uiGeneration;
     for (const item of stationButtons.values()) item.disabled = true;
     try {
@@ -443,7 +497,7 @@ for (const [id,name] of STATIONS) {
   $("station-list").appendChild(button);
 }
 function displayRadioReadiness(isReady) {
-  if (!isReady) groupTransport = null;
+  if (!isReady) { groupTransport = null; trackTransport = null; }
   renderGroupTransport();
   document.querySelector(".now").hidden = !isReady;
   document.querySelector(".dashboard-right").hidden = !isReady;
@@ -465,6 +519,7 @@ async function loadRadioState() {
     const becameReady = radioReady && !radioReadyForViews;
     const controlsBecameReady = radioReady && !data.preparing && mediaPreparing;
     mediaPreparing = data.preparing === true;
+    if (!radioReady) trackTransport = null;
     if (!radioReady) {
       closeRadioEvents();
       if (radioReadyForViews) uiGeneration++;
@@ -518,7 +573,7 @@ async function loadRadioState() {
       updateSong();
     }
 
-    for (const [key,button] of stationButtons) button.disabled = stationPending || mediaPreparing || !radioReady || !state.get(key)?.available;
+    for (const [key,button] of stationButtons) button.disabled = stationPending || transportPending || mediaPreparing || !radioReady || !state.get(key)?.available;
     const label = data.startup_error ? "Radio nicht verfügbar" : data.power === "on" && data.ready !== "on" ? "Radio startet …" :
       data.power === "on" ? "Radio eingeschaltet" :
       data.power === "off" ? "Radio ausgeschaltet" : "Radio nicht verfügbar";

@@ -37,6 +37,14 @@ nav button.active{background:#275276;border-color:#4d8bb8;color:#fff}
 .now-ticker span{white-space:normal;animation:none}
 .now-ticker[hidden]{visibility:hidden!important;display:block!important}
 #playback-state{display:block;font-size:11px;line-height:1.4;margin-top:6px;overflow-wrap:anywhere}
+.now-footer{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:end;gap:8px;margin-top:6px}
+.now-footer #playback-state{margin:0}
+.track-controls{display:flex;gap:4px;align-items:center}
+.track-controls button{display:flex;align-items:center;justify-content:center;width:36px;height:36px;padding:7px;border-radius:9px;background:rgba(255,255,255,.08);color:#e8eef5}
+.track-controls svg{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.track-controls button:hover:not(:disabled){background:rgba(255,255,255,.18)}
+.track-controls button.active{color:#79c8ff;background:#254d6a}
+.track-controls button:focus-visible{outline:2px solid #79c8ff;outline-offset:2px}
 .dashboard-right{min-width:0;min-height:720px;display:flex;flex-direction:column;gap:11px}
 .players{display:flex;flex-direction:column;gap:10px}
 .master-volume,.speaker-list .player-row,.station{border:1px solid var(--border);border-radius:18px;background:var(--surface)}
@@ -166,3 +174,4 @@ html.ha-dashboard-card .player-row>span:nth-of-type(2){color:var(--muted)}
 html.ha-dashboard-card .power-buttons button{background:var(--surface)}
 html.ha-dashboard-card .station:hover:not(:disabled){background:var(--secondary-background-color,var(--surface));border-color:var(--border)}
 html.ha-dashboard-card .station.active,html.ha-dashboard-card nav button.active{color:var(--text)}
+

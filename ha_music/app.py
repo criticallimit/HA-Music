@@ -66,6 +66,9 @@ SUPERVISOR_OPTIONS = None
 REGISTERED_DEVICE_NAMES = {}
 MEDIA_FEATURE_PAUSE = 1
 MEDIA_FEATURE_PLAY = 16384
+MEDIA_FEATURE_PREVIOUS = 16
+MEDIA_FEATURE_NEXT = 32
+MEDIA_FEATURE_SHUFFLE = 32768
 INVENTORY_TEMPLATE = """
 {% set result = namespace(data={}, names={}) %}
 {% for domain in ['alexa_devices', 'alexa_media'] %}
@@ -921,13 +924,13 @@ def startup_remaining():
     return max(0, 70 - int(time.monotonic() - STARTED_AT))
 
 
-def state_snapshot():
+def state_snapshot(*, fresh=False):
     global STATE_CACHE
     with CACHE_LOCK:
         if STANDBY.is_set():
             raise RuntimeError("HA Music standby: outbound network disabled")
         at, cached = STATE_CACHE
-        if cached is not None and time.monotonic() - at < 2:
+        if not fresh and cached is not None and time.monotonic() - at < 2:
             return cached
         states = ha_request("/states")
         if not isinstance(states, list):
@@ -972,6 +975,34 @@ def group_transport_state(states):
             "can_pause": state == "playing" and bool(features & MEDIA_FEATURE_PAUSE)}
 
 
+def track_transport_state(states):
+    """Choose the live group/controller, never an unrelated playing room."""
+    result = {"entity_id":None, "can_previous":False, "can_next":False,
+              "can_shuffle":False, "shuffle":None}
+    with STATE_LOCK:
+        if not ACTIVE_APPLE and not SOURCE_UNCONFIRMED and last_selected_station() in ("wdr2", "1live", "swr3"):
+            return result  # Live radio has no track queue.
+        target = ACTIVE_APPLE["target"] if ACTIVE_APPLE else "media_player.wohnzimmer"
+    selected = enabled_device_ids()
+    for entity in dict.fromkeys(("media_player.wohnung", target)):
+        if entity not in selected:
+            continue
+        entry = states.get(entity, {})
+        attrs = entry.get("attributes") or {}
+        features = attrs.get("supported_features", 0)
+        features = features if type(features) is int else 0
+        if entry.get("state") not in ("playing", "paused") or not features & (
+            MEDIA_FEATURE_PREVIOUS | MEDIA_FEATURE_NEXT | MEDIA_FEATURE_SHUFFLE
+        ) or attrs.get("media_content_type") in ("channel", "radio", "url"):
+            continue
+        shuffle = attrs.get("shuffle")
+        return {"entity_id":entity, "can_previous":bool(features & MEDIA_FEATURE_PREVIOUS),
+                "can_next":bool(features & MEDIA_FEATURE_NEXT),
+                "can_shuffle":bool(features & MEDIA_FEATURE_SHUFFLE) and type(shuffle) is bool,
+                "shuffle":shuffle if type(shuffle) is bool else None}
+    return result
+
+
 def playback_status():
     states = state_snapshot()
     with STATE_LOCK:
@@ -998,6 +1029,7 @@ def playback_status():
     return {"playing": active is not None, "players": observed,
             "radio_metadata": {"station": station, "metadata": payload},
             "transport": group_transport_state(states),
+            "track_transport": track_transport_state(states),
             "details": active if active and (active["title"] or active["artist"]) else details}
 
 
@@ -1072,6 +1104,23 @@ def perform(action, body):
 
 
 def perform_control(action, body, generation):
+    if action == "track_transport":
+        command = body.get("command")
+        if command not in ("previous", "next", "shuffle"):
+            raise ValueError("Ungültiger Titelbefehl")
+        transport = track_transport_state(state_snapshot(fresh=True))
+        entity = body.get("entity_id")
+        if not entity or entity != transport["entity_id"] or entity not in allowed_entities():
+            raise ValueError("Wiedergabeziel hat sich geändert oder ist nicht freigegeben")
+        if not transport["can_" + command]:
+            raise ValueError("Titelfunktion wird für die aktuelle Wiedergabe nicht unterstützt")
+        payload = {"entity_id":entity}
+        if command == "shuffle":
+            if type(body.get("shuffle")) is not bool:
+                raise ValueError("Ungültiger Shuffle-Zustand")
+            payload["shuffle"] = body["shuffle"]
+        service = {"previous":"media_previous_track", "next":"media_next_track", "shuffle":"shuffle_set"}[command]
+        return startup_request(generation, "/services/media_player/" + service, payload)
     if action == "group_transport":
         command = body.get("command")
         if command not in ("play", "pause"):
@@ -1322,7 +1371,7 @@ class Handler(BaseHTTPRequestHandler):
             return self.reply(403, {"error": "Ingress only"})
         path = unquote(urlsplit(self.path).path)
         action = path.rsplit("/", 1)[-1]
-        if "/api/" not in path or action not in ("volume", "room_audio", "group_transport", "radio_direct", "apple_music", "radio_power", "selected_view", "dashboard_card_installed"):
+        if "/api/" not in path or action not in ("volume", "room_audio", "group_transport", "track_transport", "radio_direct", "apple_music", "radio_power", "selected_view", "dashboard_card_installed"):
             return self.reply(404, {"error": "Not found"})
         if self.headers.get("Sec-Fetch-Site") == "cross-site":
             return self.reply(403, {"error": "Cross-site request rejected"})
