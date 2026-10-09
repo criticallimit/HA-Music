@@ -34,6 +34,7 @@ RADIO_MONITOR_STOP = threading.Event()
 STANDBY = threading.Event()
 STANDBY.set()  # Only an explicit local power-on permits network/startup.
 READY = False
+PREPARING = False
 ROOM_TARGETS = {}
 STARTUP_ERROR = None
 STATE_LOCK = threading.RLock()
@@ -51,6 +52,8 @@ SSE_SLOTS = threading.BoundedSemaphore(16)
 RESPONSE_LOCK = threading.Lock()
 ACTIVE_RESPONSES = set()
 CONFIG_LOCK = threading.RLock()
+INVENTORY_LOCK = threading.Lock()
+INVENTORY_CACHE = (0.0, None)
 DEVICE_SYNC_LOCK = threading.Lock()
 SUPERVISOR_OPTIONS = None
 REGISTERED_DEVICE_NAMES = {}
@@ -191,6 +194,22 @@ def synchronize_device_configuration(generation, *, migrate_only=False, bootstra
             print("[HA Music] Device status migration completed: Aktiv/Inaktiv", flush=True)
         print(f"[HA Music] Device configuration: {len(merged.get('devices', []))} entries", flush=True)
 def integration_inventory():
+    """Coalesce registry reads; never serve the cache as a standby wake-up."""
+    global INVENTORY_CACHE
+    with INVENTORY_LOCK:
+        if STANDBY.is_set():
+            raise RuntimeError("HA Music standby: outbound network disabled")
+        at, cached = INVENTORY_CACHE
+        if cached is not None and time.monotonic() - at < 30:
+            return deepcopy(cached)
+        inventory = read_integration_inventory()
+        if STANDBY.is_set():
+            raise RuntimeError("HA Music standby: inventory cancelled")
+        INVENTORY_CACHE = (time.monotonic(), deepcopy(inventory))
+        return inventory
+
+
+def read_integration_inventory():
     """Expand loaded Alexa sources to each account's complete entity registry."""
     response = ha_request("/template", {"template": INVENTORY_TEMPLATE})
     if not isinstance(response, str):
@@ -255,7 +274,9 @@ def allowed_entities():
 def remembered():
     try:
         obj = json.loads(VOLUME_FILE.read_text())
-        return obj if isinstance(obj, dict) else {}
+        return {entity: float(value) for entity, value in obj.items()
+                if isinstance(entity, str) and ENTITY_RE.fullmatch(entity)
+                and type(value) in (int, float) and 0 <= value <= 1} if isinstance(obj, dict) else {}
     except (OSError, ValueError): return {}
 def save_remembered(entity, level):
     with LOCK:
@@ -359,10 +380,11 @@ def restore_speakers(generation, use_master=False):
     if use_master and master is None:
         raise RuntimeError("Master-Lautstärke nicht verfügbar")
     available = allowed_entities()
+    states = state_snapshot()
     sent, failed = {}, []
     for entity in sorted(e for e in levels if e != "media_player.wohnung"):
         check_generation(generation)
-        if entity not in available:
+        if entity not in available or states.get(entity, {}).get("state") in (None, "unknown", "unavailable"):
             continue
         # A muted virtual master must remain silent across power cycles.
         level = 0.0 if levels[entity] == 0 or master == 0 else master if use_master else levels[entity]
@@ -441,9 +463,17 @@ def set_probe_volume(generation):
 
 
 def radio_start_sequence(generation):
-    global READY, STARTUP_ERROR, STARTED_AT
+    global READY, PREPARING, STARTUP_ERROR, STARTED_AT
     try:
-        startup_request(generation, "/services/input_boolean/turn_off", {"entity_id": RADIO_READY})
+        with STATE_LOCK:
+            check_generation(generation)
+            PREPARING = True
+        try:
+            startup_request(generation, "/services/input_boolean/turn_off", {"entity_id": RADIO_READY})
+        except StartupCancelled:
+            raise
+        except NETWORK_ERRORS as exc:
+            print(f"[HA Music] Ready helper reset failed: {exc}", flush=True)
         selected = enabled_device_ids()
         station = last_selected_station()
         preferred = DIRECT_STATIONS[station]["target"] if station else "media_player.wohnung"
@@ -456,47 +486,60 @@ def radio_start_sequence(generation):
             except StartupCancelled:
                 raise
             except NETWORK_ERRORS as exc:
-                raise RuntimeError(f"Alexa-Integration konnte nicht neu geladen werden: {exc}") from exc
-            print("[HA Music] Alexa integration reload completed; waiting 50 seconds", flush=True)
+                print(f"[HA Music] Alexa integration reload failed: {exc}", flush=True)
+            else:
+                print("[HA Music] Alexa integration reload completed", flush=True)
+        print("[HA Music] Waiting 50 seconds before interface release", flush=True)
         if not wait_for_start(generation, 50):
             return
-        if state_snapshot().get(RADIO_SWITCH, {}).get("state") != "on":
-            raise RuntimeError("Radioschalter bestätigt Einschalten nicht")
-        synchronize_device_configuration(generation)
+        with STATE_LOCK:
+            check_generation(generation)
+            READY = True
+            STARTED_AT = None
+        print("[HA Music] Interface released after 50-second wait", flush=True)
+        try:
+            startup_request(generation, "/services/input_boolean/turn_on", {"entity_id": RADIO_READY})
+        except StartupCancelled:
+            raise
+        except NETWORK_ERRORS as exc:
+            print(f"[HA Music] Ready helper update failed: {exc}", flush=True)
+        try:
+            synchronize_device_configuration(generation)
+        except StartupCancelled:
+            raise
+        except NETWORK_ERRORS as exc:
+            print(f"[HA Music] Device synchronization failed: {exc}", flush=True)
         refresh_entities = sorted(allowed_entities())
         if refresh_entities:
             startup_request(generation, "/services/homeassistant/update_entity",
                             {"entity_id": refresh_entities})
         station = last_selected_station()
-        if station and DIRECT_STATIONS[station]["target"] in enabled_device_ids():
-            wait_for_station_target(station, generation)
         startup_completed = False
         try:
             set_probe_volume(generation)
             if not wait_for_start(generation, 2):
                 return
             if station and DIRECT_STATIONS[station]["target"] in enabled_device_ids():
-                play_station(station, generation)
+                play_station(station, generation, check_availability=False)
             startup_completed = True
         finally:
             # Even a failed station/probe command must not leave rooms at 1%.
             check_generation(generation)
             restore_speakers(generation, use_master=startup_completed)
-        startup_request(generation, "/services/input_boolean/turn_on", {"entity_id": RADIO_READY})
-        with STATE_LOCK:
-            check_generation(generation)
-            READY = True
-            STARTED_AT = None
         print("[HA Music] Startup commands completed; audible playback is not guaranteed", flush=True)
     except StartupCancelled:
         return
     except NETWORK_ERRORS as exc:
         with STATE_LOCK:
             if generation == RESTORE_GENERATION:
-                READY = False
                 STARTED_AT = None
-                STARTUP_ERROR = str(exc)
+                if not READY:
+                    STARTUP_ERROR = str(exc)
         print(f"[HA Music] Startup failed: {exc}", flush=True)
+    finally:
+        with STATE_LOCK:
+            if generation == RESTORE_GENERATION:
+                PREPARING = False
 
 
 def enter_standby(generation):
@@ -513,7 +556,7 @@ def enter_standby(generation):
 
 
 def transition_power(on):
-    global RESTORE_GENERATION, STARTED_AT, LAST_POWER, STANDBY_UNTIL, READY, STARTUP_ERROR, CANCEL
+    global RESTORE_GENERATION, STARTED_AT, LAST_POWER, STANDBY_UNTIL, READY, PREPARING, STARTUP_ERROR, CANCEL
     with STATE_LOCK:
         CANCEL.set()
         CANCEL = threading.Event()
@@ -521,6 +564,7 @@ def transition_power(on):
         generation = RESTORE_GENERATION
         LAST_POWER = "on" if on else "off"
         READY = False
+        PREPARING = on
         STARTUP_ERROR = None
         ROOM_TARGETS.clear()
         STARTED_AT = time.monotonic() if on else None
@@ -571,7 +615,7 @@ def options():
         return {}
 
 def ha_request(path, payload=None, *, supervisor=False, startup_configuration=False):
-    global STATE_CACHE
+    global STATE_CACHE, INVENTORY_CACHE
     configuration_access = startup_configuration and supervisor and path in ("/addons/self/info", "/addons/self/options")
     if startup_configuration and not configuration_access:
         raise ValueError("Initialisierung erlaubt nur die eigenen Supervisor-Optionen")
@@ -598,6 +642,9 @@ def ha_request(path, payload=None, *, supervisor=False, startup_configuration=Fa
         if payload is not None and not supervisor:
             with CACHE_LOCK:
                 STATE_CACHE = (0.0, None)
+            if path == "/services/homeassistant/reload_config_entry":
+                with INVENTORY_LOCK:
+                    INVENTORY_CACHE = (0.0, None)
         # Some Home Assistant service responses are empty on success.
         if not raw.strip():
             return {}
@@ -624,7 +671,7 @@ DIRECT_STATIONS = {
 def last_selected_station():
     try:
         station = json.loads(STATION_FILE.read_text()).get("station", "")
-        return station if station in DIRECT_STATIONS else ""
+        return station if isinstance(station, str) and station in DIRECT_STATIONS else ""
     except (OSError, ValueError, AttributeError):
         return ""
 
@@ -696,8 +743,9 @@ def radio_state():
                 "stations":[{"id":key,"name":item["name"],"available":False} for key,item in DIRECT_STATIONS.items()]}
     states = state_snapshot()
     selected = enabled_device_ids()
-    return {"power":LAST_POWER if STARTED_AT is not None else states.get(RADIO_SWITCH,{}).get("state","unavailable"),
-            "ready":"on" if READY and states.get(RADIO_READY,{}).get("state") == "on" else "off",
+    return {"power":LAST_POWER,
+            "ready":"on" if READY else "off",
+            "preparing":PREPARING,
             "startup_error":STARTUP_ERROR,
             "last_station":last_selected_station(),
             "selected_view":selected_view(),
@@ -742,22 +790,7 @@ def playback_status():
             "details": active if active and (active["title"] or active["artist"]) else details}
 
 
-def wait_for_station_target(key, generation):
-    """Allow asynchronous Alexa discovery after update_entity, before probing."""
-    target = DIRECT_STATIONS[key]["target"]
-    for attempt in range(7):
-        check_generation(generation)
-        state = state_snapshot().get(target, {}).get("state")
-        if state not in (None, "unknown", "unavailable"):
-            check_generation(generation)
-            return
-        if attempt == 6:
-            raise ValueError(f"Alexa-Senderziel {target}: {state or 'Entity fehlt'} – nach 12 s weiterhin nicht verfügbar")
-        if not wait_for_start(generation, 2):
-            raise StartupCancelled("Start abgebrochen")
-
-
-def play_station(key, generation):
+def play_station(key, generation, *, check_availability=True):
     if not isinstance(key, str) or key not in DIRECT_STATIONS:
         raise ValueError("Unbekannter Sender")
     preset = DIRECT_STATIONS[key]
@@ -766,7 +799,7 @@ def play_station(key, generation):
     if target not in enabled_device_ids():
         raise ValueError(f"Alexa-Senderziel {target} ist in der Add-on-Konfiguration deaktiviert")
     state = states.get(target, {}).get("state")
-    if state in (None, "unknown", "unavailable"):
+    if check_availability and state in (None, "unknown", "unavailable"):
         raise ValueError(f"Alexa-Senderziel {target}: {state or 'Entity fehlt'} – nicht verfügbar")
     result = startup_request(generation, "/services/media_player/play_media", {
         "entity_id": target, "media": {
@@ -816,7 +849,7 @@ def perform(action, body):
     generation = RESTORE_GENERATION
     with COMMAND_LOCK:
         check_generation(generation)
-        if not READY:
+        if not READY or PREPARING:
             raise ValueError("Radio ist noch nicht bereit")
         if action == "radio_direct":
             return play_station(body.get("station"), generation)
@@ -891,10 +924,12 @@ def perform_control(action, body, generation):
                     failed.append(f"{p['entity_id']}: {exc}")
             # At 0%, preserve each room's active/muted intent so raising master
             # can restore active rooms without reactivating explicitly muted ones.
-            save_speaker_levels({"media_player.wohnung": float(level),
-                                 **(changed if level > 0 else {})})
-            if level > 0:
-                save_remembered(entity, level)
+            with STATE_LOCK:
+                check_generation(generation)
+                save_speaker_levels({"media_player.wohnung": float(level),
+                                     **(changed if level > 0 else {})})
+                if level > 0:
+                    save_remembered(entity, level)
             if failed:
                 print("[HA Music] Master partial failure: " + "; ".join(failed), flush=True)
                 raise RuntimeError("Master: " + "; ".join(failed))

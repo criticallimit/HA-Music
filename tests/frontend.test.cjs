@@ -6,6 +6,7 @@ const path = require('node:path');
 
 function harness() {
   const elements = new Map();
+  const timers = [];
   function element() {
     return {hidden:false, disabled:false, textContent:'', value:'', children:[], attributes:{}, listeners:{},
       classList:{toggle(){},add(){}}, style:{setProperty(){}},
@@ -19,9 +20,9 @@ function harness() {
   window.parent = window;
   const context = vm.createContext({window, document:{getElementById:get,querySelector:get,
     createElement:element, hidden:false}, URLSearchParams, URL, AbortSignal, console,
-    setTimeout(){}, setInterval(){}, fetch:()=>new Promise(()=>{})});
+    setTimeout(callback, delay){timers.push({callback,delay});}, setInterval(){}, fetch:()=>new Promise(()=>{})});
   vm.runInContext(fs.readFileSync(path.join(__dirname,'../ha_music/web/app.js'),'utf8'),context);
-  return {context, get, run: code => vm.runInContext(code,context)};
+  return {context, get, timers, run: code => vm.runInContext(code,context)};
 }
 
 test('countdown expiry remains starting, never claims ready', () => {
@@ -115,7 +116,7 @@ test('room audio switch uses room action and server restored volume', async () =
   const h = harness();
   const calls = [];
   h.context.reply = async (action, body) => { calls.push({action,body}); return {volume:0.45}; };
-  h.run('api=reply; refreshPlayers=async()=>{}');
+  h.run('api=reply; radioReadyForViews=true; refreshPlayers=async()=>{}');
   const row = h.run('volumeRow({entity_id:"media_player.kueche",name:"Küche",state:"playing",volume:0},{},false)');
   assert.equal(row.children[3].textContent,'Stumm');
   await row.children[3].listeners.click();
@@ -169,4 +170,66 @@ test('playback reply from before group command cannot restore old control state'
   resolve({playing:true,transport:{state:'playing',can_pause:true}});
   await request;
   assert.equal(h.run('groupTransport'),null);
+});
+
+test('pending view reply cannot reopen Apple view after power off', async () => {
+  const h = harness();
+  let resolve;
+  h.context.reply = () => new Promise(r => {resolve=r;});
+  h.run('api=reply; radioReadyForViews=true; show("radio")');
+  const request = h.run('selectView("apple")');
+  h.run('uiGeneration++; radioReadyForViews=false; show("radio")');
+  resolve({});
+  await request;
+  assert.equal(h.get('apple-page').hidden,true);
+  assert.equal(h.run('preferredView'),'radio');
+});
+
+test('timed ready shows interface while startup commands still prepare devices', async () => {
+  const h = harness();
+  h.context.reply = async () => ({stations:[], power:'on', ready:'on', preparing:true});
+  h.run('api=reply; refreshPlayers=async()=>{}');
+  await h.run('loadRadioState()');
+  assert.equal(h.get('.now').hidden,false);
+  assert.equal(h.get('radio-standby').hidden,true);
+  assert.equal(h.run('mediaPreparing'),true);
+  assert.equal(h.run('[...stationButtons.values()].every(button=>button.disabled)'),true);
+  h.context.reply = async () => ({stations:[], power:'on', ready:'on', preparing:false});
+  h.run('api=reply');
+  await h.run('loadRadioState()');
+  assert.equal(h.run('mediaPreparing'),false);
+});
+
+test('unavailable metadata expires without another stream event', () => {
+  const h = harness();
+  h.context.EventSource = class {close(){}};
+  h.run('window.EventSource=EventSource; radioReadyForViews=true; selectedStation="wdr2"; Date.now=()=>100000; lastStationMetadata.set("wdr2",{value:{title:"Old",artist:"Artist"},at:90000}); connectRadioEvents(); radioEventSource.onmessage({data:JSON.stringify({station:"wdr2",metadata:{status:"unavailable"}})})');
+  assert.equal(h.get('now-ticker').hidden,false);
+  const expiry = h.timers.find(t => t.delay === 80000);
+  assert.ok(expiry);
+  h.run('Date.now=()=>180000');
+  expiry.callback();
+  assert.equal(h.get('now-ticker').hidden,true);
+});
+
+test('metadata expiry cannot remove a newer song', () => {
+  const h = harness();
+  h.context.EventSource = class {close(){}};
+  h.run('window.EventSource=EventSource; radioReadyForViews=true; selectedStation="wdr2"; Date.now=()=>100000; lastStationMetadata.set("wdr2",{value:{title:"Old",artist:"Artist"},at:90000}); connectRadioEvents(); radioEventSource.onmessage({data:JSON.stringify({station:"wdr2",metadata:{status:"unavailable"}})})');
+  const expiry = h.timers.find(t => t.delay === 80000);
+  h.run('Date.now=()=>180000; radioEventSource.onmessage({data:JSON.stringify({station:"wdr2",metadata:{status:"available",title:"New",artist:"Artist"}})})');
+  expiry.callback();
+  assert.equal(h.get('now-ticker-text').textContent,'Artist – New');
+});
+
+test('Lovelace errors are rendered as text rather than HTML', () => {
+  let Card;
+  const context = vm.createContext({HTMLElement:class {}, window:{}, customElements:{get(){},define(name,value){if(name==='ha-music-card') Card=value;}}, console});
+  vm.runInContext(fs.readFileSync(path.join(__dirname,'../ha_music/lovelace/ha-music-card.js'),'utf8'),context);
+  const loading = {};
+  const shadowRoot = {innerHTML:'', querySelector(){return loading;}};
+  const message = '<img src=x onerror=alert(1)>';
+  Card.prototype._renderShell.call({shadowRoot,_isCardPicker:()=>false},message);
+  assert.equal(loading.textContent,message);
+  assert.equal(shadowRoot.innerHTML.includes(message),false);
 });

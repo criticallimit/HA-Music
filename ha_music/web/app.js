@@ -63,6 +63,7 @@ async function reportDashboardCardLoaded() {
 }
 
 let radioReadyForViews = false;
+let mediaPreparing = false;
 let preferredView = "radio";
 let countdownEndsAt = null;
 let strictStandby = false;
@@ -80,7 +81,7 @@ let masterTransportButton = null;
 function renderGroupTransport() {
   if (!masterTransportButton) return;
   const pause = groupTransport?.state === "playing";
-  masterTransportButton.disabled = !radioReadyForViews || transportPending || !(pause ? groupTransport?.can_pause : groupTransport?.can_play);
+  masterTransportButton.disabled = !radioReadyForViews || mediaPreparing || transportPending || !(pause ? groupTransport?.can_pause : groupTransport?.can_play);
   const label = transportPending ? "Gruppenbefehl wird gesendet …" :
     masterTransportButton.disabled ? "Gruppensteuerung derzeit nicht verfügbar" :
     pause ? "Gesamte Gruppe pausieren" : "Gesamte Gruppe fortsetzen";
@@ -90,7 +91,7 @@ function renderGroupTransport() {
     (pause ? '<path d="M8 5v14M16 5v14" stroke-linecap="round"/>' : '<path d="m8 5 11 7-11 7Z"/>') + '</svg>';
 }
 async function controlGroup(command) {
-  if (strictStandby || !radioReadyForViews || transportPending || !groupTransport?.["can_" + command]) return;
+  if (strictStandby || !radioReadyForViews || mediaPreparing || transportPending || !groupTransport?.["can_" + command]) return;
   transportPending = true;
   transportEpoch++;
   const generation = uiGeneration;
@@ -119,12 +120,15 @@ function show(page) {
 async function selectView(page) {
   if (!radioReadyForViews || viewPending) return;
   viewPending = true;
-  uiGeneration++;
+  const generation = ++uiGeneration;
   try {
     await api("selected_view", {view:page});
+    if (generation !== uiGeneration || !radioReadyForViews) return;
     preferredView = page;
     show(page);
-  } catch (e) { status("Ansicht konnte nicht gespeichert werden: " + e.message); }
+  } catch (e) {
+    if (generation === uiGeneration && radioReadyForViews) status("Ansicht konnte nicht gespeichert werden: " + e.message);
+  }
   finally { viewPending = false; }
 }
 $("radio-tab").addEventListener("click", () => selectView("radio"));
@@ -290,8 +294,15 @@ function connectRadioEvents() {
         renderRadioMetadata(selectedStation, item);
       } else {
         const prior = lastStationMetadata.get(selectedStation);
-        if (prior && Date.now() - prior.at < METADATA_GRACE_MS)
-          renderRadioMetadata(selectedStation, prior.value);
+        if (prior && Date.now() - prior.at < METADATA_GRACE_MS) {
+          const station = selectedStation;
+          renderRadioMetadata(station, prior.value);
+          setTimeout(() => {
+            if (radioEventSource === source && radioReadyForViews && selectedStation === station &&
+                lastStationMetadata.get(station) === prior && Date.now() - prior.at >= METADATA_GRACE_MS)
+              renderRadioMetadata(station, null);
+          }, METADATA_GRACE_MS - (Date.now() - prior.at));
+        }
         else renderRadioMetadata(selectedStation, null);
       }
     } catch (_) { /* Ignore invalid event payloads. */ }
@@ -333,7 +344,7 @@ for (const [id,name] of STATIONS) {
   button.setAttribute("aria-pressed", "false");
   button.disabled = true;
   button.addEventListener("click", async () => {
-    if (stationPending || !radioReadyForViews) return;
+    if (stationPending || !radioReadyForViews || mediaPreparing) return;
     stationPending = true;
     const generation = ++uiGeneration;
     for (const item of stationButtons.values()) item.disabled = true;
@@ -355,7 +366,9 @@ for (const [id,name] of STATIONS) {
         for (const delay of [5000, 9000, 15000, 22000]) setTimeout(updateSong, delay);
       }
       status("");
-    } catch(e) { status("Direkte Wiedergabe fehlgeschlagen: " + e.message); }
+    } catch(e) {
+      if (generation === uiGeneration) status("Direkte Wiedergabe fehlgeschlagen: " + e.message);
+    }
     finally { stationPending = false; await loadRadioState(); }
   });
   stationButtons.set(id, button);
@@ -382,13 +395,15 @@ async function loadRadioState() {
     strictStandby = data.standby === true;
     const radioReady = data.power === "on" && data.ready === "on";
     const becameReady = radioReady && !radioReadyForViews;
+    const controlsBecameReady = radioReady && !data.preparing && mediaPreparing;
+    mediaPreparing = data.preparing === true;
     if (!radioReady) {
       closeRadioEvents();
       if (radioReadyForViews) uiGeneration++;
     }
     radioReadyForViews = radioReady;
     if (radioReady) connectRadioEvents();
-    if (becameReady) refreshPlayers();
+    if (becameReady || controlsBecameReady) refreshPlayers();
     if (!viewPending) preferredView = data.selected_view === "apple" ? "apple" : "radio";
     $("radio-tab").disabled = !radioReady;
     $("apple-tab").disabled = !radioReady;
@@ -409,7 +424,7 @@ async function loadRadioState() {
       updateSong();
     }
 
-    for (const [key,button] of stationButtons) button.disabled = stationPending || !radioReady || !state.get(key)?.available;
+    for (const [key,button] of stationButtons) button.disabled = stationPending || mediaPreparing || !radioReady || !state.get(key)?.available;
     const label = data.startup_error ? "Start fehlgeschlagen: " + data.startup_error + " – aus- und erneut einschalten." : data.power === "on" && data.ready !== "on" ? "Radio startet …" :
       data.power === "on" ? "Radio eingeschaltet" :
       data.power === "off" ? "Radio ausgeschaltet" : "Radio nicht verfügbar";
@@ -499,7 +514,7 @@ function volumeRow(p, remembered, master) {
       if (p.pending) label.title = "Gespeicherter Sollwert; Home Assistant meldet " + Math.round(p.observed*100) + "%. Bestätigung steht aus.";
       const mute = document.createElement("button"); mute.type="button"; mute.textContent="Stumm";
       slider.setAttribute("aria-label", (master ? "Master" : p.name) + " Lautstärke");
-      slider.disabled = ["unavailable", "unknown"].includes(p.state) || p.volume === null || p.volume === undefined;
+      slider.disabled = mediaPreparing || ["unavailable", "unknown"].includes(p.state) || p.volume === null || p.volume === undefined;
       mute.disabled = slider.disabled;
       function renderAudioButton() {
         const audible = Number(slider.value) > 0;
@@ -514,14 +529,18 @@ function volumeRow(p, remembered, master) {
         label.textContent = slider.value + "%";
       });
       slider.addEventListener("change", async () => {
+        if (!radioReadyForViews || mediaPreparing || strictStandby) return;
+        const generation = uiGeneration;
         const volume = Number(slider.value)/100;
         volumeRequests++;
         slider.disabled = mute.disabled = true;
-        try { await api("volume",{entity_id:p.entity_id,volume}); if(volume>0)previous.set(p.entity_id,volume);label.textContent=slider.value+"%";renderAudioButton(); if (master) refreshPlayers(); }
-        catch(e){status(e.message);}
-        finally { volumeRequests--; slider.disabled = mute.disabled = false; refreshPlayers(); }
+        try { await api("volume",{entity_id:p.entity_id,volume}); if(generation !== uiGeneration) return; if(volume>0)previous.set(p.entity_id,volume);label.textContent=slider.value+"%";renderAudioButton(); }
+        catch(e){if(generation === uiGeneration)status(e.message);}
+        finally { volumeRequests--; slider.disabled = mute.disabled = !radioReadyForViews || mediaPreparing; refreshPlayers(); }
       });
       mute.addEventListener("click",async () => {
+        if (!radioReadyForViews || mediaPreparing || strictStandby) return;
+        const generation = uiGeneration;
         const current = Number(slider.value)/100;
         const next = current > 0 ? 0 : (previous.get(p.entity_id) || remembered[p.entity_id] || 0.3);
         if(current>0) previous.set(p.entity_id,current);
@@ -529,13 +548,13 @@ function volumeRow(p, remembered, master) {
         slider.disabled = mute.disabled = true;
         try {
           const response = await api(master ? "volume" : "room_audio", master ? {entity_id:p.entity_id,volume:next} : {entity_id:p.entity_id,on:current===0});
+          if (generation !== uiGeneration) return;
           slider.value = Math.round((master ? next : response.volume)*100);
           label.textContent=slider.value+"%";
           renderAudioButton();
-          if(master) refreshPlayers();
         }
-        catch(e){status(e.message);}
-        finally { volumeRequests--; slider.disabled = mute.disabled = false; refreshPlayers(); }
+        catch(e){if(generation === uiGeneration)status(e.message);}
+        finally { volumeRequests--; slider.disabled = mute.disabled = !radioReadyForViews || mediaPreparing; refreshPlayers(); }
       });
 
   if (master) {

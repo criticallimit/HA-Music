@@ -359,9 +359,10 @@ class HAMusicCard extends HTMLElement {
         }
       </style>
       <ha-card>
-        <div class="loading">${message}</div>
+        <div class="loading"></div>
       </ha-card>
     `;
+    this.shadowRoot.querySelector(".loading").textContent = message;
   }
 
   _setError(message) {

@@ -3,7 +3,45 @@
 Ausgangsstand: `ffb3768` auf `main`, Add-on-Version `0.0.6`.
 Geprüft: sämtliche Python-Module, Ingress-Frontend (HTML/CSS/JS), Lovelace-Karte und Loader, Startskript, Container-/Add-on-Konfiguration, Workflow, Tests und Dokumentation. Keine separate Branch, kein Release, keine Versionsänderung.
 
-## Belegte Befunde und Korrekturen
+## Abschließende Ablaufprüfung und neue Startvorgabe
+
+Ausgangspunkt dieser Nachprüfung: `8456d7a` auf `main`. Die folgende aktuelle Vorgabe ersetzt die ältere, weiter unten dokumentierte Verfügbarkeitsprüfung und deren Ready-Bedeutung.
+
+Nach dem einmaligen Alexa-Reload-Versuch und 50 Sekunden Wartezeit wird die Oberfläche freigegeben. Weder Playerzustand noch Ready-Helfer oder Schalterbestätigung entscheiden über diese Freigabe. Die zusätzliche Zwölf-Sekunden-Wartephase wurde entfernt. Ein Reload-/Helferfehler wird protokolliert, verhindert aber die zeitliche Freigabe nicht. Ausschalten bricht die Wartezeit und nachfolgende Befehle weiterhin ab. Der Schaltermonitor berücksichtigt bestätigtes externes Ausschalten; externes Einschalten startet weiterhin keine Wiedergabe.
+
+Ready bezeichnet damit die Anzeige, nicht bestätigte Wiedergabe. Ein separates internes `preparing` sperrt manuelle Medienbefehle, bis Probe/Sender/Restore abgeschlossen oder fehlgeschlagen sind. Dadurch bleiben die 1%-Probe und die nur beim Start erfolgende Master-Angleichung gegen gleichzeitige Bedienung geschützt. Sichere Einzelbefehle behalten Freigabe-/Verfügbarkeitsprüfungen. Fehlende sichere Master-Lautstärke verhindert eine Probe mit geratenem Restore-Wert, aber keine Anzeige. Ein gespeicherter Sender wird nach erfolgreicher Probe höchstens einmal angefordert, ohne vorherige Ziel-Verfügbarkeitsprüfung. Nach Freigabe auftretende Befehlsfehler verstecken die Oberfläche nicht und stehen im Protokoll.
+
+| Priorität | Nachweisbarer Fehler / unnötiger Aufwand | Korrektur und Prüfung |
+|---|---|---|
+| P1 | Eine verspätete Antwort auf den Ansichtswechsel konnte nach Ausschalten Apple Music wieder einblenden. | Generation und aktuelle Freigabe werden nach der Antwort geprüft; verzögerte Antwort im Frontend-Test. |
+| P1 | Ein Masterbefehl ohne aktive Räume konnte nach zwischenzeitlichem Ausschalten einen neuen Masterwert speichern. | Generation unter Zustandslock vor persistenter Änderung prüfen; Abbruchtest ohne Raum-Serviceaufruf. |
+| P2 | Zielgerät `unavailable` blockierte nach 50 Sekunden die gesamte Oberfläche. | Ausschließlich zeitliche Freigabe; Tests für unverfügbares Ziel, Helfer und Radioschalter, Fehlermeldungen und Ausschaltabbruch. |
+| P2 | Lautstärke-Restore versuchte auch registrierte Offline-Räume und konnte deshalb den gesamten Start als fehlgeschlagen melden. | Nicht verfügbare Räume überspringen, deren Sollwerte behalten; aktive Räume weiterhin auf Master setzen. |
+| P2 | Wiederholte Geräte-/Steuerabfragen erstellten redundant den vollständigen Alexa-Katalog. | 30-Sekunden-Cache und gemeinsame laufende Abfrage; Tests für Ablauf, Kopien, parallele Aufrufe und Standby. |
+| P2 | Ein gespeicherter Senderwert als JSON-Liste/-Objekt konnte einen unbehandelten TypeError auslösen. Fehlerhafte Entstumm-Werte gelangten ungefiltert in die Antwort. | Typ-, Entity- und Bereichsprüfung; beschädigte Dateien werden sicher ignoriert. |
+| P2 | Nach einem einzelnen Unavailable-Metadatenereignis blieb alter Radiotext unbegrenzt sichtbar. | Die bestehende 90-Sekunden-Kulanz endet nun auch ohne weiteres Ereignis; ein Timer darf neuere Titel oder andere Sender nicht löschen. |
+| P2 | Eine Lovelace-Fehlermeldung wurde als HTML eingesetzt. | Meldungen als Text setzen; Test mit HTML-/Eventhandler-Nutzlast. |
+| P2 | Verspätete Sender-/Lautstärkefehler konnten nach Ausschalten die Anzeige verändern. | Generation vor Anzeigeänderungen prüfen; bestehende Abbruchsperren beibehalten. |
+
+### Gesamtergebnis, Ressourcen und verbleibende Grenzen
+
+Erneut geprüft wurden Backend-Lebenszyklus, Locks, persistente Zustände, Supervisor-Konfiguration, HTTP-/Ingress-Parser, SSE-/ICY-Abbruch, Metadatenworker, Frontend, Lovelace/Loader, Container-Start und CI. Die vorhandenen Sicherheitsgrenzen bleiben erhalten: registrierte/freigegebene Ziele, begrenzte HTTP-Nutzdaten und Einlesefristen, Ingress-Gegenstellenprüfung, gesicherte Textausgabe und maximal 16 SSE-Verbindungen. Es wurden keine Zugangsdaten ergänzt oder ausgegeben.
+
+- Der Gerätebestand ist automatisch; die Steuerrollen sind weiterhin installationsspezifisch (`switch.alexa_alle`, Ready-Helfer, Master Wohnung, Senderziel Wohnzimmer). Ein allgemeines Rollenmodell wäre eine gesonderte funktionale Erweiterung.
+- Reload betrifft den gesamten Alexa-Integrationseintrag und kann Dienste vorübergehend abmelden. Das erklärt mögliche kurzzeitige Spook-Meldungen; dauerhaft fehlende Dienste müssen separat untersucht werden. Es gibt keinen automatischen Reload-/Senderretry.
+- Ein erfolgreicher HA-Aufruf bestätigt die Annahme, nicht die spätere hörbare Ausführung. Bereits an HA/Alexa übermittelte Aufträge lassen sich vom Add-on nicht zuverlässig zurückrufen. Ein spät beginnender Alexa-Stream kann deshalb nicht allein durch lokale Generationen verhindert werden.
+- Der Standby sperrt neue ausgehende Anfragen zehn Sekunden nach Ausschalten und schließt registrierte Streamantworten. Verbindungsaufbau/DNS und bereits übermittelte Befehle sind nicht als absoluter Netzwerkstillstand beweisbar. Dafür ist eine Netzwerkaufzeichnung auf der tatsächlichen Installation nötig.
+- ICY-Metadaten lesen den Audiostream des ausgewählten Senders mit; bei 128 kbit/s sind das etwa 58 MB pro Stunde. Es läuft ein Streamworker, der bei Ausschalten/Quellenwechsel beendet wird. Ein textbasierter Metadatenfeed wäre eine mögliche spätere Einsparung, braucht aber pro Sender eine verlässliche Quelle.
+- Aktiv/Inaktiv sperrt HA-Music-Anzeige und Einzelbefehle, ändert keine Alexa-Gruppenmitgliedschaft. Ein aktiver Offline-Raum behält seine Lautstärkeabsicht; ein späteres Onlinegehen löst keinen eigenen Senderstart oder automatischen Lautstärke-Retry aus.
+- Native Konfiguration und Migration funktionieren unabhängig vom Radio. Änderungen werden nach Speichern und Add-on-Neustart übernommen. Die optionale alte Boolean-Eingabe bleibt nur zur Kompatibilität im Formular vorhanden.
+- Der HTTP-Server nutzt Threads; SSE ist begrenzt, die gesamte Zahl kurzlebiger HTTP-Threads nicht. Buildzeit-Logos kommen von Wikimedia und werden grundlegend geprüft; eine vollständige SVG-Sanitizer-/Integritätslösung und ein reproduzierbarer Offline-Build wären zusätzliche Härtungen.
+- Keine direkte Verbindung zur Zielinstallation: echte Alexa-Audioausgabe, Home-Assistant-Ingress, Stromversorgung, Browserlayout und Netzwerkmessung müssen nach Neuaufbau dort geprüft werden. Kein Containerbuild/Hardwaretest in dieser Umgebung.
+
+Validierung: 81 Runtime-Tests einschließlich echter lokaler HTTP-Verbindungen und blockierter Streams, fünf Discovery-Template-Tests, 19 Frontend-/Lovelace-Tests sowie Scaffold-/Smoke- und Syntaxprüfungen. Version bleibt `0.0.6`; Veröffentlichung direkt auf `main`, kein Release.
+
+## Frühere Befunde und Änderungen im Verlauf
+
+Die folgenden Abschnitte dokumentieren frühere Prüfstände. Aussagen zur zusätzlichen Verfügbarkeitswartezeit und zur Freigabe erst nach erfolgreichen Services sind durch die aktuelle Startvorgabe oben ersetzt.
 
 ### Verspätete Verfügbarkeit des Senderziels nach Einschalten
 

@@ -43,6 +43,8 @@ class RuntimeTests(unittest.TestCase):
         app.RESTORE_GENERATION = 10
         app.LAST_POWER = "on"
         app.READY = False
+        app.PREPARING = False
+        self.stack.enter_context(patch.object(app, "INVENTORY_CACHE", (0.0, None)))
         app.ROOM_TARGETS.clear()
         app.STARTUP_ERROR = None
         app.STARTED_AT = None
@@ -62,6 +64,81 @@ class RuntimeTests(unittest.TestCase):
             app.radio_start_sequence(app.RESTORE_GENERATION)
             return calls
 
+    def test_inventory_cache_returns_copies_expires_and_respects_standby(self):
+        inventory = {"media_player.wohnung": {"integration": "alexa_media"}}
+        with patch.object(app, "read_integration_inventory", return_value=inventory) as read, patch.object(app.time, "monotonic", return_value=100) as now:
+            first = app.integration_inventory()
+            first.clear()
+            self.assertEqual(app.integration_inventory(), {"media_player.wohnung": {"integration": "alexa_media"}})
+            self.assertEqual(read.call_count, 1)
+            now.return_value = 131
+            app.integration_inventory()
+            self.assertEqual(read.call_count, 2)
+            app.STANDBY.set()
+            with self.assertRaises(RuntimeError):
+                app.integration_inventory()
+            self.assertEqual(read.call_count, 2)
+
+    def test_inventory_parallel_requests_share_one_registry_read(self):
+        entered, release = threading.Event(), threading.Event()
+        results = []
+        def read():
+            entered.set()
+            self.assertTrue(release.wait(2))
+            return {"media_player.wohnung": {"integration": "alexa_media"}}
+        with patch.object(app, "read_integration_inventory", side_effect=read) as request:
+            threads = [threading.Thread(target=lambda: results.append(app.integration_inventory())) for _ in range(3)]
+            for thread in threads:
+                thread.start()
+            self.assertTrue(entered.wait(2))
+            release.set()
+            for thread in threads:
+                thread.join(2)
+                self.assertFalse(thread.is_alive())
+            self.assertEqual(len(results), 3)
+            self.assertEqual(request.call_count, 1)
+
+    def test_invalid_persisted_station_and_volume_are_ignored(self):
+        for value in ([], {}, True, 1, {"station": []}, {"station": {}}, {"station": True}):
+            app.STATION_FILE.write_text(json.dumps(value))
+            self.assertEqual(app.last_selected_station(), "")
+        app.VOLUME_FILE.write_text(json.dumps({"media_player.kueche": 0.2, "media_player.bad": True,
+                                              "media_player.buero": 2, "bad key": 0.3,
+                                              "media_player.wohnzimmer": "0.4"}))
+        self.assertEqual(app.remembered(), {"media_player.kueche": 0.2})
+
+    def test_timed_ready_is_independent_of_device_and_helper_availability(self):
+        app.READY = True
+        self.states[app.RADIO_SWITCH] = {"state": "unavailable"}
+        self.states[app.RADIO_READY] = {"state": "unavailable"}
+        self.states["media_player.wohnzimmer"]["state"] = "unavailable"
+        with patch.object(app, "state_snapshot", return_value=self.states):
+            state = app.radio_state()
+        self.assertEqual(state["ready"], "on")
+        self.assertEqual(state["power"], "on")
+        self.assertFalse(next(s for s in state["stations"] if s["id"] == "wdr2")["available"])
+
+    def test_offline_room_restore_does_not_send_or_erase_saved_level(self):
+        self.states["media_player.buero"] = {"state": "unavailable"}
+        app.save_speaker_levels({"media_player.wohnung": 0.25, "media_player.wohnzimmer": 0.4,
+                                 "media_player.buero": 0.6})
+        with patch.object(app, "state_snapshot", return_value=self.states), patch.object(app, "allowed_entities", return_value=set(self.states)), patch.object(app, "ha_request") as calls:
+            app.restore_speakers(10, use_master=True)
+        self.assertEqual([c.args[1]["entity_id"] for c in calls.call_args_list], ["media_player.wohnzimmer"])
+        self.assertEqual(app.speaker_levels()["media_player.buero"], 0.6)
+        self.assertEqual(app.speaker_levels()["media_player.wohnzimmer"], 0.25)
+
+    def test_cancelled_empty_master_command_cannot_save_new_volume(self):
+        app.READY = True
+        app.save_speaker_levels({"media_player.wohnung": 0.4})
+        def classify():
+            app.transition_power("off")
+            return {"players": [], "groups": [{"entity_id": "media_player.wohnung", "state": "idle", "volume": 0.4}]}
+        with patch.object(app, "classify_devices", side_effect=classify):
+            with self.assertRaises(app.StartupCancelled):
+                app.perform("volume", {"entity_id": "media_player.wohnung", "volume": 0.8})
+        self.assertEqual(app.speaker_levels()["media_player.wohnung"], 0.4)
+
     def test_success_order_and_saved_mute(self):
         app.save_speaker_levels({"media_player.wohnzimmer": 0.4, "media_player.kueche": 0})
         app.save_selected_station("wdr2")
@@ -69,7 +146,7 @@ class RuntimeTests(unittest.TestCase):
         paths = [c.args[0] for c in calls]
         self.assertTrue(app.READY)
         self.assertLess(paths.index("/services/homeassistant/update_entity"), paths.index("/services/media_player/play_media"))
-        self.assertEqual(paths[-1], "/services/input_boolean/turn_on")
+        self.assertLess(paths.index("/services/input_boolean/turn_on"), paths.index("/services/homeassistant/update_entity"))
         volumes = [c.args[1] for c in calls if c.args[0].endswith("volume_set")]
         self.assertEqual([c["volume_level"] for c in volumes if c["entity_id"].endswith("wohnzimmer")], [0.01, 0.4])
         self.assertTrue(all(c["volume_level"] == 0 for c in volumes if c["entity_id"].endswith("kueche")))
@@ -94,15 +171,19 @@ class RuntimeTests(unittest.TestCase):
         self.assertTrue(app.READY)
         self.assertEqual(phases.count("/services/homeassistant/reload_config_entry"), 1)
 
-    def test_reload_failure_blocks_probe_station_and_ready(self):
+    def test_reload_failure_does_not_block_timed_interface_release(self):
+        app.save_selected_station("wdr2")
         def request(path, body=None):
             if path.endswith("reload_config_entry"):
                 raise TimeoutError("Reload timed out")
             return {}
-        calls = self.startup(request).call_args_list
-        self.assertFalse(app.READY)
-        self.assertIn("Alexa-Integration konnte nicht neu geladen", app.STARTUP_ERROR)
-        self.assertEqual([c.args[0] for c in calls], ["/services/input_boolean/turn_off", "/services/homeassistant/reload_config_entry"])
+        with patch("builtins.print") as log:
+            calls = self.startup(request).call_args_list
+        self.assertTrue(app.READY)
+        self.assertFalse(app.PREPARING)
+        self.assertIsNone(app.STARTUP_ERROR)
+        self.assertTrue(any(c.args[0].endswith("play_media") for c in calls))
+        self.assertTrue(any("reload failed" in str(c) for c in log.call_args_list))
 
     def test_boot_migration_works_with_radio_off_and_no_alexa_queries(self):
         original = app.options()
@@ -137,71 +218,73 @@ class RuntimeTests(unittest.TestCase):
         self.assertIsNone(app.STARTUP_ERROR)
         self.assertEqual([c.args[0] for c in calls], ["/services/input_boolean/turn_off", "/services/homeassistant/reload_config_entry"])
 
-    def test_failed_station_restores_but_never_marks_ready(self):
+    def test_failed_station_restores_but_keeps_interface_visible(self):
         app.save_selected_station("wdr2")
         def request(path, body=None):
             if path.endswith("play_media"):
                 raise TimeoutError("Station timed out")
             return {}
-        calls = self.startup(request).call_args_list
-        self.assertFalse(app.READY)
-        self.assertIn("Station timed out", app.STARTUP_ERROR)
-        self.assertNotIn("/services/input_boolean/turn_on", [c.args[0] for c in calls])
+        with patch("builtins.print") as log:
+            calls = self.startup(request).call_args_list
+        self.assertTrue(app.READY)
+        self.assertFalse(app.PREPARING)
+        self.assertIsNone(app.STARTUP_ERROR)
+        self.assertTrue(any("Station timed out" in str(c) for c in log.call_args_list))
         self.assertTrue(any(c.args[0].endswith("volume_set") and c.args[1]["volume_level"] == 0.4 for c in calls))
 
-    def test_late_target_is_awaited_before_one_percent_probe(self):
+    def test_unavailable_target_does_not_add_waits_or_hide_interface(self):
         app.save_selected_station("wdr2")
         self.states["media_player.wohnzimmer"]["state"] = "unavailable"
-        phases = []
-        def wait(generation, seconds):
-            phases.append(seconds)
-            if phases == [50, 2]:
-                self.states["media_player.wohnzimmer"]["state"] = "idle"
-            return True
-        def request(path, body=None):
-            if path.endswith("volume_set") and body["volume_level"] == 0.01:
-                self.assertEqual(phases, [50, 2])
-            return {}
-        with patch.object(app, "wait_for_start", side_effect=wait), patch.object(app, "state_snapshot", return_value=self.states), patch.object(app, "allowed_entities", return_value={"media_player.wohnung", "media_player.wohnzimmer"}), patch.object(app, "ha_request", side_effect=request) as calls:
+        with patch.object(app, "wait_for_start", return_value=True) as wait, patch.object(app, "state_snapshot", return_value=self.states), patch.object(app, "allowed_entities", return_value={"media_player.wohnung", "media_player.wohnzimmer"}), patch.object(app, "ha_request", return_value={}) as calls:
             app.radio_start_sequence(10)
         self.assertTrue(app.READY)
-        self.assertEqual(phases, [50, 2, 2])
+        self.assertFalse(app.PREPARING)
+        self.assertEqual([c.args[1] for c in wait.call_args_list], [50, 2])
         self.assertEqual(sum(c.args[0].endswith("play_media") for c in calls.call_args_list), 1)
 
-    def test_permanently_unavailable_target_fails_before_probe_and_names_entity(self):
+    def test_time_release_precedes_probe_and_manual_controls_wait_for_preparation(self):
         app.save_selected_station("wdr2")
-        self.states["media_player.wohnzimmer"]["state"] = "unavailable"
-        calls = self.startup().call_args_list
-        self.assertFalse(app.READY)
-        self.assertIn("media_player.wohnzimmer", app.STARTUP_ERROR)
-        self.assertIn("unavailable", app.STARTUP_ERROR)
-        self.assertFalse(any(c.args[0].endswith("volume_set") or c.args[0].endswith("play_media") for c in calls))
+        def request(path, body=None):
+            if path.endswith("update_entity") or path.endswith("volume_set"):
+                self.assertTrue(app.READY)
+                self.assertTrue(app.PREPARING)
+                with self.assertRaises(ValueError):
+                    app.perform("volume", {"entity_id": "media_player.wohnzimmer", "volume": 0.8})
+            return {}
+        self.startup(request)
+        self.assertTrue(app.READY)
+        self.assertFalse(app.PREPARING)
 
-    def test_target_wait_cancels_before_any_further_lookup(self):
-        self.states["media_player.wohnzimmer"]["state"] = "unavailable"
+    def test_cancel_during_initial_wait_prevents_ready_and_media_commands(self):
         def cancel(generation, seconds):
+            self.assertEqual(seconds, 50)
             app.transition_power(False)
             return False
-        with patch.object(app, "state_snapshot", return_value=self.states) as snapshot, patch.object(app, "wait_for_start", side_effect=cancel):
-            with self.assertRaises(app.StartupCancelled):
-                app.wait_for_station_target("wdr2", 10)
-        self.assertEqual(snapshot.call_count, 1)
+        with patch.object(app, "wait_for_start", side_effect=cancel), patch.object(app, "ha_request", return_value={}) as calls:
+            app.radio_start_sequence(10)
+        self.assertFalse(app.READY)
+        self.assertFalse(app.PREPARING)
+        self.assertEqual([c.args[0] for c in calls.call_args_list], ["/services/input_boolean/turn_off", "/services/homeassistant/reload_config_entry"])
 
-    def test_restore_failure_blocks_ready(self):
+    def test_restore_failure_is_logged_without_hiding_interface(self):
         def request(path, body=None):
             if path.endswith("volume_set") and body["volume_level"] == 0.4:
                 raise OSError("offline")
-        self.startup(request)
-        self.assertFalse(app.READY)
-        self.assertIn("nicht wiederhergestellt", app.STARTUP_ERROR)
+        with patch("builtins.print") as log:
+            self.startup(request)
+        self.assertTrue(app.READY)
+        self.assertFalse(app.PREPARING)
+        self.assertTrue(any("nicht wiederhergestellt" in str(c) for c in log.call_args_list))
 
     def test_probe_failure_restores_and_does_not_play(self):
         app.save_selected_station("wdr2")
         def request(path, body=None):
             if path.endswith("volume_set") and body["volume_level"] == 0.01:
                 raise TimeoutError("Probe failed")
+            return {}
         calls = self.startup(request).call_args_list
-        self.assertFalse(app.READY)
+        self.assertTrue(app.READY)
+        self.assertFalse(app.PREPARING)
         self.assertFalse(any(c.args[0].endswith("play_media") for c in calls))
         self.assertTrue(any(c.args[0].endswith("volume_set") and c.args[1]["volume_level"] == 0.4 for c in calls))
 
@@ -219,7 +302,7 @@ class RuntimeTests(unittest.TestCase):
             if path.endswith("update_entity"):
                 app.transition_power(False)
         calls = self.startup(request).call_args_list
-        self.assertEqual([c.args[0] for c in calls], ["/services/input_boolean/turn_off", "/services/homeassistant/reload_config_entry", "/services/homeassistant/update_entity"])
+        self.assertEqual([c.args[0] for c in calls], ["/services/input_boolean/turn_off", "/services/homeassistant/reload_config_entry", "/services/input_boolean/turn_on", "/services/homeassistant/update_entity"])
         self.assertFalse(app.READY)
 
     def test_no_stored_station_does_not_play(self):
@@ -277,11 +360,12 @@ class RuntimeTests(unittest.TestCase):
         self.assertEqual(app.displayed_speaker_levels()["media_player.wohnzimmer"], 0.3)
         self.assertEqual(app.speaker_levels()["media_player.wohnung"], 0)
 
-    def test_missing_master_blocks_probe_and_ready(self):
+    def test_missing_master_blocks_unsafe_probe_but_not_interface(self):
         self.states.pop("media_player.wohnung")
         calls = self.startup().call_args_list
-        self.assertFalse(app.READY)
-        self.assertIn("Master-Lautstärke nicht verfügbar", app.STARTUP_ERROR)
+        self.assertTrue(app.READY)
+        self.assertFalse(app.PREPARING)
+        self.assertIsNone(app.STARTUP_ERROR)
         self.assertFalse(any(c.args[0].endswith("volume_set") and c.args[1]["volume_level"] == 0.01 for c in calls))
 
     def test_wait_is_interruptible(self):
