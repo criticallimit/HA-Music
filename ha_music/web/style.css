@@ -196,4 +196,16 @@ html.ha-dashboard-card .station.active,html.ha-dashboard-card nav button.active{
   .settings-toggle{height:clamp(36px,5vh,44px);width:clamp(36px,5vh,44px)}
   .radio-standby{min-height:calc(100dvh - 110px)}
 }
+/* iPad landscape refinement: controls ~15% larger than the compact preset. */
+@media (orientation:landscape) and (min-width:700px) and (max-height:950px) {
+  .player-row button{width:35px;height:35px}
+  .player-row button::after{width:22px;height:22px}
+  .player-row>span:first-child{font-size:clamp(12px,1.32vw,15px)}
+  .player-row>span:nth-of-type(2){font-size:14px}
+  .station{min-height:clamp(64px,10.35vh,91px);gap:5px;font-size:clamp(12px,1.2vw,15px)}
+  .station-icon{width:clamp(24px,4vw,34px);height:clamp(24px,4vw,34px)}
+  .power-buttons button{width:clamp(41px,5.75vh,51px);height:clamp(41px,5.75vh,51px)}
+  .power-buttons .power-icon{font-size:clamp(25px,4.25vh,32px)}
+  .settings-toggle{width:clamp(41px,5.75vh,51px);height:clamp(41px,5.75vh,51px)}
+}
 /* Very narrow landscape views remain scrollable instead of making controls untappable. */
