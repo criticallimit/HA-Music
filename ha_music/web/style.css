@@ -27,16 +27,16 @@ nav button.active{background:#275276;border-color:#4d8bb8;color:#fff}
 /* AMAZON: square album art covers the full surface; this is intentional. */
 .now:not(.radio-selected) .art{background:#17191d}
 .now:not(.radio-selected) .art img:not([hidden]){object-fit:cover;padding:0}
-.now-overlay{position:absolute;left:0;right:0;bottom:0;height:192px;display:flex;flex-direction:column;justify-content:flex-start;overflow:hidden;padding:40px 24px 16px;border-radius:0 0 24px 24px;color:#fff;background:linear-gradient(transparent,rgba(12,14,19,.7) 32%,rgba(12,14,19,.85))}
+.now-overlay{position:absolute;left:0;right:0;bottom:0;min-height:192px;display:flex;flex-direction:column;justify-content:flex-start;padding:40px 24px 16px;border-radius:0 0 24px 24px;color:#fff;background:linear-gradient(transparent,rgba(12,14,19,.7) 32%,rgba(12,14,19,.85))}
 .now-head{height:28px;flex:0 0 28px}
 .now-head small{display:none}
 .now h2{font-size:20px;line-height:26px;margin:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.now-description{height:100px;min-height:100px;max-height:100px;overflow:hidden}
+.now-description{flex-shrink:0;min-width:0}
 #current-artist{font-size:13px;height:22px;line-height:22px;margin:0 0 7px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.now-ticker{width:100%;height:65px;max-height:65px;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;font-size:17px;line-height:1.3;font-weight:600;overflow-wrap:anywhere}
+.now-ticker{width:100%;height:3.9em;max-height:3.9em;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;font-size:17px;line-height:1.3;font-weight:600;overflow-wrap:anywhere}
 .now-ticker span{white-space:normal;animation:none}
 .now-ticker[hidden]{visibility:hidden!important;display:block!important}
-#playback-state{display:block;font-size:11px}
+#playback-state{display:block;font-size:11px;line-height:1.4;margin-top:6px;overflow-wrap:anywhere}
 .dashboard-right{min-width:0;display:flex;flex-direction:column;gap:11px}
 .players{display:flex;flex-direction:column;gap:10px}
 .master-volume,.speaker-list .player-row,.station{border:1px solid var(--border);border-radius:18px;background:var(--surface)}
@@ -70,9 +70,8 @@ nav button.active{background:#275276;border-color:#4d8bb8;color:#fff}
  .power-buttons{grid-column:2;grid-row:1;gap:5px}
  .power-buttons button{width:40px;height:40px;font-size:24px}
  .now{height:330px}
- .now-overlay{height:172px;padding:34px 16px 12px}
- .now-description{height:94px;min-height:94px;max-height:94px}
- .now-ticker{height:58px;max-height:58px;font-size:15px}
+ .now-overlay{min-height:172px;padding:34px 16px 12px}
+ .now-ticker{font-size:15px}
  .speaker-list{grid-template-columns:1fr}
  .stations{grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
  .station{min-height:90px}
