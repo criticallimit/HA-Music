@@ -128,18 +128,24 @@ test('room audio switch uses room action and server restored volume', async () =
 
 test('group controls reflect confirmed group state and feature availability', () => {
   const h = harness();
+  const row = h.run('volumeRow({entity_id:"media_player.wohnung",volume:0.4,state:"playing"},{},true)');
+  const button = row.children[3].children[1];
   h.run('radioReadyForViews=true; groupTransport={state:"playing",can_pause:true,can_play:false}; renderGroupTransport()');
-  assert.equal(h.get('group-pause').disabled,false);
-  assert.equal(h.get('group-play').disabled,true);
+  assert.equal(button.disabled,false);
+  assert.equal(button.attributes['aria-label'],'Gesamte Gruppe pausieren');
+  h.run('groupTransport={state:"paused",can_pause:false,can_play:true}; renderGroupTransport()');
+  assert.equal(button.disabled,false);
+  assert.equal(button.attributes['aria-label'],'Gesamte Gruppe fortsetzen');
   h.run('radioReadyForViews=false; displayRadioReadiness(false)');
-  assert.equal(h.get('group-pause').disabled,true);
-  assert.equal(h.get('group-play').disabled,true);
+  assert.equal(button.disabled,true);
 });
 
 test('group commands coalesce and cannot wake standby', async () => {
   const h = harness();
   let resolve, count = 0;
   h.context.reply = () => { count++; return new Promise(r => {resolve=r;}); };
+  const row = h.run('volumeRow({entity_id:"media_player.wohnung",volume:0.4,state:"playing"},{},true)');
+  const button = row.children[3].children[1];
   h.run('api=reply; updateSong=async()=>{}; radioReadyForViews=true; groupTransport={can_pause:true}; strictStandby=true');
   await h.run('controlGroup("pause")');
   assert.equal(count,0);
@@ -147,10 +153,10 @@ test('group commands coalesce and cannot wake standby', async () => {
   const first = h.run('controlGroup("pause")');
   await h.run('controlGroup("pause")');
   assert.equal(count,1);
-  assert.equal(h.get('group-pause').disabled,true);
+  assert.equal(button.disabled,true);
   resolve({});
   await first;
-  assert.equal(h.get('group-pause').disabled,true);
+  assert.equal(button.disabled,true);
 });
 
 test('playback reply from before group command cannot restore old control state', async () => {

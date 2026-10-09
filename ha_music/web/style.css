@@ -138,10 +138,10 @@ html.ha-dashboard-card .player-row>span:first-child,
 html.ha-dashboard-card .player-row>span:nth-of-type(2){color:var(--muted)}
 
 /* Dashboard configuration and resource setup */
-.group-transport{display:flex;flex-wrap:wrap;align-items:center;gap:10px;padding:14px;border:1px solid var(--border);border-radius:18px;background:var(--surface);margin-bottom:12px}
-.group-transport>span,.group-transport>small{flex-basis:100%}
-.group-transport>small{color:var(--muted)}
-.group-transport button{padding:10px 14px;border-radius:9px;background:var(--accent);color:var(--bg)}
+.player-row.master-row{grid-template-columns:76px minmax(0,1fr) 47px}
+.master-controls{grid-column:1;grid-row:2;display:flex;align-items:center;gap:4px}
+.player-row button.master-transport::after{display:none}
+.master-transport svg{display:block;width:22px;height:22px}
 .speaker-list .player-row{grid-template-columns:80px minmax(0,1fr) 47px}
 .speaker-list .player-row button{width:78px;font-size:13px;border-color:var(--border);background:#275276}
 .speaker-list .player-row button.is-muted{background:var(--bg);color:var(--muted)}

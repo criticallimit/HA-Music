@@ -76,12 +76,18 @@ let volumeRequests = 0;
 let transportPending = false;
 let transportEpoch = 0;
 let groupTransport = null;
+let masterTransportButton = null;
 function renderGroupTransport() {
-  $("group-play").disabled = !radioReadyForViews || transportPending || !groupTransport?.can_play;
-  $("group-pause").disabled = !radioReadyForViews || transportPending || !groupTransport?.can_pause;
-  $("group-transport-state").textContent = transportPending ? "Gruppenbefehl wird gesendet …" :
-    groupTransport?.state === "playing" ? "Gruppe spielt" :
-    groupTransport?.state === "paused" ? "Gruppe pausiert" : "Gruppensteuerung derzeit nicht verfügbar";
+  if (!masterTransportButton) return;
+  const pause = groupTransport?.state === "playing";
+  masterTransportButton.disabled = !radioReadyForViews || transportPending || !(pause ? groupTransport?.can_pause : groupTransport?.can_play);
+  const label = transportPending ? "Gruppenbefehl wird gesendet …" :
+    masterTransportButton.disabled ? "Gruppensteuerung derzeit nicht verfügbar" :
+    pause ? "Gesamte Gruppe pausieren" : "Gesamte Gruppe fortsetzen";
+  masterTransportButton.setAttribute("aria-label", label);
+  masterTransportButton.title = label;
+  masterTransportButton.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round">' +
+    (pause ? '<path d="M8 5v14M16 5v14" stroke-linecap="round"/>' : '<path d="m8 5 11 7-11 7Z"/>') + '</svg>';
 }
 async function controlGroup(command) {
   if (strictStandby || !radioReadyForViews || transportPending || !groupTransport?.["can_" + command]) return;
@@ -102,8 +108,6 @@ async function controlGroup(command) {
     if (generation === uiGeneration && radioReadyForViews) updateSong();
   }
 }
-$("group-play").addEventListener("click", () => controlGroup("play"));
-$("group-pause").addEventListener("click", () => controlGroup("pause"));
 let radioEventSource = null;
 function show(page) {
   const radio = page === "radio";
@@ -530,7 +534,19 @@ function volumeRow(p, remembered, master) {
         finally { volumeRequests--; slider.disabled = mute.disabled = false; refreshPlayers(); }
       });
 
-  row.append(title,slider,label,mute);
+  if (master) {
+    row.classList.add("master-row");
+    const controls = document.createElement("div"); controls.className = "master-controls";
+    masterTransportButton = document.createElement("button");
+    masterTransportButton.type = "button";
+    masterTransportButton.className = "master-transport";
+    masterTransportButton.addEventListener("click", () => controlGroup(groupTransport?.state === "playing" ? "pause" : "play"));
+    controls.append(mute, masterTransportButton);
+    row.append(title,slider,label,controls);
+    renderGroupTransport();
+  } else {
+    row.append(title,slider,label,mute);
+  }
   return row;
 }
 async function refresh() {
@@ -551,6 +567,7 @@ async function refreshPlayers() {
     const {players,groups,remembered,saved_levels} = await api("players");
     if (generation !== uiGeneration || !radioReadyForViews || volumeRequests) return;
     const master = masterView(groups, players, saved_levels);
+    masterTransportButton = null;
     $("master-volume").replaceChildren();
     if (master) $("master-volume").appendChild(volumeRow(master, remembered, true));
     else $("master-volume").textContent = "Master-Lautstärke nicht verfügbar";
