@@ -223,3 +223,9 @@ Sicherung davor: [backup/main-2026-10-09-before-immediate-covers-9b51d91](https:
 Playlist-Kacheln zeigen ein lokal eingebettetes Apple-Logo mit 14% Deckkraft hinter dem lesbaren Namen. Aktive Radio-, Playlist- und Albumkacheln behalten die normale Fläche und werden mit einem Rand in der bisherigen Akzentfarbe markiert; der Albumrand liegt über dem Cover. Playlist- und Albumbereiche sind bündig mit den Lautstärkekarten ausgerichtet. Mobile Ansicht und quadratische Albumcover bleiben erhalten. Das Logo benötigt keine Netzwerkanfrage. SVG-Quelle: [Simple Icons Apple](https://github.com/simple-icons/simple-icons/blob/develop/icons/apple.svg).
 
 Sicherung davor: [backup/main-2026-10-09-before-library-style-a81ca6a](https://github.com/criticallimit/HA-Music/tree/backup/main-2026-10-09-before-library-style-a81ca6a), Commit `a81ca6a7e5474130bc906eff6abf40b14e83c11f`.
+
+### Kompakte Kopfzeile
+
+Radio und Apple Music stehen als getrennte Buttons mit etwas Abstand. Der aktive Tab verwendet einen Akzentrand statt einer farbigen Fläche, auch in der Dashboard-Karte. Die Kopfzeile ist niedriger, die rechten Bedienelemente sind kleiner und deaktivierte Ein-/Aus-Buttons deutlich abgedimmt. Die bestehende Aktivierung der Bedienelemente bleibt unverändert.
+
+Sicherung davor: [backup/main-2026-10-09-before-compact-header-8d07aa1](https://github.com/criticallimit/HA-Music/tree/backup/main-2026-10-09-before-compact-header-8d07aa1), Commit `8d07aa1f4162b10726f00ed4a016bfc3f9c2faf3`.

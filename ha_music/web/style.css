@@ -4,14 +4,15 @@
 body{margin:0;background:var(--bg);color:var(--text)}
 button,input{font:inherit}button{cursor:pointer;color:inherit;border:0}button:disabled{opacity:.52;cursor:not-allowed}
 .shell{width:min(1460px,100%);margin:0 auto;padding:14px 28px}
-header{display:grid;grid-template-columns:minmax(0,1fr) auto minmax(0,1fr);align-items:center;gap:12px;min-height:62px;margin-bottom:14px}
-nav{grid-column:2;display:flex;justify-self:center;align-items:center;gap:4px;background:var(--surface);border:1px solid var(--border);border-radius:13px;padding:4px}
-nav button{padding:9px 16px;border:1px solid transparent;border-radius:9px;background:transparent;color:#b5c0ce;font-size:14px;font-weight:600}
+header{display:grid;grid-template-columns:minmax(0,1fr) auto minmax(0,1fr);align-items:center;gap:12px;min-height:48px;margin-bottom:10px}
+nav{grid-column:2;display:flex;justify-self:center;align-items:center;gap:12px;background:transparent;border:0;padding:0}
+nav button{padding:7px 14px;border:1px solid var(--border);border-radius:10px;background:var(--surface);color:#b5c0ce;font-size:14px;font-weight:600}
 nav button:hover:not(:disabled){background:#2c3540}
-nav button.active{background:#275276;border-color:#4d8bb8;color:#fff}
+nav button.active{background:var(--surface);border-color:var(--accent);box-shadow:inset 0 0 0 2px var(--accent);color:var(--text)}
 .power-buttons{grid-column:3;justify-self:end;display:flex;gap:8px}
-.power-buttons button{width:48px;height:48px;border-radius:14px;font-size:27px;line-height:1;background:var(--surface);border:1px solid var(--border);color:#8999a9}
+.power-buttons button{width:40px;height:40px;border-radius:11px;font-size:25px;line-height:1;background:var(--surface);border:1px solid var(--border);color:#8999a9}
 .power-buttons button:hover:not(:disabled){background:#2c3540}
+.power-buttons button:disabled{opacity:.22}
 .dashboard{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:14px;align-items:start}
 .now{position:relative;min-width:0;width:100%;height:720px;overflow:hidden;border-radius:24px;clip-path:inset(0 round 24px);isolation:isolate;background:#303237}
 .art{position:absolute;inset:0 0 24px;min-width:0;min-height:0;background:#fff;display:flex;align-items:center;justify-content:center;overflow:hidden}
@@ -79,9 +80,10 @@ nav button.active{background:#275276;border-color:#4d8bb8;color:#fff}
 @media(max-width:550px){
  header{grid-template-columns:minmax(0,1fr) auto;gap:9px}
  header nav{grid-column:1;grid-row:1;justify-self:start}
- nav button{padding:8px 10px;font-size:13px}
+ header nav{gap:8px}
+ nav button{padding:7px 8px;font-size:12px}
  .power-buttons{grid-column:2;grid-row:1;gap:5px}
- .power-buttons button{width:40px;height:40px;font-size:24px}
+ .power-buttons button{width:34px;height:34px;font-size:22px}
  .now{height:330px}
  .now-overlay{min-height:172px;padding:34px 16px 12px}
  .now-ticker{font-size:15px}
@@ -92,12 +94,12 @@ nav button.active{background:#275276;border-color:#4d8bb8;color:#fff}
 
 /* Classic IEC-style distinct I / O controls, matching the approved concept A. */
 .power-buttons button{display:flex;align-items:center;justify-content:center;background:#20252d}
-.power-buttons .power-icon{display:block;font-family:Arial,Helvetica,sans-serif;font-size:30px;font-weight:650;line-height:1}
+.power-buttons .power-icon{display:block;font-family:Arial,Helvetica,sans-serif;font-size:26px;font-weight:650;line-height:1}
 .power-buttons #power-on{color:#78e985;border-color:#34694b}
 .power-buttons #power-off{color:#f16e78;border-color:#72414b}
 .power-buttons #power-on:not(:disabled):hover{background:#213b30}
 .power-buttons #power-off:not(:disabled):hover{background:#3b262b}
-@media(max-width:550px){.power-buttons .power-icon{font-size:26px}}
+@media(max-width:550px){.power-buttons .power-icon{font-size:23px}}
 
 /* Standby hides playback controls until startup or read-only recovery releases them. */
 .radio-standby{grid-column:1/-1;min-height:min(720px,65vh);display:flex;align-items:center;justify-content:center;flex-direction:column;gap:18px;color:#8496a9}
@@ -137,7 +139,6 @@ html.ha-dashboard-card nav button:hover:not(:disabled){background:var(--secondar
 html.ha-dashboard-card .master-volume,
 html.ha-dashboard-card .speaker-list .player-row,
 html.ha-dashboard-card .station,
-html.ha-dashboard-card nav,
 html.ha-dashboard-card .power-buttons button{
   background:var(--surface);border-color:var(--border);
   color:var(--text);
@@ -146,7 +147,7 @@ html.ha-dashboard-card .station.active{
   background:var(--surface);color:var(--text);border-color:var(--accent);
 }
 html.ha-dashboard-card nav button.active{
-  background:var(--accent);color:var(--text);border-color:var(--accent);
+  background:var(--surface);color:var(--text);border-color:var(--accent);
 }
 html.ha-dashboard-card .player-row>span:first-child,
 html.ha-dashboard-card .player-row>span:nth-of-type(2){color:var(--muted)}
@@ -157,7 +158,7 @@ html.ha-dashboard-card .player-row>span:nth-of-type(2){color:var(--muted)}
 .master-transport svg{display:block;width:22px;height:22px}
 .header-actions{grid-column:3;justify-self:end;display:flex;align-items:center;gap:10px}
 .header-actions .power-buttons{grid-column:auto}
-.settings-toggle{display:flex;align-items:center;justify-content:center;width:43px;height:43px;border-radius:13px;background:var(--surface);border:1px solid var(--border);font-size:24px;color:var(--muted)}
+.settings-toggle{display:flex;align-items:center;justify-content:center;width:40px;height:40px;border-radius:11px;background:var(--surface);border:1px solid var(--border);font-size:24px;color:var(--muted)}
 .settings-toggle:hover{color:var(--text);background:#2c3540}
 .dashboard-settings{width:min(560px,calc(100vw - 30px));max-height:90vh;overflow:auto;padding:24px;border-radius:18px;border:1px solid var(--border);background:var(--surface);color:var(--text);box-shadow:0 22px 65px #0009;font-family:inherit}
 .dashboard-settings::backdrop{background:#070a10bb}
@@ -173,7 +174,7 @@ html.ha-dashboard-card .player-row>span:nth-of-type(2){color:var(--muted)}
 .settings-actions{display:flex;margin-top:16px}
 .settings-note{font-size:13px}
 #settings-feedback{min-height:18px}
-@media(max-width:550px){.header-actions{grid-column:2;grid-row:1;gap:5px}.settings-toggle{height:40px;width:40px;font-size:21px}.resource-line{flex-wrap:wrap}.resource-line input{flex-basis:100%}}
+@media(max-width:550px){.header-actions{grid-column:2;grid-row:1;gap:5px}.settings-toggle{height:34px;width:34px;font-size:19px}.resource-line{flex-wrap:wrap}.resource-line input{flex-basis:100%}}
 
 /* Respect the host dashboard palette while retaining station artwork colors. */
 html.ha-dashboard-card .power-buttons button{background:var(--surface)}
