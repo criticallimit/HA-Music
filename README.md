@@ -29,10 +29,10 @@ Direkt neben dem Lautsprechersymbol des Masters sitzt ein gleich großes **Play/
 
 1. Nach dieser Änderung das Add-on-Repository aktualisieren und HA Music **neu aufbauen**.
 2. HA Music einmal über den lokalen Einschaltbutton starten. Nach der 50-Sekunden-Wartezeit werden alle registrierten Alexa-Media-Player in der Add-on-Konfiguration ergänzt.
-3. **Add-on → Konfiguration** neu öffnen. Unter **Alexa-Geräte** beim gewünschten Eintrag den **Stift** öffnen und **In Ingress anzeigen und steuern** an-/ausschalten. **Nicht löschen**: Bei Aus bleibt das Gerät zur späteren Aktivierung in der Liste. Bei Bedarf sind Entity-ID und Anzeigename editierbar; die Entity muss in einer unterstützten Alexa-Integration registriert sein.
+3. **Add-on → Konfiguration** neu öffnen. Unter **Alexa-Geräte** beim gewünschten Eintrag den **Stift** öffnen und **HA-Music-Status** auf **Aktiv** oder **Inaktiv** setzen. **Nicht löschen**: Bei Inaktiv bleibt das Gerät zur späteren Aktivierung in der Liste. Bei Bedarf sind Entity-ID und Anzeigename editierbar; die Entity muss in einer unterstützten Alexa-Integration registriert sein.
 4. **Speichern** und das Add-on **neu starten**. Anschließend HA Music wieder lokal einschalten.
 
-Wohnung, Wohnzimmer, Küche und Bad bleiben als bisherige Geräte standardmäßig aktiviert. Weitere neu gefundene Geräte sind zunächst deaktiviert. Gespeicherte Ein-/Aus-Schalter, Anzeigenamen und zeitweise nicht gefundene Geräte bleiben erhalten. Eine leere Geräteauswahl aktiviert keine Geräte automatisch.
+Wohnung, Wohnzimmer, Küche und Bad bleiben als bisherige Geräte standardmäßig aktiviert. Weitere neu gefundene Geräte sind zunächst deaktiviert. Gespeicherte Geräteauswahl und Anzeigenamen und zeitweise nicht gefundene Geräte bleiben erhalten. Eine leere Geräteauswahl aktiviert keine Geräte automatisch.
 
 Deaktivierte Geräte erscheinen weder als Raumregler noch als Gruppe in Ingress. Sie erhalten keine 1%-Probe, Master-Angleichung, `update_entity`- oder manuellen Lautstärkebefehle durch HA Music. Das Einschalten eines Eintrags schaltet das physische Gerät nicht ein: Ein nicht verfügbares Gerät wird als nicht verfügbar angezeigt. Der gemeinsame Radioschalter und die tatsächliche Alexa-Gruppenmitgliedschaft bleiben eigenständig.
 
@@ -42,7 +42,7 @@ Ein ausgeschalteter Echo Dot oder ein Fire TV wird ebenfalls ergänzt, sofern se
 
 Die Erkennung unterscheidet Geräte über ihre Entity-ID. Zwei gleich benannte Fire TVs werden daher getrennt ergänzt. Auch „This Device“ wird berücksichtigt, sofern ein Media-Player-Eintrag vorhanden ist. Im Add-on-Protokoll zeigt `Alexa discovery: ... media players` die gefundenen IDs; die anschließende Zeile `Device configuration: ... entries` bestätigt den gespeicherten Katalog. Zum Erkennen neuer Geräte muss mindestens eine Entität des betreffenden Alexa-Kontos geladen sein; bestehende Konfigurationseinträge bleiben erhalten, wenn die Integration vollständig deaktiviert ist. Fehlende Media-Player-Einträge werden nicht künstlich erfunden.
 
-Die Liste mit Stift/Papierkorb wird vom Home-Assistant-Konfigurationsformular vorgegeben. Das Add-on kann dort keine eigenen An/Aus-Schalter direkt neben den Zeilen einsetzen. Der vorhandene An/Aus-Schalter befindet sich im Bearbeitungsdialog. Ausschalten der Anzeige verhindert HA-Music-Befehle, entfernt das Gerät aber nicht aus einer Alexa-Multiroom-Gruppe: Alexa kann den Gruppenstream weiterhin an dieses Gerät senden.
+Die Liste mit Stift/Papierkorb wird vom Home-Assistant-Konfigurationsformular vorgegeben. Das Add-on kann dort keine eigenen An/Aus-Schalter direkt neben den Zeilen einsetzen. Im Bearbeitungsdialog steht stattdessen die Auswahl Aktiv/Inaktiv bereit. Ausschalten der Anzeige verhindert HA-Music-Befehle, entfernt das Gerät aber nicht aus einer Alexa-Multiroom-Gruppe: Alexa kann den Gruppenstream weiterhin an dieses Gerät senden.
 
 ## Entwicklung und Prüfung
 
@@ -60,3 +60,5 @@ node --check ha_music/lovelace/ha-music-card-loader.js
 ```
 
 Die CI führt diese Prüfungen bei Push auf `main` aus. Entwicklung direkt auf `main`; Releases nur nach ausdrücklicher Freigabe. Befunde, Änderungen, Testumfang und verbleibende Risiken: [Codeprüfung vom 9. Oktober 2026](AUDIT.md).
+
+Alte Gerätewerte `enabled: true/false` bleiben beim Umstieg gültig. Beim nächsten Einschalten werden sie automatisch in `status: Aktiv/Inaktiv` umgewandelt und aus der gespeicherten Liste entfernt. Anschließend die Konfigurationsseite neu öffnen. Das optionale Feld „Bisherige Auswahl“ dient nur der Kompatibilität; wenn ein HA-Music-Status gesetzt ist, gilt dieser. Neu erkannte Geräte erhalten `Inaktiv`.

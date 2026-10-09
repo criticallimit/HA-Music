@@ -24,19 +24,20 @@ options:
   devices:
     - entity_id: media_player.wohnung
       name: Wohnung
-      enabled: true
+      status: Aktiv
     - entity_id: media_player.wohnzimmer
       name: Wohnzimmer
-      enabled: true
+      status: Aktiv
     - entity_id: media_player.kueche
       name: Küche
-      enabled: true
+      status: Aktiv
     - entity_id: media_player.bad
       name: Bad
-      enabled: true
+      status: Aktiv
 schema:
   show_dashboard_setup: bool
   devices:
     - entity_id: "match(^media_player\\.[a-z0-9_]+$)"
       name: str
-      enabled: bool
+      status: "list(Aktiv|Inaktiv)?"
+      enabled: "bool?"

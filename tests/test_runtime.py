@@ -479,15 +479,16 @@ class DeviceConfigurationTests(unittest.TestCase):
         self.assertTrue(all(p["state"] == "unavailable" for p in found))
         config = app.merge_discovered_devices({"devices": []}, found)
         self.assertEqual(len(config["devices"]), 3)
-        self.assertTrue(all(not entry["enabled"] for entry in config["devices"]))
+        self.assertTrue(all(entry["status"] == "Inaktiv" for entry in config["devices"]))
 
     def test_new_devices_are_disabled_and_existing_settings_unchanged(self):
         initial = {"show_dashboard_setup": True, "devices": [
             {"entity_id": "media_player.wohnzimmer", "name": "Mein Name", "enabled": False},
             {"entity_id": "media_player.altes_geraet", "name": "Später wieder da", "enabled": True}]}
         merged = app.merge_discovered_devices(initial, self.found)
-        self.assertEqual(merged["devices"][:2], initial["devices"])
-        self.assertTrue(all(not entry["enabled"] for entry in merged["devices"][2:]))
+        self.assertEqual([entry["name"] for entry in merged["devices"][:2]], [entry["name"] for entry in initial["devices"]])
+        self.assertEqual([entry["status"] for entry in merged["devices"][:2]], ["Inaktiv", "Aktiv"])
+        self.assertTrue(all(entry["status"] == "Inaktiv" for entry in merged["devices"][2:]))
         self.assertEqual(len(initial["devices"]), 2)
         self.assertTrue(merged["show_dashboard_setup"])
 
@@ -497,7 +498,7 @@ class DeviceConfigurationTests(unittest.TestCase):
         with patch.object(app, "detected_devices", return_value=self.found), patch.object(app, "supervisor_request", side_effect=[{"options": initial}, {"options": latest}, {}]) as request:
             SYNCHRONIZE(10)
         posted = request.call_args_list[-1].args[1]["options"]
-        self.assertEqual(posted["devices"][0], latest["devices"][0])
+        self.assertEqual(posted["devices"][0], {"entity_id": "media_player.wohnzimmer", "name": "Neu", "status": "Inaktiv"})
         self.assertTrue(posted["show_dashboard_setup"])
         self.assertEqual(app.options(), posted)
 
@@ -506,6 +507,27 @@ class DeviceConfigurationTests(unittest.TestCase):
         with patch.object(app, "detected_devices", return_value=self.found), patch.object(app, "supervisor_request", return_value={"options": config}) as request:
             SYNCHRONIZE(10)
         self.assertEqual(request.call_count, 1)
+
+    def test_status_selection_filters_devices_and_overrides_legacy_value(self):
+        self.config([{"entity_id": "media_player.wohnzimmer", "name": "Wohnzimmer", "status": "Aktiv", "enabled": False},
+                     {"entity_id": "media_player.bad", "name": "Bad", "status": "Inaktiv", "enabled": True}])
+        self.assertEqual(app.enabled_device_ids(), {"media_player.wohnzimmer"})
+        with patch.object(app, "detected_devices", return_value=self.found):
+            self.assertEqual(app.allowed_entities(), {"media_player.wohnzimmer"})
+
+    def test_legacy_migration_preserves_selection_names_and_missing_devices(self):
+        initial = {"devices": [{"entity_id": "media_player.reserve", "name": "Mein Reservegerät", "enabled": False},
+                               {"entity_id": "media_player.wohnzimmer", "name": "Mein Wohnzimmer", "enabled": True}]}
+        merged = app.merge_discovered_devices(initial, [])
+        self.assertEqual(merged, {"devices": [{"entity_id": "media_player.reserve", "name": "Mein Reservegerät", "status": "Inaktiv"},
+                                             {"entity_id": "media_player.wohnzimmer", "name": "Mein Wohnzimmer", "status": "Aktiv"}]})
+        self.assertIn("enabled", initial["devices"][0])
+        self.assertEqual(app.merge_discovered_devices(merged, []), merged)
+
+    def test_invalid_status_cannot_fall_back_to_legacy_true(self):
+        for value in ("true", "false", "", None, True):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                app.configured_devices({"devices": [{"entity_id": "media_player.bad", "name": "Bad", "status": value, "enabled": True}]})
 
     def test_sync_never_uses_network_in_standby(self):
         app.STANDBY.set()

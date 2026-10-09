@@ -7,7 +7,7 @@ configuration:
     description: >-
       Detected devices are added when you turn on HA Music, including unavailable devices.
       This includes registered Echo Dots and Fire TVs. New devices are disabled initially.
-      Use the pencil to change "Show and control in Ingress", rather than deleting the entry.
+      Use the pencil to select the HA Music status Aktiv (active) or Inaktiv (inactive), rather than deleting the entry.
       Hidden devices remain in this list. Save changes and restart the add-on.
     fields:
       entity_id:
@@ -16,9 +16,15 @@ configuration:
       name:
         name: Device name
         description: Display name in the device list and HA Music.
-      enabled:
-        name: Show and control in Ingress
+      status:
+        name: HA Music status
         description: >-
-          On shows the device in HA Music and allows HA Music control commands.
-          Off hides it and prevents these commands without deleting the entry.
+          Aktiv shows the device in Ingress and allows HA Music commands.
+          Inaktiv hides it and prevents these commands without deleting the entry.
           Power supply and Alexa group membership are unaffected.
+      enabled:
+        name: Previous selection (automatically migrated)
+        description: >-
+          Only for older configurations. The next power-on converts this value
+          to Aktiv or Inaktiv. An explicitly selected HA Music status takes precedence;
+          the previous selection is removed.

@@ -107,9 +107,17 @@ def configured_devices(config=None):
         if not isinstance(entry, dict):
             raise ValueError("Ungültiger Geräteeintrag")
         entity = entry.get("entity_id")
-        if not isinstance(entity, str) or not ENTITY_RE.fullmatch(entity) or entity in result or type(entry.get("enabled")) is not bool:
+        if not isinstance(entity, str) or not ENTITY_RE.fullmatch(entity) or entity in result:
             raise ValueError("Ungültige oder doppelte Geräte-Entity")
-        result[entity] = entry
+        if "status" in entry:
+            if entry["status"] not in ("Aktiv", "Inaktiv"):
+                raise ValueError("Ungültiger Gerätestatus: Aktiv oder Inaktiv auswählen")
+            enabled = entry["status"] == "Aktiv"
+        elif type(entry.get("enabled")) is bool:
+            enabled = entry["enabled"]
+        else:
+            raise ValueError("Gerätestatus fehlt")
+        result[entity] = {**entry, "enabled": enabled}
     return result
 
 
@@ -122,10 +130,13 @@ def merge_discovered_devices(config, found):
     merged = deepcopy(config)
     known = configured_devices(config)
     entries = merged.setdefault("devices", [])
+    for entry in entries:
+        entry["status"] = "Aktiv" if known[entry["entity_id"]]["enabled"] else "Inaktiv"
+        entry.pop("enabled", None)
     for device in sorted(found, key=lambda item: item["entity_id"]):
         entity = device["entity_id"]
         if entity not in known:
-            entries.append({"entity_id": entity, "name": device["name"], "enabled": False})
+            entries.append({"entity_id": entity, "name": device["name"], "status": "Inaktiv"})
             known[entity] = entries[-1]
     return merged
 

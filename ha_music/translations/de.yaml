@@ -7,7 +7,7 @@ configuration:
     description: >-
       Erkannte Geräte werden beim Einschalten von HA Music ergänzt, auch wenn sie nicht verfügbar sind.
       Dazu gehören registrierte Echo Dots und Fire TVs. Neue Geräte sind zunächst deaktiviert.
-      Zum An/Aus-Schalten den Stift öffnen und "In Ingress anzeigen und steuern" ändern, nicht den Papierkorb verwenden.
+      Zum Ändern den Stift öffnen und den HA-Music-Status auf Aktiv oder Inaktiv setzen, nicht den Papierkorb verwenden.
       Ausgeblendete Geräte bleiben in dieser Liste. Anschließend speichern und das Add-on neu starten.
     fields:
       entity_id:
@@ -16,9 +16,15 @@ configuration:
       name:
         name: Gerätename
         description: Angezeigter Name in der Geräteliste und in HA Music.
-      enabled:
-        name: In Ingress anzeigen und steuern
+      status:
+        name: HA-Music-Status
         description: >-
-          An zeigt das Gerät in HA Music und erlaubt HA-Music-Steuerbefehle.
-          Aus blendet es aus und verhindert diese Befehle, ohne den Eintrag zu löschen.
+          Aktiv zeigt das Gerät in Ingress und erlaubt HA-Music-Steuerbefehle.
+          Inaktiv blendet es aus und verhindert diese Befehle, ohne den Eintrag zu löschen.
           Die Stromversorgung und die Alexa-Gruppenmitgliedschaft bleiben unverändert.
+      enabled:
+        name: Bisherige Auswahl (wird automatisch übernommen)
+        description: >-
+          Nur für ältere Konfigurationen. Beim nächsten Einschalten wird dieser Wert
+          in Aktiv oder Inaktiv übernommen. Wenn der HA-Music-Status bereits gewählt
+          ist, gilt dieser; die bisherige Auswahl wird entfernt.
