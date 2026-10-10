@@ -1487,8 +1487,11 @@ def play_apple_album_track(favorite_id, track_id, generation, *, playlist=False)
     if track is None:
         raise ValueError("Titel gehört nicht zur gespeicherten Playlist" if playlist else "Titel gehört nicht zum gespeicherten Album")
     check_generation(generation)
-    command = "spiel " + track["name"] + " von " + track["artist"] + " auf Apple Music"
-    result = play_on_target(generation, selection["target"], "APPLE_MUSIC", command)
+    command = "spiel " + track["name"] + " von " + track["artist"]
+    print("[HA Music] Single track request: " + json.dumps({"title":track["name"],
+          "artist":track["artist"], "target":selection["target"], "media_type":"custom",
+          "command":command}, ensure_ascii=False), flush=True)
+    result = play_on_target(generation, selection["target"], "custom", command)
     favorite = next(item for item in selection["items"] if item["id"] == favorite_id)
     with STATE_LOCK:
         check_generation(generation)

@@ -969,7 +969,7 @@ class RuntimeTests(unittest.TestCase):
         identity = item["tracks"][0]["id"]
         with patch.object(app, "play_on_target", return_value={}) as play:
             app.perform("apple_playlist_track", {"favorite":item["id"], "track_id":identity})
-            self.assertEqual(play.call_args.args[3], "spiel Song von Singer auf Apple Music")
+            self.assertEqual(play.call_args.args[2:], ("custom", "spiel Song von Singer"))
             self.assertEqual(app.ACTIVE_APPLE["name"], "Song")
             with self.assertRaises(ValueError):
                 app.perform("apple_playlist_track", {"favorite":item["id"], "track_id":identity+1})
@@ -994,6 +994,30 @@ class RuntimeTests(unittest.TestCase):
                 app.save_library({"items":entries,"revision":snapshot["revision"]})
         self.assertEqual(app.library_snapshot(), snapshot)
 
+    def test_single_playlist_and_album_titles_send_exact_spoken_command_for_both_alexa_integrations(self):
+        app.READY = True
+        track = {"id":91, "name":"Über den Wolken (Live)", "artist":"Reinhard Mey"}
+        for kind in ("Playlist", "Album"):
+            favorite = self.apple_favorite(kind)
+            action = "apple_playlist_track" if kind == "Playlist" else "apple_album_track"
+            lookup = "playlist_tracks" if kind == "Playlist" else "album_tracks"
+            for integration in ("alexa_media", "alexa_devices"):
+                with self.subTest(kind=kind,integration=integration):
+                    app.INVENTORY_CACHE = (time.monotonic(), {integration:["media_player.wohnzimmer"]})
+                    device = "b"*32
+                    replies = [json.dumps({"domain":"alexa_devices", "device_id":device}), {}] if integration == "alexa_devices" else [{}]
+                    with patch.object(app, lookup, return_value={"tracks":[track]}), patch.object(app, "ha_request", side_effect=replies) as request:
+                        app.perform(action, {"favorite":favorite, "track_id":91})
+                    command = "spiel Über den Wolken (Live) von Reinhard Mey"
+                    if integration == "alexa_devices":
+                        self.assertEqual(request.call_count,2)
+                        self.assertEqual(request.call_args.args,("/services/alexa_devices/send_text_command",{
+                            "device_id":device,"text_command":command}))
+                    else:
+                        request.assert_called_once_with("/services/media_player/play_media", {
+                            "entity_id":"media_player.wohnzimmer", "media":{
+                                "media_content_type":"custom", "media_content_id":command, "metadata":{}}})
+                    self.assertEqual(app.ACTIVE_APPLE["name"], track["name"])
     def test_playlist_import_http_accepts_exports_over_64kb_but_remains_bounded(self):
         content = "Name\tArtist\n" + ("N"*180 + "\t" + "A"*180 + "\n")*200
         payload = json.dumps({"content":content}).encode()

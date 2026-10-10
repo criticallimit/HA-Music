@@ -363,3 +363,17 @@ die fehlgeschlagene Sortierung gemeldet.
 
 Sicherung davor:
 [backup/main-2026-10-10-favorite-order-c918c45](https://github.com/criticallimit/HA-Music/tree/backup/main-2026-10-10-favorite-order-c918c45), Commit `c918c455454d98ab1a4897bbdb71f368ab68c37a`.
+
+## Einzelne Titel als Alexa-Textbefehl
+
+Einzeltitel aus Playlists und Alben werden als **`spiel <Titel> von <Interpret>`**
+übergeben, mit den unveränderten gespeicherten Titel- und Interpretenangaben.
+Alexa Media Player erhält den Medientyp `custom`, Alexa Devices den Dienst
+`send_text_command`. Der Text wird dadurch als Sprachbefehl übergeben und enthält
+keinen Musikdienst- oder Gruppenzusatz. Ganze Playlists und Alben verwenden ihre
+bisherigen Befehle. Im Add-on-Protokoll steht unter `Single track request` der
+genaue gesendete Text; die tatsächlich von Alexa gewählte Aufnahme muss live
+geprüft werden.
+
+Sicherung davor:
+[backup/main-2026-10-10-track-command-5f1f6d6](https://github.com/criticallimit/HA-Music/tree/backup/main-2026-10-10-track-command-5f1f6d6), Commit `5f1f6d6c8a668f780d4333a9ca2ae1b7f0557390`.
