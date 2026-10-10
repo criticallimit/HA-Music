@@ -273,3 +273,15 @@ Sicherung davor: [backup/main-2026-10-09-before-custom-list-names-0ec281a](https
 Das Bearbeitungsfenster enthält jetzt zwei sichtbare Eingabefelder: Anzeigename und Text an Alexa. Der vollständige Text wird als command dauerhaft in der lokalen Bibliothek gespeichert und exakt über custom bzw. den offiziellen Alexa-Textservice gesendet. Keine automatischen Präfixe, Suffixe, Dienst-/Gruppen-/Shuffle-Zusätze und keine automatischen Wiederholungen. Der gespeicherte Text wird auch beim normalen Wiederanlauf verwendet. Alte Einträge ohne command behalten ihren bisherigen generierten Befehl; das Fenster zeigt ihn als editierbaren Text. Neues command-Feld ist unabhängig vom Namen und vom internen Cover-Suchnamen. Ändern allein des Befehls erhält die Favoriten-ID und Cover-Zuordnung. Leere/ungültige Texte oder widersprüchliche Duplikate werden vor Speicherung abgelehnt; Revisionsprüfung und dauerhafte Speicherung bleiben bestehen. Maximal 500 Zeichen, keine Zeilenumbrüche/Steuerzeichen. Lokales Speichern startet keine Wiedergabe, auch im Standby. Bestehende Radio-Presets unverändert.
 
 Sicherung davor: [backup/main-2026-10-09-before-editable-alexa-text-ac18388](https://github.com/criticallimit/HA-Music/tree/backup/main-2026-10-09-before-editable-alexa-text-ac18388), Commit `ac183883db4f6712881b2e6798b504ca6f43f26a`.
+
+## Lovelace-Kartengröße
+
+Im visuellen Karteneditor lassen sich **Breite (Pixel)** und **Höhe (Pixel)** unabhängig voneinander festlegen. Leere Felder bedeuten: Breite entsprechend dem Home-Assistant-Dashboard und Höhe automatisch passend zum Inhalt. Alternativ in YAML:
+
+```yaml
+type: custom:ha-music-card
+width: 800
+height: 620
+```
+
+Werte sind Pixelzahlen ohne `px` (Breite 200–4000, Höhe 200–5000). Die Breite wird auf die verfügbare Dashboard-Spaltenbreite begrenzt; sie kann keine schmalere Spalte vergrößern. Für eine feste Höhe muss der eingebettete Inhalt bei Bedarf innerhalb der Karte scrollen. Ohne feste Höhe bleibt die dynamische Messung aktiv.
