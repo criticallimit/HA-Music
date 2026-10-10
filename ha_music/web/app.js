@@ -570,20 +570,6 @@ async function submitLibraryEditor(event) {
     $("library-editor-feedback").textContent = "Speichern fehlgeschlagen: " + e.message;
   } finally { libraryEditorControls(false); }
 }
-$("music-assistant-sync").addEventListener("click", async () => {
-  const button = $("music-assistant-sync");
-  button.disabled = true;
-  $("music-assistant-sync-status").textContent = "Synchronisiere …";
-  try {
-    const result = await api("music-assistant-sync", {});
-    $("music-assistant-sync-status").textContent = result.imported + " Einträge übernommen";
-    libraryEpoch++;
-    const state = await api("radio-state");
-    if (state?.apple_music) renderAppleSelection(state.apple_music);
-  } catch (e) {
-    $("music-assistant-sync-status").textContent = "Import fehlgeschlagen: " + e.message;
-  } finally { button.disabled = false; }
-});
 $("apple-playlists-edit").addEventListener("click", () => openLibraryEditor("Playlist"));
 $("apple-albums-edit").addEventListener("click", () => openLibraryEditor("Album"));
 $("library-editor-add").addEventListener("click", () => { if (!libraryEditorBusy && libraryEditorSnapshot) addLibraryEditorRow(); });
@@ -638,7 +624,7 @@ function renderAppleSelection(selection) {
   }
   $("apple-library-note").textContent = items.length && !appleSelection.available && radioReadyForViews && !mediaPreparing
     ? "Apple-Music-Steuergerät unter Add-on → Konfiguration auswählen und unter Alexa-Geräte auf Aktiv setzen."
-    : "Playlists und Alben über Music Assistant importieren oder mit Plus manuell ergänzen. Apple Music muss in Alexa verknüpft sein.";
+    : "Playlists und Alben über das Plus neben der Überschrift verwalten. Dein Apple-Music-Konto muss in Alexa verknüpft sein.";
   queueAlbumCovers();
 }
 async function startAppleFavorite(id) {

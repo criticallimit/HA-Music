@@ -3,7 +3,6 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import unquote, urlsplit, urlencode
 from urllib.request import Request, urlopen
-from music_assistant_sync import sync_music_assistant, load_imported
 from http.client import HTTPException
 import json
 import hashlib
@@ -34,9 +33,6 @@ SESSION_FILE = Path(os.environ.get("SESSION_FILE", "/data/session.json"))
 SOURCE_FILE = Path(os.environ.get("SOURCE_FILE", "/data/last_source.json"))
 LIBRARY_FILE = Path(os.environ.get("LIBRARY_FILE", "/data/apple_music_library.json"))
 LIBRARY_LOCK = threading.RLock()
-MA_IMPORT_FILE = Path(os.environ.get("MA_IMPORT_FILE", "/data/music_assistant_import.json"))
-MA_SYNC_LOCK = threading.Lock()
-MA_SYNC_STATUS = {"last_success": None, "error": None}
 ARTWORK_FILE = Path(os.environ.get("ARTWORK_FILE", "/data/album_artwork.json"))
 ARTWORK_DIR = Path(os.environ.get("ARTWORK_DIR", "/data/album_covers"))
 ARTWORK_LOCK = threading.Lock()
@@ -1234,52 +1230,6 @@ def last_selected_station():
         return ""
 
 
-def refresh_music_assistant():
-    """Read-only import; never modifies manually entered Alexa commands."""
-    if STANDBY.is_set() or LAST_POWER != "on" or not READY or PREPARING:
-        raise ValueError("Music-Assistant-Synchronisierung nur bei eingeschaltetem HA Music möglich")
-    if not MA_SYNC_LOCK.acquire(blocking=False):
-        raise ValueError("Music-Assistant-Synchronisierung läuft bereits")
-    try:
-        config = options()
-        url = config.get("music_assistant_url", "").strip()
-        token = config.get("music_assistant_token", "").strip()
-        if not url or not token:
-            raise ValueError("Music Assistant URL und Zugriffstoken in der Add-on-Konfiguration eintragen")
-        items = sync_music_assistant(url, token)
-        if STANDBY.is_set() or LAST_POWER != "on":
-            raise ValueError("Synchronisierung wegen Standby verworfen")
-        with LIBRARY_LOCK:
-            with LOCK:
-                write_durable_json(MA_IMPORT_FILE, items)
-        MA_SYNC_STATUS.update(last_success=int(time.time()), error=None)
-        return {"imported": len(items), "last_success": MA_SYNC_STATUS["last_success"]}
-    except (OSError, RuntimeError, ValueError) as exc:
-        MA_SYNC_STATUS["error"] = str(exc)
-        raise
-    finally:
-        MA_SYNC_LOCK.release()
-
-
-def music_assistant_poll():
-    """Polling is paused completely in standby; failures keep last good snapshot."""
-    while True:
-        time.sleep(60)
-        if STANDBY.is_set() or LAST_POWER != "on" or not READY or PREPARING:
-            continue
-        config = options()
-        if not config.get("music_assistant_url") or not config.get("music_assistant_token"):
-            continue
-        if MA_SYNC_STATUS["last_success"] and time.time() - MA_SYNC_STATUS["last_success"] < 1800:
-            continue
-        try:
-            refresh_music_assistant()
-        except (OSError, RuntimeError, ValueError) as exc:
-            print("[HA Music] Music Assistant sync: " + str(exc), flush=True)
-            # Back off after failures; the cache remains untouched.
-            time.sleep(300)
-
-
 def apple_music_selection():
     """Local configured favorites; never accepts arbitrary browser commands."""
     config = options()
@@ -1291,10 +1241,7 @@ def apple_music_selection():
         group = ""
         target = ""
     items = []
-    manual = library_snapshot(config)["items"]
-    known = {(item["kind"], item["name"].casefold()) for item in manual}
-    imported = [item for item in load_imported(MA_IMPORT_FILE) if (item["kind"], item["name"].casefold()) not in known]
-    for favorite in manual + imported:
+    for favorite in library_snapshot(config)["items"]:
         item = dict(favorite)
         identity = {key:item[key] for key in ("name", "kind", "search")}
         item["id"] = hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()[:24]
@@ -1877,10 +1824,6 @@ class Handler(BaseHTTPRequestHandler):
         if name == "status" and "/api/" in path:
             return self.reply(200, {"radio": "direct_presets",
                                     "apple_music": "alexa_favorites", "backend": "connected" if TOKEN else "unavailable"})
-        if name == "music-assistant-status" and "/api/" in path:
-            config = options()
-            return self.reply(200, {"configured": bool(config.get("music_assistant_url") and config.get("music_assistant_token")),
-                                    "imported": len(load_imported(MA_IMPORT_FILE)), **MA_SYNC_STATUS})
         if name == "apple-library" and "/api/" in path:
             try:
                 return self.reply(200, library_snapshot())
@@ -1958,7 +1901,7 @@ class Handler(BaseHTTPRequestHandler):
             return self.reply(403, {"error": "Ingress only"})
         path = unquote(urlsplit(self.path).path)
         action = path.rsplit("/", 1)[-1]
-        if "/api/" not in path or action not in ("volume", "room_audio", "group_transport", "track_transport", "radio_direct", "apple_music", "radio_power", "selected_view", "dashboard_card_installed", "apple-library", "album-covers", "music-assistant-sync"):
+        if "/api/" not in path or action not in ("volume", "room_audio", "group_transport", "track_transport", "radio_direct", "apple_music", "radio_power", "selected_view", "dashboard_card_installed", "apple-library", "album-covers"):
             return self.reply(404, {"error": "Not found"})
         if self.headers.get("Sec-Fetch-Site") == "cross-site":
             return self.reply(403, {"error": "Cross-site request rejected"})
@@ -1968,8 +1911,6 @@ class Handler(BaseHTTPRequestHandler):
             body = json.loads(self.read_request_body(65536) if action == "apple-library" else self.read_request_body())
             if not isinstance(body, dict):
                 raise ValueError("Invalid body")
-            if action == "music-assistant-sync":
-                return self.reply(200, refresh_music_assistant())
             if action == "album-covers":
                 return self.reply(200, album_cover_search(body))
             if action == "apple-library":
@@ -2001,6 +1942,5 @@ if __name__ == "__main__":
     except NETWORK_ERRORS as exc:
         print(f"[HA Music] Device status migration pending: {exc}", flush=True)
     threading.Thread(target=radio_switch_monitor, daemon=True).start()
-    threading.Thread(target=music_assistant_poll, daemon=True).start()
     start_session_recovery()
     ThreadingHTTPServer(("0.0.0.0", PORT), Handler).serve_forever()
