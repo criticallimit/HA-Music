@@ -517,3 +517,22 @@ sichtbar und erhalten ebenfalls keine zusätzlichen Innenränder.
 Sicherung davor:
 [backup/main-2026-10-10-immediate-artwork-3ef0e0e](https://github.com/criticallimit/HA-Music/tree/backup/main-2026-10-10-immediate-artwork-3ef0e0e),
 Commit `3ef0e0e3d9e252658a97b4edc983bd84bddd3e6a`.
+
+
+## Senderbild beim Wechsel der Ansicht beibehalten
+
+Beim Wechsel zwischen Radio und Apple Music wird die Darstellung des laufenden
+Senders erneut aus der gewählten Quelle gesetzt. Bildmodus und Innenabstand
+gehören zum Senderlogo bzw. Albumcover und wechseln nicht mit der geöffneten
+Bibliothek. Dabei werden auch ältere Bildabstände ausdrücklich entfernt.
+
+Sicherung davor:
+[backup/main-2026-10-10-radio-view-artwork-f7b7c87](https://github.com/criticallimit/HA-Music/tree/backup/main-2026-10-10-radio-view-artwork-f7b7c87),
+Commit `f7b7c874908fb8538bdab5b20361d87bb8e1fff7`.
+
+
+Beim Albumstart erscheint das bekannte Cover schon beim Klick. Laufende
+Statusabfragen dürfen diese Vorschau nicht zurücksetzen. Nach Annahme des Befehls
+bleibt das bekannte Auswahlcover maßgeblich, auch wenn Alexa noch das vorherige
+Album meldet; die separate Albumprüfung zeigt solche Abweichungen weiterhin an.
+Ein fehlgeschlagener Start stellt die vorige Bildanzeige wieder her.

@@ -83,6 +83,7 @@ function harness() {
   function element() {
     const classes = new Set();
     return {hidden:false, disabled:false, textContent:'', value:'', children:[], attributes:{}, listeners:{},
+      get src(){return this.attributes.src;},set src(value){this.attributes.src=value;if(this.onload)this.onload();},
       open:false, showModal(){this.open=true;}, close(){this.open=false;}, remove(){this.removed=true;},
       classList:{toggle(name,on){if(on) classes.add(name); else classes.delete(name);},add(name){classes.add(name);},remove(name){classes.delete(name);},contains(name){return classes.has(name);}}, style:{setProperty(){}},
       addEventListener(name,handler){this.listeners[name]=handler;}, appendChild(e){this.children.push(e);},
@@ -1475,4 +1476,68 @@ test('cached cover fallback preserves Alexa artwork for Amazon and unverified al
  h.run('api=reply;radioReadyForViews=true;activeApple={id:"a",kind:"Album",name:"Album"}');
  await h.run('updateSong()');assert.equal(h.get('current-cover').src,'https://example.test/current.jpg');
  h.run('activeApple=null;selectedStation="charts"');await h.run('updateSong()');assert.equal(h.get('current-cover').src,'https://example.test/current.jpg');
+});
+
+
+test('browsing Apple and Radio keeps the playing station branding and clears leftover artwork padding',()=>{
+ const h=harness();
+ h.run('radioReadyForViews=true;selectedStation="1live";updateStationLogo(selectedStation)');
+ const image=h.get('current-cover');
+ image.style.padding='28px';image.style.objectFit='cover';
+ h.get('.now').classList.remove('radio-selected');
+ for(const view of ['apple','radio','apple']) {
+   h.run(`show("${view}")`);
+   assert.equal(image.src,'1live.svg');assert.equal(image.hidden,false);
+   assert.equal(image.style.padding,'0px');assert.equal(image.style.objectFit,'contain');
+   assert.equal(h.get('.now').classList.contains('radio-selected'),true);
+   assert.equal(h.run('selectedStation'),'1live');assert.equal(h.run('activeApple'),null);
+ }
+});
+
+test('radio to album transition replaces source geometry and browsing does not restore a radio logo',()=>{
+ const h=albumHarness();
+ h.run('selectedStation="wdr2";updateStationLogo(selectedStation);activeApple=appleSelection.items[0];selectedStation="";showAppleArtwork();show("radio");show("apple")');
+ assert.equal(h.get('current-cover').src,'api/album-art/12');
+ assert.equal(h.get('current-cover').style.objectFit,'cover');
+ assert.equal(h.get('current-cover').style.padding,'0px');
+ assert.equal(h.get('.now').classList.contains('radio-selected'),false);
+});
+
+
+test('album artwork previews at click and stale state or Alexa mismatch cannot restore the old cover',async()=>{
+ const h=albumHarness();let accept,stateReply;
+ const old={id:'old',kind:'Album',name:'Old',album_id:9,artwork:{image:'api/album-art/9'}};
+ h.context.old=old;
+ h.context.reply=action=> action==='apple_music' ? new Promise(r=>{accept=r;}) : action==='radio-state' ? new Promise(r=>{stateReply=r;}) : Promise.resolve({details:{image:'https://example.test/old.jpg'},apple_verification:{status:'mismatch',reason:'Old metadata'}});
+ h.run('api=reply;activeApple=old;showAppleArtwork();refreshPlayers=async()=>{}');
+ const request=h.run('startAppleFavorite("a")');
+ assert.equal(h.get('current-cover').src,'api/album-art/12');assert.equal(h.get('current-title').textContent,'Album');
+ const state=h.run('loadRadioState()');
+ await h.run('updateSong()');assert.equal(h.get('current-cover').src,'api/album-art/12');
+ accept({ok:true});await request;
+ stateReply({stations:[],power:'on',ready:'on',selected_view:'apple',apple_music:{items:[],available:true,active:old}});await state;
+ assert.equal(h.run('activeApple.id'),'a');assert.equal(h.get('current-cover').src,'api/album-art/12');
+ await h.run('updateSong()');assert.equal(h.get('current-cover').src,'api/album-art/12');
+ assert.equal(h.get('current-cover').style.padding,'0px');assert.equal(h.get('current-cover').style.objectFit,'cover');
+});
+
+test('failed album request restores prior artwork rather than leaving its preview',async()=>{
+ const h=albumHarness();let reject;
+ h.context.reply=()=>new Promise((_,r)=>{reject=r;});
+ h.run('api=reply;loadRadioState=async()=>{};updateSong=async()=>{};selectedStation="1live";updateStationLogo(selectedStation)');
+ h.get('current-cover').setAttribute('src','1live.svg');
+ const pending=h.run('startAppleFavorite("a")');assert.equal(h.get('current-cover').src,'api/album-art/12');
+ reject(new Error('offline'));await pending;
+ assert.equal(h.get('current-cover').src,'1live.svg');assert.equal(h.get('current-cover').style.objectFit,'contain');assert.equal(h.run('activeApple'),null);
+});
+
+
+test('new cover stays hidden until loaded and delayed previous image cannot flash back',()=>{
+ const h=harness(),cover=h.get('current-cover');
+ Object.defineProperty(cover,'src',{get(){return this.attributes.src;},set(value){this.attributes.src=value;}});
+ h.run('setNowArtwork("api/album-art/1","First")');const firstLoad=cover.onload;
+ h.run('setNowArtwork("api/album-art/2","Second")');
+ assert.equal(cover.hidden,true);firstLoad();assert.equal(cover.hidden,true);
+ h.run('setNowArtwork("api/album-art/2","Second")');assert.equal(cover.hidden,true);
+ cover.onload();assert.equal(cover.hidden,false);assert.equal(cover.src,'api/album-art/2');
 });

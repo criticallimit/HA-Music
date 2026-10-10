@@ -263,6 +263,8 @@ function show(page) {
   $("apple-page").hidden = radio;
   $("radio-tab").classList.toggle("active", radio);
   $("apple-tab").classList.toggle("active", !radio);
+  // Browsing another library does not change the playing source or its branding.
+  if (!stationPending && !activeApple && STATION_LOGOS[selectedStation]) updateStationLogo(selectedStation);
 }
 async function selectView(page) {
   if (!radioReadyForViews || viewPending) return;
@@ -323,19 +325,38 @@ const STATION_LOGOS = {
   "wdr2": "wdr2.svg",
   "swr3": "swr3.svg"
 };
-function updateStationLogo(station) {
-  document.querySelector(".now").classList.toggle("radio-selected", Boolean(STATION_LOGOS[station]));
+function setNowArtwork(image, alt, radio = false) {
+  document.querySelector(".now").classList.toggle("radio-selected", radio);
   const cover = $("current-cover");
-  const logo = STATION_LOGOS[station];
-  if (logo) {
-    if (cover.getAttribute("src") !== logo) cover.src = logo;
-    cover.alt = STATIONS.find(item => item[0] === station)?.[1] || station;
-    cover.hidden = false;
+  // Keep artwork geometry tied to its source, including while moving the panel
+  // between views. Explicitly clear any padding left by an older stylesheet.
+  cover.style.objectFit = radio ? "contain" : "cover";
+  cover.style.padding = "0px";
+  if (image) {
+    cover.alt = alt;
+    if (cover.getAttribute("src") !== image) {
+      // A browser can keep painting the old bitmap while the new one loads.
+      cover.hidden = true;
+      cover.loadedArtwork = "";
+      cover.onload = () => {
+        if (cover.getAttribute("src") === image) { cover.loadedArtwork = image; cover.hidden = false; }
+      };
+      cover.onerror = () => { cover.hidden = true; };
+      cover.removeAttribute("src");
+      cover.src = image;
+    } else cover.hidden = cover.loadedArtwork !== image;
   } else {
     cover.hidden = true;
+    cover.loadedArtwork = "";
+    cover.onload = null;
     cover.removeAttribute("src");
   }
 }
+function updateStationLogo(station) {
+  const logo = STATION_LOGOS[station];
+  setNowArtwork(logo, STATIONS.find(item => item[0] === station)?.[1] || station, Boolean(logo));
+}
+
 function setActiveStation(station) {
   for (const [id, button] of stationButtons) {
     const active = id === station;
@@ -370,7 +391,7 @@ function renderRadioMetadata(station, external) {
   }
 }
 async function updateSong() {
-  if (strictStandby || !radioReadyForViews || songRequestRunning || transportPending) return;
+  if (strictStandby || !radioReadyForViews || songRequestRunning || transportPending || stationPending) return;
   songRequestRunning = true;
   const station = selectedStation;
   const epoch = stationEpoch;
@@ -400,17 +421,11 @@ async function updateSong() {
     // Fixed branding is exclusively for broadcast stations.
     // Amazon presets use the artwork supplied by Alexa.
     if (!isRadio) {
-      const cover = $("current-cover");
       const known = activeAppleArtwork();
-      const image = known && info.apple_verification?.status !== "mismatch" ? known.image : details?.image || known?.image;
+      const image = known?.image || details?.image;
       if (typeof image === "string" && (validAppleImage(image) || (image.startsWith("/") && !image.startsWith("//")) || image.startsWith("https://"))) {
-        if (cover.getAttribute("src") !== image) cover.src = image;
-        cover.alt = known?.name || details?.album || details?.title || (activeApple ? "Apple Music" : "Amazon Music");
-        cover.hidden = false;
-      } else {
-        cover.hidden = true;
-        cover.removeAttribute("src");
-      }
+        setNowArtwork(image, known?.name || details?.album || details?.title || (activeApple ? "Apple Music" : "Amazon Music"));
+      } else setNowArtwork("", "");
     }
     const unconfirmedVolumes = Object.keys(info.volume_confirmation || {});
     $("playback-state").textContent = transportError || info.source_restore_error || (unconfirmedVolumes.length
@@ -506,19 +521,17 @@ function coverKey(item) { return item.id + ":" + (item.album_id || "auto"); }
 function savedAlbumCover(item) {
   return /^api\/album-art\/[1-9][0-9]{0,15}$/.test(item?.artwork?.image || "") ? item.artwork : null;
 }
-function activeAppleArtwork() {
-  if (!activeApple) return null;
-  const artwork = activeApple.kind === "Track" ? activeApple.now_artwork :
-    savedAlbumCover(activeApple) || savedAlbumCover(appleSelection.items.find(item => item.id === activeApple.id)) || albumCoverResults.get(coverKey(activeApple))?.album;
+function activeAppleArtwork(selection = activeApple) {
+  if (!selection) return null;
+  const artwork = selection.kind === "Track" ? selection.now_artwork :
+    savedAlbumCover(selection) || savedAlbumCover(appleSelection.items.find(item => item.id === selection.id)) || albumCoverResults.get(coverKey(selection))?.album;
   return validAppleImage(artwork?.image) ? artwork : null;
 }
 function showAppleArtwork() {
-  document.querySelector(".now").classList.remove("radio-selected");
-  const cover = $("current-cover"), artwork = activeAppleArtwork();
-  cover.hidden = !artwork;
-  if (artwork) { cover.src = artwork.image; cover.alt = artwork.name || activeApple.name; }
-  else cover.removeAttribute("src");
+  const artwork = activeAppleArtwork();
+  setNowArtwork(artwork?.image || "", artwork?.name || activeApple?.name || "");
 }
+
 function applyAlbumCover(button, album) {
   const imageUrl = validAppleImage(album?.image);
   if (!imageUrl || !button || button.coverApplied === imageUrl) return;
@@ -1063,6 +1076,16 @@ async function startAppleFavorite(id) {
   trackTransport = null;
   renderGroupTransport();
   const generation = ++uiGeneration;
+  stationEpoch++;
+  const cover = $("current-cover");
+  const previousArtwork = {image:cover.getAttribute("src"),alt:cover.alt,radio:document.querySelector(".now").classList.contains("radio-selected"),
+    title:$("current-title").textContent,artist:$("current-artist").textContent,ticker:$("now-ticker-text").textContent,tickerHidden:$("now-ticker").hidden};
+  const artwork = activeAppleArtwork(favorite);
+  setNowArtwork(artwork?.image || "", artwork?.name || favorite.name);
+  $("current-title").textContent = favorite.name;
+  $("current-artist").textContent = artwork?.artist || "Apple Music";
+  $("now-ticker").hidden = true;
+  $("now-ticker-text").textContent = "";
   renderAppleSelection(appleSelection);
   for (const button of stationButtons.values()) button.disabled = true;
   try {
@@ -1084,7 +1107,14 @@ async function startAppleFavorite(id) {
     groupTransport = null; trackTransport = null; transportEpoch++;
     renderGroupTransport();
   } catch(e) {
-    if (generation === uiGeneration) reportError("Apple-Music-Wiedergabe fehlgeschlagen: " + e.message);
+    if (generation === uiGeneration) {
+      setNowArtwork(previousArtwork.image,previousArtwork.alt,previousArtwork.radio);
+      $("current-title").textContent = previousArtwork.title;
+      $("current-artist").textContent = previousArtwork.artist;
+      $("now-ticker-text").textContent = previousArtwork.ticker;
+      $("now-ticker").hidden = previousArtwork.tickerHidden;
+      reportError("Apple-Music-Wiedergabe fehlgeschlagen: " + e.message);
+    }
   } finally {
     stationPending = false;
     await loadRadioState();
@@ -1155,6 +1185,7 @@ async function loadRadioState() {
   stateRequestRunning = true;
   const generation = uiGeneration;
   const requestedLibraryEpoch = libraryEpoch;
+  const requestedStationEpoch = stationEpoch;
   try {
     const data = await api("radio-state");
     if (generation !== uiGeneration) return;
@@ -1173,7 +1204,8 @@ async function loadRadioState() {
       if (radioReadyForViews) uiGeneration++;
     }
     radioReadyForViews = radioReady;
-    if (data.recovered_session && (selectedStation || activeApple)) {
+    const sourceCurrent = !stationPending && requestedStationEpoch === stationEpoch;
+    if (sourceCurrent && data.recovered_session && (selectedStation || activeApple)) {
       selectedStation = "";
       activeApple = null;
       stationEpoch++;
@@ -1183,7 +1215,7 @@ async function loadRadioState() {
       $("now-ticker-text").textContent = "";
     }
     const nextApple = data.apple_music?.active || null;
-    if (JSON.stringify(activeApple) !== JSON.stringify(nextApple)) {
+    if (sourceCurrent && JSON.stringify(activeApple) !== JSON.stringify(nextApple)) {
       activeApple = nextApple;
       selectedStation = "";
       stationEpoch++;
@@ -1210,7 +1242,7 @@ async function loadRadioState() {
       ? Date.now() + data.startup_remaining * 1000 : null;
     // Restore the actual HA Music preset after a power cycle, not merely its artwork.
     const restored = data.last_station;
-    if (radioReady && !stationPending && !activeApple && selectedStation !== restored && state.has(restored)) {
+    if (sourceCurrent && radioReady && !stationPending && !activeApple && selectedStation !== restored && state.has(restored)) {
       selectedStation = restored;
       stationEpoch++;
       setActiveStation(restored);
