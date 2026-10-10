@@ -85,15 +85,15 @@ class PlaylistSyncTests(unittest.TestCase):
             app.save_library(before)  # Reject editor saves opened before a sync.
 
     def test_ipad_shortcuts_newline_json_synchronizes_without_mac(self):
-        shortcuts_tracks = "\\n".join(json.dumps({"name": name, "artist": artist}, ensure_ascii=False)
-            for name, artist in [("Hot N' Cold", "Katy Perry"), ("The Downeaster \\"Alexa\\"", "Billy Joel")])
+        shortcuts_tracks = "\n".join(json.dumps({"name": name, "artist": artist}, ensure_ascii=False)
+            for name, artist in [("Hot N' Cold", "Katy Perry"), ('The Downeaster "Alexa"', "Billy Joel")])
         status, result = self.request(body={"name": "Mix", "tracks": shortcuts_tracks})
         self.assertEqual(status, 200)
         self.assertEqual(result["tracks"], 2)
         saved = app.library_snapshot()["items"][0]
         self.assertEqual([item["name"] for item in saved["tracks"]], ["Hot N' Cold", 'The Downeaster "Alexa"'])
         before = app.LIBRARY_FILE.read_bytes()
-        for bad in ("not json", '{"name":"Missing artist"}', "{}", "", shortcuts_tracks + "\\nnot-json"):
+        for bad in ("not json", '{"name":"Missing artist"}', "{}", "", shortcuts_tracks + "\nnot-json"):
             status, _ = self.request(body={"name": "Mix", "tracks": bad})
             self.assertEqual(status, 400)
             self.assertEqual(app.LIBRARY_FILE.read_bytes(), before)
