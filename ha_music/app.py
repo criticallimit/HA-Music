@@ -482,6 +482,67 @@ def sync_playlist(body):
         return {"ok": True, "changed": changed, "created": created, "tracks": len(tracks)}
 
 
+
+def sync_all_ipad_playlists(body):
+    """Atomically import every submitted playlist without changing Alexa commands or albums."""
+    playlists = body.get("playlists")
+    if not isinstance(playlists, list) or not playlists or len(playlists) > 50:
+        raise ValueError("Bitte 1 bis 50 Playlists übertragen")
+    incoming = []
+    names = set()
+    for entry in playlists:
+        if not isinstance(entry, dict):
+            raise ValueError("Ungültiger Playlist-Eintrag")
+        name = entry.get("name")
+        if not isinstance(name, str) or not name.strip() or len(name) > 200 or any(ord(c) < 32 for c in name):
+            raise ValueError("Ungültiger Playlistname")
+        name = name.strip()
+        if name in names:
+            raise ValueError("Doppelte Playlistnamen im Import: " + name)
+        names.add(name)
+        raw = entry.get("tracks")
+        if isinstance(raw, str):
+            if len(raw.encode("utf-8")) > 1048576:
+                raise ValueError("Titelliste zu groß: " + name)
+            try:
+                raw = [json.loads(line) for line in raw.splitlines() if line.strip()]
+            except json.JSONDecodeError as exc:
+                raise ValueError("Ungültige Titelliste: " + name) from exc
+        tracks = normalize_playlist_tracks(raw)
+        if not tracks:
+            raise ValueError("Leere Playlists nicht übertragen: " + name)
+        incoming.append((name, tracks))
+    with LIBRARY_LOCK:
+        items = library_snapshot()["items"]
+        existing = {}
+        for item in items:
+            if item["kind"] == "Playlist":
+                if item["name"] in existing:
+                    raise ValueError("Playlistname in HA Music nicht eindeutig: " + item["name"])
+                existing[item["name"]] = item
+        if len(items) + sum(name not in existing for name, _ in incoming) > 50:
+            raise ValueError("HA Music erlaubt insgesamt höchstens 50 Playlists und Alben")
+        changed = False
+        created = 0
+        for name, tracks in incoming:
+            if name in existing:
+                if existing[name].get("tracks") != tracks:
+                    existing[name]["tracks"] = tracks
+                    changed = True
+            else:
+                item = normalize_library([{"kind": "Playlist", "name": name,
+                    "search": name, "command": "spiel playlist " + name, "tracks": tracks}])[0]
+                items.append(item)
+                created += 1
+                changed = True
+        if changed:
+            with LOCK:
+                write_durable_json(LIBRARY_FILE, items)
+    return {"ok": True, "changed": changed, "created": created,
+            "playlists": len(incoming), "tracks": sum(len(t) for _, t in incoming)}
+
+
+
 def artwork_url(value, host):
     if not isinstance(value, str) or len(value) > 2048:
         return ""
@@ -2558,7 +2619,7 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(content)
 
     def do_POST(self):
-        if self.path in ("/api/playlist-sync", "/api/playlist-artwork-sync"):
+        if self.path in ("/api/playlist-sync", "/api/playlist-artwork-sync", "/api/ipad-playlists-sync"):
             # The optional host port exposes only this capability. Never accept
             # a Supervisor/HA token or trust forwarded ingress headers here.
             token = options().get("playlist_sync_token", "")
@@ -2575,7 +2636,7 @@ class Handler(BaseHTTPRequestHandler):
                 body = json.loads(self.read_request_body(192 * 1024 if artwork else 2097152))
                 if not isinstance(body, dict):
                     raise ValueError("Invalid body")
-                return self.reply(200, sync_playlist_artwork(body) if artwork else sync_playlist(body))
+                return self.reply(200, sync_playlist_artwork(body) if artwork else (sync_all_ipad_playlists(body) if self.path == "/api/ipad-playlists-sync" else sync_playlist(body)))
             except (ValueError, TypeError) as exc:
                 return self.reply(400, {"error": str(exc)})
             except OSError:
