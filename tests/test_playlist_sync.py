@@ -101,7 +101,10 @@ class PlaylistSyncTests(unittest.TestCase):
     def test_ipad_all_playlists_sync_creates_and_preserves_existing_commands(self):
         body = {"playlists": [
             {"name": "Mix", "tracks": [{"name": "First", "artist": "Singer"}]},
-            {"name": "Neue Liste", "tracks": '{"name":"Hello","artist":"Adele"}\\n{"name":"Again","artist":"Band"}'}
+            {"name": "Neue Liste", "tracks": "\n".join([
+                json.dumps({"name":"Hello","artist":"Adele"}),
+                json.dumps({"name":"Again","artist":"Band"})
+            ])}
         ]}
         status, result = self.request(path="/api/ipad-playlists-sync", body=body)
         self.assertEqual(status, 200)
