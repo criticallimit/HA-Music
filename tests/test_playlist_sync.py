@@ -98,6 +98,32 @@ class PlaylistSyncTests(unittest.TestCase):
             self.assertEqual(status, 400)
             self.assertEqual(app.LIBRARY_FILE.read_bytes(), before)
 
+    def test_ipad_all_playlists_sync_creates_and_preserves_existing_commands(self):
+        body = {"playlists": [
+            {"name": "Mix", "tracks": [{"name": "First", "artist": "Singer"}]},
+            {"name": "Neue Liste", "tracks": '{"name":"Hello","artist":"Adele"}\\n{"name":"Again","artist":"Band"}'}
+        ]}
+        status, result = self.request(path="/api/ipad-playlists-sync", body=body)
+        self.assertEqual(status, 200)
+        self.assertTrue(result["ok"])
+        self.assertEqual((result["playlists"], result["created"], result["tracks"]), (2, 1, 3))
+        items = app.library_snapshot()["items"]
+        self.assertEqual(items[0]["command"], "spiel meine Playlist")
+        self.assertEqual(items[1]["kind"], "Album")
+        self.assertEqual(items[-1]["name"], "Neue Liste")
+        self.assertEqual(self.request(path="/api/ipad-playlists-sync", body=body)[1]["changed"], False)
+        previous = app.LIBRARY_FILE.read_bytes()
+        for invalid in (
+            {"playlists": [{"name": "Mix", "tracks": [{"name": "Valid", "artist": "A"}]},
+                           {"name": "Invalid", "tracks": [{"name": "Missing artist"}]}]},
+            {"playlists": [{"name": "Mix", "tracks": []}]},
+            {"playlists": [{"name": "Mix", "tracks": self.tracks}] * 2}
+        ):
+            self.assertEqual(self.request(path="/api/ipad-playlists-sync", body=invalid)[0], 400)
+            self.assertEqual(app.LIBRARY_FILE.read_bytes(), previous)
+        self.assertEqual(self.request(path="/api/ipad-playlists-sync", body=body,
+                         headers={"Authorization":"Bearer wrong"})[0], 403)
+
     def test_authenticated_cover_upload_deduplicates_and_track_sync_keeps_local_image(self):
         picture = b"\x89PNG\r\n\x1a\nlocal fixture"
         identity = hashlib.sha256(picture).hexdigest()
