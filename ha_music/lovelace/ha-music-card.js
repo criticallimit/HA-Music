@@ -37,12 +37,14 @@ class HAMusicCardEditor extends HTMLElement {
     if (!this.shadowRoot) return;
     const themes = Object.keys(this._hass?.themes?.themes || {}).sort((a,b) => a.localeCompare(b));
     const currentTheme = String(this._config?.theme || "");
+    const width = this._config?.width ?? "";
+    const height = this._config?.height ?? "";
     this.shadowRoot.innerHTML = `
       <style>
         :host { display:block; }
         .form { display:grid; gap:16px; padding:8px 0; }
         label { display:grid; gap:6px; color:var(--primary-text-color); font-size:14px; }
-        select {
+        select, input {
           width:100%; box-sizing:border-box; min-height:44px; padding:8px 10px;
           border:1px solid var(--divider-color); border-radius:8px;
           background:var(--card-background-color, var(--ha-card-background));
@@ -59,10 +61,17 @@ class HAMusicCardEditor extends HTMLElement {
           </select>
           <span class="hint">Uses the selected Home Assistant theme only for this HA Music card.</span>
         </label>
+        <label><span>Breite (Pixel)</span><input id="width" type="number" min="200" max="4000" step="1" placeholder="Automatisch" value="${width}"><span class="hint">Leer lassen für volle verfügbare Spaltenbreite.</span></label>
+        <label><span>Höhe (Pixel)</span><input id="height" type="number" min="200" max="5000" step="1" placeholder="Automatisch" value="${height}"><span class="hint">Leer lassen für automatische Höhe; bei fester Höhe kann Inhalt scrollen.</span></label>
       </div>
     `;
     this.shadowRoot.getElementById("theme")?.addEventListener("change", (event) => {
       this._changed({theme:event.target.value});
+    });
+    for (const key of ["width", "height"]) this.shadowRoot.getElementById(key)?.addEventListener("change", event => {
+      const raw = event.target.value.trim();
+      const n = Number(raw);
+      this._changed({[key]:raw && Number.isInteger(n) && n >= 200 && n <= (key === "width" ? 4000 : 5000) ? n : ""});
     });
   }
 }
@@ -75,7 +84,7 @@ class HAMusicCard extends HTMLElement {
   constructor() {
     super();
     this.attachShadow({mode:"open"});
-    this._config = {height: null};
+    this._config = {height: null, width: null};
     this._measuredHeight = null;
     this._hass = null;
     this._started = false;
@@ -213,15 +222,27 @@ class HAMusicCard extends HTMLElement {
   }
 
   setConfig(config) {
+    const parseDimension = (value, max) => {
+      if (value === undefined || value === null || value === "") return null;
+      const number = Number(value);
+      return Number.isInteger(number) && number >= 200 && number <= max ? number : null;
+    };
     this._config = {
       ...config,
-      height:config?.height == null || config.height === "" ? null :
-        Math.max(200, Math.min(5000, Number(config.height) || 1000)),
+      width:parseDimension(config?.width, 4000),
+      height:parseDimension(config?.height, 5000),
       theme:String(config?.theme || "").trim()
     };
     this._applyConfiguredTheme();
+    this._applyDimensions();
     this._renderShell();
     this._scheduleThemeSync();
+  }
+
+  _applyDimensions() {
+    this.style.width = this._config.width ? this._config.width + "px" : "100%";
+    this.style.maxWidth = "100%";
+    if (this._iframe) this._iframe.style.height = (this._config.height || this._measuredHeight || 320) + "px";
   }
 
   _applyConfiguredTheme() {
@@ -280,6 +301,7 @@ class HAMusicCard extends HTMLElement {
 
   connectedCallback() {
     this._attachThemeReadyListener();
+    this._applyDimensions();
     this._watchInheritedTheme();
     this._renderShell();
     if (this._hass && !this._started) this._start();
@@ -330,6 +352,7 @@ class HAMusicCard extends HTMLElement {
         :host {
           display:block;
           width:100%;
+          max-width:100%;
         }
         ha-card {
           display:block;
