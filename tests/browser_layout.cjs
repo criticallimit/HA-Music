@@ -44,10 +44,10 @@ const artwork='<svg xmlns="http://www.w3.org/2000/svg" width="300" height="300">
     const result=await surface.evaluate(()=>{
      const lists=['apple-playlist-list','apple-album-list'].map(id=>{const list=document.getElementById(id);return {id,height:list.clientHeight,scroll:list.scrollHeight,tiles:Array.from(list.querySelectorAll('.apple-favorite')).map(tile=>{const r=tile.getBoundingClientRect();return {width:r.width,height:r.height};})};});
      const image=document.getElementById('current-cover'),r=image.getBoundingClientRect(),art=document.querySelector('.art').getBoundingClientRect(),style=getComputedStyle(image);
-     return {lists,art:{width:art.width,height:art.height},image:{width:r.width,height:r.height,padding:style.padding,fit:style.objectFit},albumFits:Array.from(document.querySelectorAll('.apple-album-cover')).map(img=>getComputedStyle(img).objectFit)};
+     return {lists,art:{width:art.width,height:art.height},image:{width:r.width,height:r.height,padding:style.padding,fit:style.objectFit,position:style.objectPosition},albumFits:Array.from(document.querySelectorAll('.apple-album-cover')).map(img=>getComputedStyle(img).objectFit)};
     });
     for(const list of result.lists){assert.equal(list.tiles.length,20);assert.ok(list.scroll>list.height);for(const tile of list.tiles){assert.equal(tile.width,120);assert.equal(tile.height,120);}}
-    assert.equal(result.image.width,result.art.width);assert.equal(result.image.height,result.art.height);assert.equal(result.image.padding,'0px');assert.equal(result.image.fit,'contain');assert.ok(result.albumFits.every(fit=>fit==='contain'));
+    assert.equal(result.image.width,result.art.width);assert.equal(result.image.height,result.art.height);assert.equal(result.image.padding,'0px');assert.equal(result.image.fit,'contain');assert.equal(result.image.position,'50% 0%');assert.ok(result.albumFits.every(fit=>fit==='contain'));
     for(const id of ['apple-playlist-list','apple-album-list']){await surface.locator('#'+id).evaluate(list=>{list.scrollTop=list.scrollHeight;});assert.ok(await surface.locator('#'+id).evaluate(list=>list.scrollTop>0));}
     console.log('PASS: '+mode+', viewport '+width+', library height '+height+', equal 120px squares, independent scrolling, full artwork');
    }

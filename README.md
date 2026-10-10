@@ -632,3 +632,14 @@ zusätzlich zu Desktop und Mobilgerät, jeweils einschließlich echter Karte.
 Sicherung davor:
 [backup/main-2026-10-10-fit-cover-617edde](https://github.com/criticallimit/HA-Music/tree/backup/main-2026-10-10-fit-cover-617edde),
 Commit `617edde686676a7839d6a1edbcc6bc21545e4c13`.
+
+## Große Bildanzeige oben ausrichten
+
+Cover und Senderlogos werden vollständig proportional skaliert und innerhalb
+des großen Bildfelds oben zentriert ausgerichtet. Die freie Fläche bei schmalen
+Ansichten liegt damit unter dem Bild im Textbereich statt oberhalb des Bilds.
+Ingress und Lovelace verwenden dieselbe Regel.
+
+Sicherung davor:
+[backup/main-2026-10-10-top-artwork-5d061f5](https://github.com/criticallimit/HA-Music/tree/backup/main-2026-10-10-top-artwork-5d061f5),
+Commit `5d061f5c7eb4b3a212b1865e90cbb4f0d0f55ae8`.
