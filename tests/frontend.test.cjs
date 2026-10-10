@@ -256,12 +256,63 @@ test('playlist tile opens title selection with artist and preserves playback pay
   assert.equal(calls[0].action,'playlist-tracks');
   assert.match(h.get('album-play-all').textContent,/Ganze Playlist/);
   const row=h.get('album-tracks-list').children[0];
-  assert.equal(row.children[1].children[0].textContent,'Singer');
+  assert.equal(row.children[2].children[0].textContent,'Singer');
   assert.equal(h.get('playlist-import-open').hidden,false);
   await row.listeners.click();
   assert.equal(calls[1].action,'apple_playlist_track');
   assert.equal(calls[1].body.favorite,'p');
   assert.equal(calls[1].body.track_id,91);
+});
+
+test('playlist rows show cached album covers and album names without changing the track playback ID', async () => {
+  const h=harness(),calls=[];
+  h.context.reply=async(action,body)=>{calls.push({action,body});return {tracks:[{id:91,number:1,name:'Song',artist:'Singer',album:'The Album',image:'https://a.mzstatic.com/cover.jpg'}]};};
+  h.run('api=reply;radioReadyForViews=true;loadRadioState=async()=>{};updateSong=()=>{};renderAppleSelection({available:true,items:[{id:"p",kind:"Playlist",name:"List"}]})');
+  await h.run('openAlbumTracks("p")');
+  const row=h.get('album-tracks-list').children[0];
+  assert.equal(row.children[1].children[0].src,'https://a.mzstatic.com/cover.jpg');
+  assert.equal(row.children[2].children[1].textContent,'The Album');
+  row.children[1].children[0].onerror();
+  assert.equal(row.children[1].children[0].hidden,true);
+  assert.equal(row.children[1].children[1].hidden,false);
+  await row.listeners.click();
+  assert.equal(calls[1].action,'apple_playlist_track');
+  assert.equal(calls[1].body.track_id,91);
+});
+
+test('playlist cover loading coalesces albums and stops when the dialog closes or standby begins', async () => {
+  for(const stop of ['closeAlbumTracks()','strictStandby=true']){
+    const h=harness(),calls=[];
+    h.context.reply=async(action,body)=>{
+      calls.push(action);
+      if(action==='playlist-cover')return {image:'https://a.mzstatic.com/cover.jpg'};
+      return {tracks:[{id:1,number:1,name:'One',artist:'Singer',album:'Same'},
+        {id:2,number:2,name:'Two',artist:'Singer',album:'Same'},
+        {id:3,number:3,name:'Three',artist:'Singer',album:'Other'}]};
+    };
+    h.run('api=reply;radioReadyForViews=true;renderAppleSelection({available:true,items:[{id:"p",kind:"Playlist",name:"List"}]})');
+    await h.run('openAlbumTracks("p")');
+    const first=h.timers.find(t=>t.delay===0);await first.callback();
+    assert.equal(calls.filter(c=>c==='playlist-cover').length,1);
+    for(const row of h.get('album-tracks-list').children.slice(0,2))assert.equal(row.children[1].children[0].src,'https://a.mzstatic.com/cover.jpg');
+    const next=h.timers.filter(t=>t.delay===4500).at(-1);
+    h.run(stop);await next.callback();
+    assert.equal(calls.filter(c=>c==='playlist-cover').length,1);
+  }
+});
+
+test('untrusted playlist artwork is rejected and a delayed cover cannot fill a closed dialog', async () => {
+  const h=harness();let resolve;
+  h.context.reply=async action=>action==='playlist-cover' ? new Promise(r=>{resolve=r;}) :
+    {tracks:[{id:1,number:1,name:'Song',artist:'Singer',album:'Album',image:'https://evil.invalid/cover.jpg'}]};
+  h.run('api=reply;radioReadyForViews=true;renderAppleSelection({available:true,items:[{id:"p",kind:"Playlist",name:"List"}]})');
+  await h.run('openAlbumTracks("p")');
+  const art=h.get('album-tracks-list').children[0].children[1];
+  assert.equal(art.children[0].src,undefined);
+  const pending=h.timers.find(t=>t.delay===0).callback();
+  h.run('closeAlbumTracks()');resolve({image:'https://a.mzstatic.com/cover.jpg'});await pending;
+  assert.equal(art.children[0].src,undefined);
+  assert.equal(h.run('playlistCoverResults.size'),0);
 });
 
 test('playlist without export keeps whole-playlist playback and offers import', async () => {

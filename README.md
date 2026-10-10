@@ -367,7 +367,8 @@ Sicherung davor:
 ## Einzelne Titel als Alexa-Textbefehl
 
 Einzeltitel aus Playlists und Alben werden als **`spiel <Titel> von <Interpret>`**
-übergeben, mit den unveränderten gespeicherten Titel- und Interpretenangaben.
+übergeben, bei vorhandenen Albumangaben ergänzt um **`aus dem Album <Album>`**.
+Titel, Interpret und Album bleiben unverändert.
 Alexa Media Player erhält den Medientyp `custom`, Alexa Devices den Dienst
 `send_text_command`. Der Text wird dadurch als Sprachbefehl übergeben und enthält
 keinen Musikdienst- oder Gruppenzusatz. Ganze Playlists und Alben verwenden ihre
@@ -377,3 +378,22 @@ geprüft werden.
 
 Sicherung davor:
 [backup/main-2026-10-10-track-command-5f1f6d6](https://github.com/criticallimit/HA-Music/tree/backup/main-2026-10-10-track-command-5f1f6d6), Commit `5f1f6d6c8a668f780d4333a9ca2ae1b7f0557390`.
+
+## Albumcover in Playlist-Titellisten
+
+Die aktuelle Mac-App und der Python-Helfer exportieren Album sowie Albuminterpret.
+Auch XML-/Text-/CSV-Importe übernehmen vorhandene Albumspalten. Bereits gespeicherte
+Titel ohne Albumangabe bleiben kompatibel; einmal neu synchronisieren, um die
+zusätzlichen Angaben zu übernehmen. Ganze Playlists behalten ihre Reihenfolge
+und Alexa-Befehle, einschließlich der selbst sortierten Kacheln.
+
+Playlist-Titellisten zeigen je Titel ein kleines Albumcover, Interpret und Album.
+Die Bilder werden anhand von Album und Albuminterpret aus dem öffentlichen
+Apple-Katalog zugeordnet, nachgeladen und zwischengespeichert. Eine Suche bedient
+alle sichtbaren Titel desselben Albums; Schließen oder Standby beendet weitere
+Anfragen. Fehlende oder nicht eindeutige Cover werden durch einen Musik-Platzhalter
+ersetzt. Die Titelauswahl funktioniert auch ohne Bild. Einzeltitelbefehle enthalten
+keinen Zusatz „auf Apple Music“.
+
+Sicherung davor:
+[backup/main-2026-10-10-playlist-albums-fe6654b](https://github.com/criticallimit/HA-Music/tree/backup/main-2026-10-10-playlist-albums-fe6654b), Commit `fe6654bcda2f8db06a3f2b7d73a9c93088bf57d2`.

@@ -918,8 +918,8 @@ class RuntimeTests(unittest.TestCase):
 
     def test_playlist_import_text_csv_and_xml_keep_order_and_duplicates(self):
         exports = ["Name\tArtist\tAlbum\nSecond\tSinger B\tAlbum\nFirst\tSinger A\tAlbum\nSecond\tSinger B\tAlbum\n",
-                   'Titel;Interpret\nSecond;Singer B\nFirst;Singer A\nSecond;Singer B\n',
-                   plistlib.dumps({"Tracks":{"1":{"Name":"First","Artist":"Singer A"},"2":{"Name":"Second","Artist":"Singer B"}},
+                   'Titel;Interpret;Album\nSecond;Singer B;Album\nFirst;Singer A;Album\nSecond;Singer B;Album\n',
+                   plistlib.dumps({"Tracks":{"1":{"Name":"First","Artist":"Singer A","Album":"Album"},"2":{"Name":"Second","Artist":"Singer B","Album":"Album"}},
                                    "Playlists":[{"Playlist Items":[{"Track ID":2},{"Track ID":1},{"Track ID":2}]}]}).decode()]
         expected = None
         for content in exports:
@@ -996,7 +996,7 @@ class RuntimeTests(unittest.TestCase):
 
     def test_single_playlist_and_album_titles_send_exact_spoken_command_for_both_alexa_integrations(self):
         app.READY = True
-        track = {"id":91, "name":"Über den Wolken (Live)", "artist":"Reinhard Mey"}
+        track = {"id":91, "name":"Über den Wolken (Live)", "artist":"Reinhard Mey", "album":"Live Album"}
         for kind in ("Playlist", "Album"):
             favorite = self.apple_favorite(kind)
             action = "apple_playlist_track" if kind == "Playlist" else "apple_album_track"
@@ -1008,7 +1008,7 @@ class RuntimeTests(unittest.TestCase):
                     replies = [json.dumps({"domain":"alexa_devices", "device_id":device}), {}] if integration == "alexa_devices" else [{}]
                     with patch.object(app, lookup, return_value={"tracks":[track]}), patch.object(app, "ha_request", side_effect=replies) as request:
                         app.perform(action, {"favorite":favorite, "track_id":91})
-                    command = "spiel Über den Wolken (Live) von Reinhard Mey"
+                    command = "spiel Über den Wolken (Live) von Reinhard Mey aus dem Album Live Album"
                     if integration == "alexa_devices":
                         self.assertEqual(request.call_count,2)
                         self.assertEqual(request.call_args.args,("/services/alexa_devices/send_text_command",{
@@ -1018,6 +1018,44 @@ class RuntimeTests(unittest.TestCase):
                             "entity_id":"media_player.wohnzimmer", "media":{
                                 "media_content_type":"custom", "media_content_id":command, "metadata":{}}})
                     self.assertEqual(app.ACTIVE_APPLE["name"], track["name"])
+    def test_playlist_album_metadata_survives_sync_and_text_xml_imports(self):
+        tracks = [{"name":"Song", "artist":"Singer", "album":"The Album", "album_artist":"Album Singer"}]*2
+        imported = app.import_playlist({"content":"Name\tArtist\tAlbum\tAlbum Artist\nSong\tSinger\tThe Album\tAlbum Singer\n"})["tracks"]
+        self.assertEqual(imported[0]["album"], "The Album")
+        self.assertEqual(imported[0]["album_artist"], "Album Singer")
+        xml = plistlib.dumps({"Tracks":{"1":{"Name":"Song","Artist":"Singer","Album":"The Album","Album Artist":"Album Singer"}},
+                             "Playlists":[{"Name":"List","Playlist Items":[{"Track ID":1}]}]}).decode()
+        self.assertEqual(app.import_playlist({"content":xml})["tracks"], imported)
+        normalized = app.normalize_playlist_tracks(tracks)
+        self.assertNotEqual(normalized[0]["id"], normalized[1]["id"])
+        self.assertEqual(app.normalize_playlist_tracks(normalized), normalized)
+        self.assertNotEqual(normalized[0]["id"], app.normalize_playlist_tracks([{"name":"Song","artist":"Singer"}])[0]["id"])
+        with self.assertRaises(ValueError):
+            app.normalize_playlist_tracks([{**tracks[0],"album":"bad\nname"}])
+
+    def test_playlist_covers_are_exact_cached_and_do_not_send_playback(self):
+        app.READY = True
+        entries = [{"kind":"Playlist","name":"List","tracks":[{"name":"Song","artist":"Singer","album":"The Album","album_artist":"Album Singer"}]}]
+        app.save_library({"items":entries,"revision":app.library_snapshot()["revision"]})
+        favorite = app.apple_music_selection()["items"][0]
+        track = favorite["tracks"][0]
+        cover = {"album_id":123,"name":"The Album","artist":"Album Singer","image":"https://a.mzstatic.com/test.jpg"}
+        app.ARTWORK_FILE.write_text(json.dumps({"search:the album album singer":{"items":[cover],"at":time.time()}}))
+        self.assertEqual(app.playlist_tracks(favorite["id"])["tracks"][0]["image"],cover["image"])
+        with patch.object(app,"album_cover_search",return_value={"items":[cover]}) as search, patch.object(app,"perform") as play:
+            self.assertEqual(app.playlist_track_cover(favorite["id"],track["id"]),{"image":cover["image"]})
+            search.assert_called_once_with({"search":"The Album Album Singer"},max_search_length=401)
+            play.assert_not_called()
+        with patch.object(app,"album_cover_search",return_value={"items":[{**cover,"artist":"Different"}]}) as search:
+            self.assertEqual(app.playlist_track_cover(favorite["id"],track["id"]),{"image":""})
+        with patch.object(app,"album_cover_search") as search:
+            with self.assertRaises(ValueError):
+                app.playlist_track_cover(favorite["id"],track["id"]+1)
+            app.STANDBY.set()
+            with self.assertRaises(ValueError):
+                app.playlist_track_cover(favorite["id"],track["id"])
+            search.assert_not_called()
+
     def test_playlist_import_http_accepts_exports_over_64kb_but_remains_bounded(self):
         content = "Name\tArtist\n" + ("N"*180 + "\t" + "A"*180 + "\n")*200
         payload = json.dumps({"content":content}).encode()

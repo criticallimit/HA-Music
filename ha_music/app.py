@@ -237,8 +237,16 @@ def normalize_playlist_tracks(tracks):
                 and not any(ord(c) < 32 for c in track[key]) for key in ("name", "artist")):
             raise ValueError(f"Titel {number}: Titel und Interpret müssen 1 bis 200 Zeichen enthalten")
         name, artist = track["name"].strip(), track["artist"].strip()
-        identity = int(hashlib.sha256(json.dumps([number, name, artist]).encode()).hexdigest()[:12], 16) + 1
-        result.append({"id":identity, "number":number, "name":name, "artist":artist})
+        extra = {}
+        for key in ("album", "album_artist"):
+            value = track.get(key, "")
+            if not isinstance(value, str) or len(value) > 200 or any(ord(c) < 32 for c in value):
+                raise ValueError(f"Titel {number}: Ungültige Albumangabe")
+            if value.strip():
+                extra[key] = value.strip()
+        identity_fields = [number, name, artist] + ([extra] if extra else [])
+        identity = int(hashlib.sha256(json.dumps(identity_fields, sort_keys=True).encode()).hexdigest()[:12], 16) + 1
+        result.append({"id":identity, "number":number, "name":name, "artist":artist, **extra})
     return result
 
 
@@ -271,7 +279,8 @@ def import_playlist(body):
             track = data["Tracks"].get(str(entry.get("Track ID"))) if isinstance(entry, dict) else None
             if not isinstance(track, dict):
                 raise ValueError("Der XML-Export enthält eine unvollständige Titelliste")
-            tracks.append({"name":track.get("Name"), "artist":track.get("Artist")})
+            tracks.append({"name":track.get("Name"), "artist":track.get("Artist"),
+                           "album":track.get("Album", ""), "album_artist":track.get("Album Artist", "")})
     else:
         try:
             sample = content[:8192]
@@ -280,13 +289,17 @@ def import_playlist(body):
             headers = [x.strip().casefold() for x in next(rows)]
             title = next(i for i, x in enumerate(headers) if x in ("name", "titel", "title", "track name"))
             artist = next(i for i, x in enumerate(headers) if x in ("artist", "interpret", "künstler", "artist name"))
+            album = next((i for i,x in enumerate(headers) if x in ("album", "album name", "albumtitel")), None)
+            album_artist = next((i for i,x in enumerate(headers) if x in ("album artist", "albuminterpret", "album artist name")), None)
             tracks = []
             for row in rows:
                 if not row or not any(x.strip() for x in row):
                     continue
                 if max(title, artist) >= len(row):
                     raise ValueError("Unvollständige Titelzeile im Export")
-                tracks.append({"name":row[title], "artist":row[artist]})
+                tracks.append({"name":row[title], "artist":row[artist],
+                               **({"album":row[album]} if album is not None and album < len(row) else {}),
+                               **({"album_artist":row[album_artist]} if album_artist is not None and album_artist < len(row) else {})})
                 if len(tracks) > 1000:
                     raise ValueError("Bitte höchstens 1000 Titel pro Playlist importieren")
         except (csv.Error, StopIteration):
@@ -558,11 +571,11 @@ def store_album_image(album):
     raise RuntimeError("Cover konnte nicht lokal gespeichert werden: " + str(last_error or "Bildadresse fehlt"))
 
 
-def album_cover_search(body):
+def album_cover_search(body, *, max_search_length=200):
     """Independent catalog lookup; no Alexa/HA call, never leave network standby."""
     global ARTWORK_LAST_REQUEST
     search, identity = body.get("search"), body.get("album_id")
-    if not isinstance(search, str) or not search.strip() or len(search) > 200 or any(ord(c) < 32 for c in search):
+    if not isinstance(search, str) or not search.strip() or len(search) > max_search_length or any(ord(c) < 32 for c in search):
         raise ValueError("Bitte Albumtitel und möglichst den Interpreten eingeben")
     if identity is not None and (type(identity) is not int or not 0 < identity < 10**16):
         raise ValueError("Ungültige Albumzuordnung")
@@ -1447,6 +1460,9 @@ def album_tracks(favorite_id):
     album = next((x for x in records if isinstance(x, dict) and x.get("wrapperType") == "collection" and x.get("collectionId") == album_id), None)
     if album is None:
         raise ValueError("Album im Apple-Katalog nicht gefunden")
+    album_name = album.get("collectionName")
+    if not isinstance(album_name, str) or not 0 < len(album_name.strip()) <= 200 or any(ord(c) < 32 for c in album_name):
+        album_name = ""
     tracks = []
     for item in records:
         if not isinstance(item, dict) or item.get("wrapperType") != "track" or item.get("collectionId") != album_id:
@@ -1455,6 +1471,7 @@ def album_tracks(favorite_id):
         if not all(isinstance(v, str) and 0 < len(v.strip()) <= 200 and not any(ord(c) < 32 for c in v) for v in (title, artist)):
             continue
         tracks.append({"id": item.get("trackId"), "name": title, "artist": artist,
+                       **({"album":album_name.strip()} if album_name else {}),
                        "number": item.get("trackNumber") if type(item.get("trackNumber")) is int else len(tracks) + 1})
     tracks.sort(key=lambda item: item["number"])
     saved = stored_album(album_id)
@@ -1472,7 +1489,42 @@ def playlist_tracks(favorite_id):
     tracks = favorite.get("tracks")
     if tracks is None:
         raise ValueError("Bitte unter Playlists verwalten eine Titelliste importieren")
-    return {"album":favorite["name"], "artist":"Importierte Playlist", "tracks":tracks}
+    cache = artwork_cache() if any(track.get("album") for track in tracks) else {}
+    rendered = []
+    for track in tracks:
+        entry = cache.get("search:" + playlist_album_search(track).casefold(), {})
+        cover = matching_playlist_album(entry.get("items", []), track) if isinstance(entry, dict) else None
+        rendered.append({**track, **({"image":cover["image"]} if cover and cover.get("image") else {})})
+    return {"album":favorite["name"], "artist":"Importierte Playlist", "tracks":rendered}
+
+
+def playlist_album_search(track):
+    return (track.get("album", "") + " " + (track.get("album_artist") or track["artist"])).strip()
+
+
+def matching_playlist_album(albums, track):
+    def normalized(value):
+        return " ".join(re.findall(r"\w+", unicodedata.normalize("NFKC", value).casefold()))
+    if not track.get("album") or not isinstance(albums, list):
+        return None
+    matches = [album for album in albums if isinstance(album, dict) and
+               isinstance(album.get("name"), str) and isinstance(album.get("artist"), str) and
+               normalized(album["name"]) == normalized(track["album"]) and
+               normalized(album["artist"]) == normalized(track.get("album_artist") or track["artist"])]
+    return matches[0] if len(matches) == 1 else None
+
+
+def playlist_track_cover(favorite_id, track_id):
+    if type(track_id) is not int:
+        raise ValueError("Ungültige Titel-ID")
+    track = next((item for item in playlist_tracks(favorite_id)["tracks"] if item["id"] == track_id), None)
+    if track is None:
+        raise ValueError("Titel gehört nicht zur gespeicherten Playlist")
+    if not track.get("album"):
+        return {"image":""}
+    result = album_cover_search({"search":playlist_album_search(track)}, max_search_length=401)
+    cover = matching_playlist_album(result.get("items"), track)
+    return {"image":cover.get("image", "") if cover else ""}
 
 
 def play_apple_album_track(favorite_id, track_id, generation, *, playlist=False):
@@ -1488,6 +1540,8 @@ def play_apple_album_track(favorite_id, track_id, generation, *, playlist=False)
         raise ValueError("Titel gehört nicht zur gespeicherten Playlist" if playlist else "Titel gehört nicht zum gespeicherten Album")
     check_generation(generation)
     command = "spiel " + track["name"] + " von " + track["artist"]
+    if track.get("album"):
+        command += " aus dem Album " + track["album"]
     print("[HA Music] Single track request: " + json.dumps({"title":track["name"],
           "artist":track["artist"], "target":selection["target"], "media_type":"custom",
           "command":command}, ensure_ascii=False), flush=True)
@@ -2078,7 +2132,7 @@ class Handler(BaseHTTPRequestHandler):
         if name == "status" and "/api/" in path:
             return self.reply(200, {"radio": "direct_presets",
                                     "apple_music": "alexa_favorites", "backend": "connected" if TOKEN else "unavailable"})
-        if name in ("album-tracks", "playlist-tracks", "playlist-import") and "/api/" in path:
+        if name in ("album-tracks", "playlist-tracks", "playlist-cover", "playlist-import") and "/api/" in path:
             return self.reply(405, {"error":"POST required"})
         if name == "apple-library" and "/api/" in path:
             try:
@@ -2178,7 +2232,7 @@ class Handler(BaseHTTPRequestHandler):
             return self.reply(403, {"error": "Ingress only"})
         path = unquote(urlsplit(self.path).path)
         action = path.rsplit("/", 1)[-1]
-        if "/api/" not in path or action not in ("volume", "room_audio", "group_transport", "track_transport", "radio_direct", "apple_music", "radio_power", "selected_view", "dashboard_card_installed", "apple-library", "apple-library-order", "album-covers", "album-tracks", "apple_album_track", "playlist-tracks", "playlist-import", "apple_playlist_track"):
+        if "/api/" not in path or action not in ("volume", "room_audio", "group_transport", "track_transport", "radio_direct", "apple_music", "radio_power", "selected_view", "dashboard_card_installed", "apple-library", "apple-library-order", "album-covers", "album-tracks", "apple_album_track", "playlist-tracks", "playlist-cover", "playlist-import", "apple_playlist_track"):
             return self.reply(404, {"error": "Not found"})
         if self.headers.get("Sec-Fetch-Site") == "cross-site":
             return self.reply(403, {"error": "Cross-site request rejected"})
@@ -2192,6 +2246,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.reply(200, album_tracks(body.get("favorite")))
             if action == "playlist-tracks":
                 return self.reply(200, playlist_tracks(body.get("favorite")))
+            if action == "playlist-cover":
+                return self.reply(200, playlist_track_cover(body.get("favorite"), body.get("track_id")))
             if action == "playlist-import":
                 return self.reply(200, import_playlist(body))
             if action == "album-covers":

@@ -45,7 +45,8 @@ def music_tracks(name):
     if (matches.length !== 1) throw new Error('Playlist fehlt oder Name ist mehrfach vorhanden');
     const tracks = matches[0].tracks();
     if (tracks.length > 1000) throw new Error('Mehr als 1000 Titel');
-    JSON.stringify(tracks.map(t => ({name: t.name(), artist: t.artist()})));
+    function optional(read) { try { return read() || ''; } catch (_) { return ''; } }
+    JSON.stringify(tracks.map(t => ({name: t.name(), artist: t.artist(), album: optional(() => t.album()), album_artist: optional(() => t.albumArtist())})));
     '''.replace("NAME", json.dumps(name))
     result = subprocess.run(["/usr/bin/osascript", "-l", "JavaScript", "-"],
                             input=script, text=True, encoding="utf-8", capture_output=True,
@@ -55,6 +56,9 @@ def music_tracks(name):
             not isinstance(t, dict) or any(not isinstance(t.get(k), str) or not t[k].strip()
             or len(t[k]) > 200 or any(ord(c) < 32 for c in t[k]) for k in ("name", "artist")) for t in tracks):
         raise ValueError("Playlist enthält ungültige Titelinformationen")
+    if any(any(not isinstance(t.get(k, ""), str) or len(t.get(k, "")) > 200 or
+                   any(ord(c) < 32 for c in t.get(k, "")) for k in ("album", "album_artist")) for t in tracks):
+        raise ValueError("Playlist enthält ungültige Albuminformationen")
     return tracks
 
 

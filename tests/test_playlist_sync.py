@@ -34,7 +34,7 @@ class PlaylistSyncTests(unittest.TestCase):
                       {"name": "Album", "search": "Album", "kind": "Album", "album_id": 123},
                       {"name": "Other", "search": "Other", "kind": "Playlist"}]
         app.LIBRARY_FILE.write_text(json.dumps(app.normalize_library(self.items)))
-        self.tracks = [{"name": "Grüße 🎵", "artist": "Björk"}, {"name": "Again", "artist": "Band"}, {"name": "Again", "artist": "Band"}]
+        self.tracks = [{"name": "Grüße 🎵", "artist": "Björk", "album":"Debut", "album_artist":"Björk"}, {"name": "Again", "artist": "Band"}, {"name": "Again", "artist": "Band"}]
         class QuietHandler(app.Handler):
             def log_message(self, *args):
                 pass
@@ -74,6 +74,7 @@ class PlaylistSyncTests(unittest.TestCase):
         self.assertEqual(after["items"][0]["search"], "Alexa Mix")
         self.assertEqual([t["number"] for t in after["items"][0]["tracks"]], [1, 2, 3])
         self.assertEqual(after["items"][0]["tracks"][0]["name"], "Grüße 🎵")
+        self.assertEqual(after["items"][0]["tracks"][0]["album"], "Debut")
         with patch.object(app, "write_durable_json", side_effect=AssertionError("Unchanged sync must not rewrite")):
             self.assertFalse(self.request()[1]["changed"])
         with self.assertRaises(ValueError):

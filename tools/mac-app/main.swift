@@ -349,10 +349,15 @@ if CommandLine.arguments.contains("--self-test") {
             do { _ = try SyncCore.endpoint(address); fatalError("Invalid endpoint accepted") }
             catch is SyncFailure { }
         }
-        let tracks = [MusicTrack(name: "Grüße 🎵", artist: "Björk"), MusicTrack(name: "Again", artist: "Band"), MusicTrack(name: "Again", artist: "Band")]
+        let tracks = [MusicTrack(name: "Grüße 🎵", artist: "Björk", album: "Debut", albumArtist: "Björk"), MusicTrack(name: "Again", artist: "Band"), MusicTrack(name: "Again", artist: "Band")]
         let data = try SyncCore.payload(name: "Mix", tracks: tracks, create: true)
         let object = try JSONSerialization.jsonObject(with: data) as! [String: Any]
         assert((object["tracks"] as! [[String: Any]]).count == 3)
+        let first = (object["tracks"] as! [[String: Any]])[0]
+        assert(first["album"] as! String == "Debut")
+        assert(first["album_artist"] as! String == "Björk")
+        let decoded = try JSONDecoder().decode([MusicTrack].self, from: JSONEncoder().encode(tracks))
+        assert(decoded[0].album == "Debut" && decoded[0].albumArtist == "Björk")
         assert(object["create"] as! Bool)
         do { _ = try SyncCore.payload(name: "Mix", tracks: [], create: false); fatalError("Empty playlist accepted") } catch is SyncFailure { }
         try SyncCore.validateKey(SyncKeychain.generate())

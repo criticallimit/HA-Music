@@ -858,6 +858,39 @@ function renderAppleSelection(selection, force = false) {
 let albumDialogFavorite = null;
 let albumDialogGeneration = 0;
 let albumDialogTrackPending = false;
+const playlistCoverResults = new Map();
+function playlistCoverKey(track) {
+  return JSON.stringify([track.album || "", track.album_artist || track.artist]);
+}
+function setPlaylistTrackCover(art, url) {
+  const [image, placeholder] = art.children;
+  const valid = validAppleImage(url);
+  image.hidden = !valid; placeholder.hidden = !!valid;
+  image.removeAttribute("src");
+  image.onerror = () => { image.hidden = true; placeholder.hidden = false; };
+  image.referrerPolicy = "no-referrer";
+  if (valid) image.src = valid;
+}
+function loadPlaylistCovers(jobs, favorite, generation) {
+  const queue = Array.from(jobs.values());
+  const ui = uiGeneration;
+  const current = () => generation === albumDialogGeneration && albumDialogFavorite?.id === favorite &&
+    ui === uiGeneration && !strictStandby && radioReadyForViews && !mediaPreparing;
+  const next = async () => {
+    if (!queue.length || !current()) return;
+    const job = queue.shift();
+    try {
+      const result = await api("playlist-cover", {favorite,track_id:job.track.id});
+      if (!current()) return;
+      const image = validAppleImage(result.image);
+      playlistCoverResults.set(job.key, {image, expires:Date.now()+(image ? 86400000 : 60000)});
+      while (playlistCoverResults.size > 200) playlistCoverResults.delete(playlistCoverResults.keys().next().value);
+      for (const art of job.art) setPlaylistTrackCover(art, image);
+    } catch (_) { /* Missing artwork does not prevent selecting or playing a song. */ }
+    if (current() && queue.length) setTimeout(next, 4500);
+  };
+  if (queue.length) setTimeout(next, 0);
+}
 function setAlbumDialogCover(album) {
   const image = $("album-tracks-cover");
   const url = validAppleImage(album?.image);
@@ -907,6 +940,7 @@ async function openAlbumTracks(id) {
     $("album-tracks-artist").textContent = result.artist || "";
     if (result.image) setAlbumDialogCover(result);
     $("album-tracks-feedback").textContent = result.tracks?.length ? "" : favorite.kind === "Playlist" ? "Die importierte Playlist enthält keine Titel." : "Keine Titel im Apple-Katalog gefunden";
+    const coverJobs = new Map();
     for (const track of result.tracks || []) {
       const button = document.createElement("button");
       button.type = "button";
@@ -916,9 +950,27 @@ async function openAlbumTracks(id) {
       if (favorite.kind === "Playlist") {
         const artist = document.createElement("small"); artist.className = "playlist-track-artist"; artist.textContent = track.artist;
         name.appendChild(artist);
+        if (track.album) {
+          const album = document.createElement("small"); album.className = "playlist-track-album"; album.textContent = track.album;
+          name.appendChild(album);
+        }
       }
       const play = document.createElement("span"); play.className = "album-track-play"; play.textContent = "▶"; play.setAttribute("aria-hidden", "true");
-      button.append(number, name, play);
+      if (favorite.kind === "Playlist") {
+        button.classList.add("playlist-track-choice");
+        const art = document.createElement("span"); art.className = "playlist-track-art"; art.setAttribute("aria-hidden","true");
+        const image = document.createElement("img"); image.alt = ""; image.loading = "lazy";
+        const placeholder = document.createElement("span"); placeholder.className = "playlist-track-art-placeholder"; placeholder.textContent = "♫";
+        art.append(image,placeholder);
+        const key = playlistCoverKey(track), cached = playlistCoverResults.get(key);
+        const cover = validAppleImage(track.image) || (cached?.expires > Date.now() ? cached.image : "");
+        setPlaylistTrackCover(art,cover);
+        if (track.album && !cover && !(cached?.expires > Date.now())) {
+          if (!coverJobs.has(key)) coverJobs.set(key,{key,track,art:[]});
+          coverJobs.get(key).art.push(art);
+        }
+        button.append(number,art,name,play);
+      } else button.append(number, name, play);
       button.setAttribute("aria-label", "Titel " + track.number + ": " + track.name + (favorite.kind === "Playlist" ? " von " + track.artist : "") + " abspielen");
       button.title = "Titel auf Apple Music abspielen: " + track.name;
       button.addEventListener("click", async () => {
@@ -942,6 +994,11 @@ async function openAlbumTracks(id) {
         }
       });
       $("album-tracks-list").appendChild(button);
+    }
+    if (favorite.kind === "Playlist") {
+      loadPlaylistCovers(coverJobs,id,generation);
+      if (result.tracks?.length && !result.tracks.some(track => track.album))
+        $("album-tracks-feedback").textContent = "Für Albumcover bitte die Playlist mit der aktuellen Mac-App erneut synchronisieren.";
     }
   } catch (error) {
     if (generation === albumDialogGeneration) $("album-tracks-feedback").textContent = "Titelliste nicht verfügbar: " + error.message;

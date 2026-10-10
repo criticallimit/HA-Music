@@ -270,6 +270,12 @@ html.ha-dashboard-card .station.active,html.ha-dashboard-card nav button.active{
 .album-tracks-dialog .album-track-choice{display:grid;grid-template-columns:30px minmax(0,1fr) 28px;gap:10px;align-items:center;flex-shrink:0;width:100%;min-height:44px;padding:10px 8px;text-align:left;border:0;border-bottom:1px solid var(--border);border-radius:0;background:transparent;color:var(--text);line-height:1.35}
 .album-track-number{color:var(--muted);text-align:right;font-variant-numeric:tabular-nums}
 .album-track-name{overflow-wrap:anywhere}
+.album-tracks-dialog .playlist-track-choice{grid-template-columns:30px 44px minmax(0,1fr) 24px;min-height:64px}
+.playlist-track-art{display:grid;place-items:center;width:44px;height:44px;border-radius:5px;overflow:hidden;background:var(--surface);color:var(--muted)}
+.playlist-track-art img{width:100%;height:100%;object-fit:cover}
+.playlist-track-art-placeholder{font-size:22px}
+.playlist-track-album{display:block;font-size:11px;color:var(--muted);margin-top:2px}
+@media(max-width:420px){.album-tracks-dialog .playlist-track-choice{grid-template-columns:24px 40px minmax(0,1fr) 20px;gap:8px;padding:8px 2px}.playlist-track-art{width:40px;height:40px}}
 .album-track-play{color:var(--accent);text-align:center;font-size:14px}
 .album-tracks-dialog .album-track-choice:hover{background:var(--bg)}
 .album-tracks-dialog button:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}

@@ -5,13 +5,13 @@ Keine zusätzliche Python-Installation und keine Terminalbefehle nötig.
 
 ## Herunterladen und öffnen
 
-Im neuesten erfolgreichen [Check-Lauf auf main](https://github.com/criticallimit/HA-Music/actions/workflows/check.yml)
-unter **Artifacts** das Paket **HA-Music-Playlist-Sync-Mac** herunterladen
-(GitHub-Anmeldung erforderlich). Das Paket enthält die App als zusätzliches ZIP,
-eine kurze Anleitung und eine Vorschau der Oberfläche. Das App-ZIP entpacken
-und **HA Music Playlist Sync.app** nach Programme ziehen. Doppelklicken.
-Build-Artefakte bleiben 90 Tage verfügbar und werden bei neuen main-Commits neu
-gebaut. Es wird kein GitHub-Release veröffentlicht.
+Die [fertige Mac-App-ZIP in tools](https://github.com/criticallimit/HA-Music/raw/refs/heads/main/tools/HA-Music-Playlist-Sync.zip)
+herunterladen, entpacken und **HA Music Playlist Sync.app** nach Programme ziehen.
+Doppelklicken. Zusätzlich enthält der neueste erfolgreiche
+[Check-Lauf auf main](https://github.com/criticallimit/HA-Music/actions/workflows/check.yml)
+unter **Artifacts** das frisch gebaute Paket **HA-Music-Playlist-Sync-Mac** mit
+Anleitung und Vorschau (GitHub-Anmeldung erforderlich, 90 Tage verfügbar).
+Es wird kein GitHub-Release veröffentlicht.
 
 Die App ist ad hoc signiert, nicht mit Apple Developer ID signiert oder notarisiert.
 macOS kann sie deshalb beim ersten Start blockieren. Für die selbst aus diesem
@@ -44,6 +44,13 @@ vorhandene Playlists zu aktualisieren. Der Sync-Schlüssel erlaubt diese beiden
 Playlist-Operationen, keine Wiedergabe oder andere Add-on-Funktionen.
 
 ## Danach reicht Öffnen
+
+Die App überträgt auch Album und Albuminterpret jedes Titels. Für vorhandene
+Playlists einmal die aktuelle App herunterladen und erneut synchronisieren.
+HA Music zeigt dann Albumcover neben den einzelnen Titeln und verwendet den
+Album-Namen im Einzeltitelbefehl. Cover stammen aus dem öffentlichen Apple-Katalog;
+bei fehlender oder uneindeutiger Zuordnung bleibt ein Musik-Platzhalter sichtbar.
+Titel ohne Albumangabe können weiterhin abgespielt werden.
 
 Adresse und Auswahl werden gespeichert, der Schlüssel im macOS-Schlüsselbund.
 Bei aktivem **Beim Öffnen synchronisieren** reicht künftig ein Doppelklick auf

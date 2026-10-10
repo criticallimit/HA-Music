@@ -14,6 +14,12 @@ struct MusicPlaylist: Codable {
 struct MusicTrack: Codable {
     let name: String
     let artist: String
+    let album: String?
+    let albumArtist: String?
+    enum CodingKeys: String, CodingKey { case name, artist, album; case albumArtist = "album_artist" }
+    init(name: String, artist: String, album: String? = nil, albumArtist: String? = nil) {
+        self.name = name; self.artist = artist; self.album = album; self.albumArtist = albumArtist
+    }
 }
 
 struct PlaylistChoice: Codable {
@@ -80,6 +86,9 @@ enum SyncCore {
                   [track.name, track.artist].allSatisfy { text in
                       !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && text.count <= 200 &&
                           !text.unicodeScalars.contains(where: { $0.value < 32 })
+                  } && [track.album, track.albumArtist].allSatisfy { text in
+                      guard let text = text else { return true }
+                      return text.count <= 200 && !text.unicodeScalars.contains(where: { $0.value < 32 })
                   }
               }) else { throw SyncFailure(message: "Playlistname oder Titelinformationen sind unvollständig. Höchstens 1000 Titel pro Playlist sind erlaubt.") }
         guard !tracks.isEmpty else {
@@ -139,7 +148,8 @@ enum SyncCore {
         if (matches.length !== 1) throw new Error('Playlist missing');
         const tracks = matches[0].tracks();
         if (tracks.length > 1000) throw new Error('Too many tracks');
-        JSON.stringify(tracks.map(t => ({name: t.name(), artist: t.artist()})));
+        function optional(read) { try { return read() || ''; } catch (_) { return ''; } }
+        JSON.stringify(tracks.map(t => ({name: t.name(), artist: t.artist(), album: optional(() => t.album()), album_artist: optional(() => t.albumArtist())})));
         """
         return try JSONDecoder().decode([MusicTrack].self, from: runMusic(script))
     }
