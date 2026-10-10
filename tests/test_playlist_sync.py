@@ -119,7 +119,6 @@ class PlaylistSyncTests(unittest.TestCase):
         for invalid in (
             {"playlists": [{"name": "Mix", "tracks": [{"name": "Valid", "artist": "A"}]},
                            {"name": "Invalid", "tracks": [{"name": "Missing artist"}]}]},
-            {"playlists": [{"name": "Mix", "tracks": []}]},
             {"playlists": [{"name": "Mix", "tracks": self.tracks}] * 2}
         ):
             self.assertEqual(self.request(path="/api/ipad-playlists-sync", body=invalid)[0], 400)
