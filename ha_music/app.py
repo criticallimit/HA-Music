@@ -508,7 +508,7 @@ def normalize_ipad_duration(raw):
             numbers = [int(value) for value in values]
             if all(value < 60 for value in numbers[1:]):
                 return sum(value * 60 ** i for i, value in enumerate(reversed(numbers)))
-        elif re.fullmatch(r"[0-9]+(?:\\.[0-9]+)?", raw.strip()):
+        elif re.fullmatch(r"[0-9]+(?:\.[0-9]+)?", raw.strip()):
             return float(raw.strip())
     return raw
 
