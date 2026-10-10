@@ -441,7 +441,17 @@ def sync_playlist(body):
     name = body.get("name")
     if not isinstance(name, str) or not name.strip() or len(name) > 200:
         raise ValueError("Ungültiger Playlistname")
-    tracks = normalize_playlist_tracks(body.get("tracks"))
+    raw_tracks = body.get("tracks")
+    # iPad Shortcuts sometimes serializes repeated dictionaries as newline-delimited JSON objects.
+    # Parse on Raspberry Pi; retain the same strict validation as Mac sync.
+    if isinstance(raw_tracks, str):
+        if len(raw_tracks.encode("utf-8")) > 1048576:
+            raise ValueError("Titelliste zu groß")
+        try:
+            raw_tracks = [json.loads(line) for line in raw_tracks.splitlines() if line.strip()]
+        except json.JSONDecodeError as exc:
+            raise ValueError("Ungültiges Kurzbefehle-Titelformat") from exc
+    tracks = normalize_playlist_tracks(raw_tracks)
     for identity in {track["cover"] for track in tracks if track.get("cover")}:
         if identity:
             try:
