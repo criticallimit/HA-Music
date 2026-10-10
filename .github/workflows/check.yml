@@ -27,6 +27,7 @@ jobs:
           python -m unittest discover -s tests -p 'test_runtime.py' -v
           python -m unittest discover -s tests -p 'test_discovery_template.py' -v
           python -m unittest discover -s tests -p 'test_logo_sources.py' -v
+          python -m unittest discover -s tests -p 'test_apple_album_verification.py' -v
           node --check ha_music/web/app.js
           node --check ha_music/lovelace/ha-music-card.js
           node --check ha_music/lovelace/ha-music-card-loader.js
