@@ -1291,7 +1291,10 @@ def album_tracks(favorite_id):
         raise ValueError("HA Music ist ausgeschaltet")
     album_id = favorite.get("album_id")
     if not album_id:
-        raise ValueError("Bitte diesem Album zuerst über Alben verwalten eine eindeutige Cover-/Albumzuordnung zuweisen")
+        match = album_cover_search({"search": favorite.get("search") or favorite["name"]}).get("selected")
+        album_id = match.get("album_id") if match else None
+        if not album_id:
+            raise ValueError("Album nicht eindeutig erkannt. Bitte unter Alben verwalten eine Albumzuordnung auswählen")
     generation = RESTORE_GENERATION
     url = "https://itunes.apple.com/lookup?" + urlencode({"id": album_id, "entity": "song", "country": "DE", "limit": 200})
     request = Request(url, headers={"Accept": "application/json"})
