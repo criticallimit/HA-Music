@@ -644,7 +644,7 @@ def local_playlist_image(identity):
     if not isinstance(identity, str) or not re.fullmatch(r"[a-f0-9]{64}", identity):
         raise ValueError("Ungültige Coverzuordnung")
     data = (ARTWORK_DIR / "playlists" / f"{identity}.image").read_bytes()
-    if not 0 < len(data) <= 128 * 1024 or hashlib.sha256(data).hexdigest() != identity:
+    if not 0 < len(data) <= 3 * 1024 * 1024 or hashlib.sha256(data).hexdigest() != identity:
         raise ValueError("Ungültiges Playlistcover")
     return data, image_mime(data)
 
@@ -652,13 +652,13 @@ def local_playlist_image(identity):
 def sync_playlist_artwork(body):
     """Authenticated local upload; content addressed, deduplicated, no network or HA."""
     identity, encoded = body.get("cover"), body.get("data")
-    if not isinstance(identity, str) or not re.fullmatch(r"[a-f0-9]{64}", identity) or not isinstance(encoded, str) or len(encoded) > 175000:
+    if not isinstance(identity, str) or not re.fullmatch(r"[a-f0-9]{64}", identity) or not isinstance(encoded, str) or len(encoded) > 4 * 1024 * 1024 + 128:
         raise ValueError("Ungültiges Playlistcover")
     try:
         data = base64.b64decode(encoded, validate=True)
     except ValueError:
         raise ValueError("Ungültiges Playlistcover") from None
-    if not 0 < len(data) <= 128 * 1024 or hashlib.sha256(data).hexdigest() != identity:
+    if not 0 < len(data) <= 3 * 1024 * 1024 or hashlib.sha256(data).hexdigest() != identity:
         raise ValueError("Ungültiges Playlistcover")
     image_mime(data)
     with ARTWORK_LOCK:
@@ -2660,7 +2660,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self.reply(415, {"error": "JSON required"})
             try:
                 artwork = self.path == "/api/playlist-artwork-sync"
-                body = json.loads(self.read_request_body(192 * 1024 if artwork else 2097152))
+                body = json.loads(self.read_request_body(4 * 1024 * 1024 + 4096 if artwork else 2097152))
                 if not isinstance(body, dict):
                     raise ValueError("Invalid body")
                 return self.reply(200, sync_playlist_artwork(body) if artwork else (sync_all_ipad_playlists(body) if self.path == "/api/ipad-playlists-sync" else sync_playlist(body)))
