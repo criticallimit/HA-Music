@@ -86,6 +86,7 @@ class HAMusicCard extends HTMLElement {
     this.attachShadow({mode:"open"});
     this._config = {height: null, width: null};
     this._measuredHeight = null;
+    this._scaleObserver = null;
     this._hass = null;
     this._started = false;
     this._startGeneration = 0;
@@ -110,7 +111,7 @@ class HAMusicCard extends HTMLElement {
           const height = Number(event.data.height);
           if (!Number.isFinite(height) || height < 1 || height > 10000) return;
           this._measuredHeight = Math.ceil(height);
-          if (!this._config.height && this._iframe) this._iframe.style.height = this._measuredHeight + "px";
+          if (this._iframe) this._applyDimensions();
         }
       }
     };
@@ -242,7 +243,43 @@ class HAMusicCard extends HTMLElement {
   _applyDimensions() {
     this.style.width = this._config.width ? this._config.width + "px" : "100%";
     this.style.maxWidth = "100%";
-    if (this._iframe) this._iframe.style.height = (this._config.height || this._measuredHeight || 320) + "px";
+    const iframe = this._iframe;
+    if (!iframe) return;
+    const card = this.shadowRoot?.querySelector("ha-card");
+    const fixed = Boolean(this._config.width && this._config.height);
+    if (fixed && card) {
+      // Render at a stable natural width, then fit both dimensions together.
+      // This avoids a tiny viewport triggering a different mobile layout.
+      const availableWidth = Math.max(1, card.clientWidth || this._config.width);
+      const viewportWidth = Math.max(960, availableWidth);
+      const naturalHeight = Math.max(320, this._measuredHeight || 760);
+      const ratio = Math.min(1, availableWidth / viewportWidth, this._config.height / naturalHeight);
+      card.style.height = this._config.height + "px";
+      card.style.position = "relative";
+      iframe.style.position = "absolute";
+      iframe.style.left = "0";
+      iframe.style.top = "0";
+      iframe.style.width = viewportWidth + "px";
+      iframe.style.height = naturalHeight + "px";
+      iframe.style.transformOrigin = "top left";
+      iframe.style.transform = "scale(" + ratio + ")";
+      iframe.style.overflow = "hidden";
+      iframe.setAttribute("scrolling", "no");
+    } else {
+      if (card) {
+        card.style.height = "";
+        card.style.position = "";
+      }
+      iframe.style.position = "";
+      iframe.style.left = "";
+      iframe.style.top = "";
+      iframe.style.width = "100%";
+      iframe.style.height = (this._config.height || this._measuredHeight || 320) + "px";
+      iframe.style.transform = "";
+      iframe.style.transformOrigin = "";
+      iframe.style.overflow = "";
+      iframe.removeAttribute("scrolling");
+    }
   }
 
   _applyConfiguredTheme() {
@@ -312,6 +349,8 @@ class HAMusicCard extends HTMLElement {
     this._detachThemeReadyListener();
     this._themeObserver?.disconnect();
     this._themeObserver = null;
+    this._scaleObserver?.disconnect();
+    this._scaleObserver = null;
     if (this._themeSyncFrame !== null) window.cancelAnimationFrame(this._themeSyncFrame);
     this._themeSyncFrame = null;
     if (this._themeRetryTimer !== null) window.clearTimeout(this._themeRetryTimer);
@@ -343,7 +382,7 @@ class HAMusicCard extends HTMLElement {
     }
     const iframe = this._iframe;
     if (iframe && iframe.isConnected) {
-      iframe.style.height = (this._config.height || this._measuredHeight || 320) + "px";
+      this._applyDimensions();
       return;
     }
 
@@ -546,6 +585,12 @@ class HAMusicCard extends HTMLElement {
       });
       card.appendChild(iframe);
       this._iframe = iframe;
+      this._scaleObserver?.disconnect();
+      if (window.ResizeObserver) {
+        this._scaleObserver = new ResizeObserver(() => this._applyDimensions());
+        this._scaleObserver.observe(card);
+      }
+      this._applyDimensions();
       this._startSessionKeepAlive();
     } catch (err) {
       if (!isCurrent()) return;
