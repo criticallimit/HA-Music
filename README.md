@@ -413,3 +413,7 @@ Sicherung davor:
 
 Sicherung vor lokaler Coverübertragung und dauerhaften Suchzuordnungen:
 [backup/main-2026-10-10-local-playlist-covers-2fd4168](https://github.com/criticallimit/HA-Music/tree/backup/main-2026-10-10-local-playlist-covers-2fd4168), Commit `2fd4168eacee50d34b82a422ab9bdee8a215e871`.
+
+Zwischenstände vor den auf macOS geprüften Exportkorrekturen:
+[backup/main-2026-10-10-cover-thumbnail-0c50c29](https://github.com/criticallimit/HA-Music/tree/backup/main-2026-10-10-cover-thumbnail-0c50c29), Commit `0c50c29bd6b34d18a5411ffe80203291c68624af`;
+[backup/main-2026-10-10-cover-script-93c496c](https://github.com/criticallimit/HA-Music/tree/backup/main-2026-10-10-cover-script-93c496c), Commit `93c496c784feca8b79d5ece395f15da5a744e50b`.

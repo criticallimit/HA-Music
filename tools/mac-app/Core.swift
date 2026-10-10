@@ -242,12 +242,12 @@ enum SyncCore {
                 set fileHandle to missing value
                 try
                     set trackID to persistent ID of t
-                    set picture to raw data of artwork 1 of t
+                    set haMusicArtworkBytes to raw data of artwork 1 of t
                     set outputPath to \(path) & trackID & ".image"
                     tell current application
                         set fileHandle to open for access (POSIX file outputPath) with write permission
                         set eof fileHandle to 0
-                        write picture to fileHandle
+                        write haMusicArtworkBytes to fileHandle
                         close access fileHandle
                     end tell
                     set fileHandle to missing value
