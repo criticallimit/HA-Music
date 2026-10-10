@@ -13,6 +13,90 @@ app = fixtures.app
 class SavedControlsTests(unittest.TestCase):
     setUp = fixtures.RuntimeTests.setUp
 
+    def test_transport_settings_are_durable_and_ignore_opposite_player_reports(self):
+        app.READY = True
+        self.states["media_player.wohnung"] = {"state":"playing", "attributes":{
+            "supported_features":1 | 16384 | 32768, "shuffle":False}}
+        with patch.object(app,"state_snapshot",return_value=self.states), patch.object(app,"allowed_entities",return_value=app.enabled_device_ids()), patch.object(app,"ha_request",return_value={}) as request:
+            app.perform("group_transport", {"command":"pause"})
+            self.assertEqual(app.transport_intent(), {"state":"paused"})
+            for external in ("playing", "paused"):
+                self.states["media_player.wohnung"]["state"] = external
+                state = app.group_transport_state(self.states)
+                self.assertEqual(state["state"], "paused")
+                self.assertTrue(state["can_play"])
+                self.assertFalse(state["can_pause"])
+            # HA still reports playing; a new Play request must remain usable.
+            self.states["media_player.wohnung"]["state"] = "playing"
+            app.perform("group_transport", {"command":"play"})
+            app.perform("track_transport", {"entity_id":"media_player.wohnung", "command":"shuffle", "shuffle":True})
+            self.assertEqual(app.transport_intent(), {"state":"playing", "shuffle":True})
+            for external in (False, True, None):
+                self.states["media_player.wohnung"]["attributes"]["shuffle"] = external
+                self.assertIs(app.track_transport_state(self.states)["shuffle"], True)
+                self.assertTrue(app.track_transport_state(self.states)["can_shuffle"])
+            self.assertEqual([call.args[0] for call in request.call_args_list], [
+                "/services/media_player/media_pause", "/services/media_player/media_play", "/services/media_player/shuffle_set"])
+        saved = json.loads(app.TRANSPORT_FILE.read_text())
+        self.assertEqual(saved, {"version":1, "state":"playing", "shuffle":True})
+
+    def test_failed_transport_requests_leave_saved_settings_unchanged(self):
+        app.READY = True
+        app.save_transport_intent(state="playing", shuffle=False)
+        self.states["media_player.wohnung"] = {"state":"playing", "attributes":{
+            "supported_features":1 | 16384 | 32768, "shuffle":False}}
+        before = app.TRANSPORT_FILE.read_bytes()
+        with patch.object(app,"state_snapshot",return_value=self.states), patch.object(app,"allowed_entities",return_value=app.enabled_device_ids()), patch.object(app,"ha_request",side_effect=OSError("offline")):
+            for action, body in (("group_transport", {"command":"pause"}),
+                                 ("track_transport", {"entity_id":"media_player.wohnung", "command":"shuffle", "shuffle":True})):
+                with self.subTest(action=action), self.assertRaises(OSError):
+                    app.perform(action, body)
+                self.assertEqual(app.TRANSPORT_FILE.read_bytes(), before)
+
+    def test_cancelled_transport_request_cannot_persist_after_standby(self):
+        app.READY = True
+        app.save_transport_intent(state="playing", shuffle=False)
+        self.states["media_player.wohnung"] = {"state":"playing", "attributes":{"supported_features":1 | 16384}}
+        before = app.TRANSPORT_FILE.read_bytes()
+        def request(*args):
+            app.transition_power(False)
+            return {}
+        with patch.object(app,"state_snapshot",return_value=self.states), patch.object(app,"allowed_entities",return_value=app.enabled_device_ids()), patch.object(app,"ha_request",side_effect=request):
+            with self.assertRaises(app.StartupCancelled):
+                app.perform("group_transport", {"command":"pause"})
+        self.assertEqual(app.TRANSPORT_FILE.read_bytes(), before)
+
+    def test_transport_restart_and_standby_never_replay_saved_commands(self):
+        app.save_transport_intent(state="paused", shuffle=True)
+        app.transition_power(False)
+        self.assertEqual(app.transport_intent(), {"state":"paused", "shuffle":True})
+        with patch.object(app,"ha_request",side_effect=AssertionError("No replay")):
+            self.assertEqual(app.group_transport_state(self.states)["state"], "paused")
+            self.assertEqual(app.transport_intent()["shuffle"], True)
+        for saved in ([], None, {"version":True}, {"version":1,"state":"invalid","shuffle":1}):
+            app.TRANSPORT_FILE.write_text(json.dumps(saved))
+            self.assertEqual(app.transport_intent(), {})
+
+    def test_new_source_sets_playing_but_retains_shuffle_preference(self):
+        app.READY = True
+        app.save_transport_intent(state="paused", shuffle=True)
+        with patch.object(app,"state_snapshot",return_value=self.states), patch.object(app,"play_on_target",return_value={}) as play:
+            app.perform("radio_direct", {"station":"wdr2"})
+        self.assertEqual(app.transport_intent(), {"state":"playing", "shuffle":True})
+        self.assertEqual(play.call_count, 1)  # No extra shuffle or resume command.
+
+    def test_single_track_timer_uses_own_pause_intent_before_player_confirms(self):
+        session = {"track":{"name":"Song","artist":"Band","duration":10}, "target":"media_player.wohnzimmer", "started":100}
+        states = {"media_player.wohnzimmer":{"state":"playing","attributes":{"media_title":"Song","media_artist":"Band"}}}
+        app.save_transport_intent(state="playing")
+        self.assertFalse(app.single_track_step(session,states,100))
+        app.save_transport_intent(state="paused")
+        self.assertFalse(app.single_track_step(session,states,103))
+        self.assertFalse(app.single_track_step(session,states,200))
+        app.save_transport_intent(state="playing")
+        self.assertFalse(app.single_track_step(session,states,200))
+        self.assertEqual(session["deadline"], 207)
+
     def test_one_room_command_never_changes_other_rooms_and_survives_restart(self):
         app.READY = True
         initial = {"media_player.wohnung": .2, "media_player.bad": .5,

@@ -62,7 +62,7 @@ Sicherung vor dem Playlist-Shuffle-Standard: [backup/main-2026-10-09-before-play
 
 Die offizielle [Alexa Devices-Integration](https://github.com/home-assistant/core/blob/dev/homeassistant/components/alexa_devices/media_player.py) stellt Vor/Zurück je nach aktuellem Inhalt bereit, derzeit aber kein Shuffle. [Alexa Media Player](https://github.com/alandtse/alexa_media_player/blob/dev/custom_components/alexa_media/media_player.py) implementiert auch Shuffle. Ob Amazon Music oder Apple Music den konkreten Befehl annimmt, hängt von der Alexa-Sitzung und den verfügbaren Funktionen ab. Fehlende Funktionen oder ein unbekannter Shuffle-Zustand bleiben gesperrt; es gibt keine ersatzweisen Sprachbefehle und keinen Playlist-Neustart. Titelbefehle laufen nur nach einem Klick, erneuter Ziel-/Funktionsprüfung und bei freigegebener Oberfläche. Shuffle wird erst anhand des von HA gemeldeten Zustands markiert.
 
-Alexa erlaubt laut [SetShuffle-Dokumentation](https://developer.amazon.com/en-US/docs/alexa/device-apis/alexa-media-playqueue.html) den Wechsel der Reihenfolge während einer laufenden Musikwarteschlange. Der Shuffle-Button sendet dafür ausschließlich `media_player.shuffle_set` mit `shuffle: true` bzw. `false` an den geprüften aktiven Player, auch bei einer Apple-Playlist. Er startet die Playlist nicht erneut und verändert weder Lautstärken noch Power oder Play/Pause. Das Symbol ist bei gemeldetem Shuffle **hell**, bei gemeldeter normaler Reihenfolge **abgedunkelt**. Ein Klick schaltet den gewünschten Modus um; anschließend wird die Anzeige aus Home Assistant neu eingelesen. Bei unbekanntem Zustand bleibt der Button deaktiviert. Diese Anzeige bestätigt den HA-Zustand; eine echte Apple-/Alexa-Sitzung wurde hier nicht live getestet.
+Alexa erlaubt laut [SetShuffle-Dokumentation](https://developer.amazon.com/en-US/docs/alexa/device-apis/alexa-media-playqueue.html) den Wechsel der Reihenfolge während einer laufenden Musikwarteschlange. Der Shuffle-Button sendet dafür ausschließlich `media_player.shuffle_set` mit `shuffle: true` bzw. `false` an den geprüften aktiven Player, auch bei einer Apple-Playlist. Er startet die Playlist nicht erneut und verändert weder Lautstärken noch Power oder Play/Pause. Das Symbol ist bei gewähltem Shuffle **hell**, bei gewählter normaler Reihenfolge **abgedunkelt**. Ein Klick schaltet die Anzeige sofort um. Der angenommene Befehl speichert den eigenen Wunsch dauerhaft; Player-Meldungen überschreiben ihn nicht. Vor der ersten eigenen Wahl wird der vorhandene HA-Zustand angezeigt. Nicht unterstützte Befehle bleiben gesperrt. Die Symbole zeigen die gewählte Einstellung, keine Gerätebestätigung; eine echte Apple-/Alexa-Sitzung wurde hier nicht live getestet.
 
 Der vorhandene Button **Apple Music** öffnet eine Seite im gleichen Layout wie Radio. Cover/Logo, laufende Wiedergabe, Master-Lautstärke, Play/Pause und sämtliche aktiv ausgewählten Raumgeräte werden gemeinsam verwendet. Die bestehenden Elemente werden beim Umschalten verschoben, nicht dupliziert; dadurch bleiben Lautstärken, Bedienung und vorhandene Abfragen erhalten. Anstelle der Radiosender erscheinen konfigurierte **Playlists** und **Alben**. Ohne Favoriten zeigen diese Bereiche Leeranzeigen.
 
@@ -476,3 +476,28 @@ Raum. Master-Stumm erhält diesen Wert, statt nach Neustart einen älteren Raumw
 zum Entstummen zu verwenden. Sicherung vor dieser Ergänzung:
 [backup/main-2026-10-10-master-unmute-memory-dcf0ae0](https://github.com/criticallimit/HA-Music/tree/backup/main-2026-10-10-master-unmute-memory-dcf0ae0),
 Commit `dcf0ae03051caaa1f8fdf75d9526564a529666c7`.
+
+
+## Play/Pause und Shuffle sofort und dauerhaft anzeigen
+
+Die beiden Symbole wechseln bereits beim Klick. Der von Home Assistant angenommene
+Befehl speichert Play/Pause und Shuffle atomar mit Datenträgersynchronisierung
+unter `/data/transport_intent.json`. Spätere widersprüchliche Player-Meldungen
+ersetzen diese eigenen Einstellungen nicht; sie bleiben auch nach Browser- und
+Add-on-Neustart erhalten. Andere offene Ansichten übernehmen die gespeicherte
+Wahl. Vor der ersten eigenen Einstellung dient der bisherige Player-Zustand als
+Ausgangspunkt. Die Fähigkeiten und Verfügbarkeit des Zielgeräts werden weiterhin
+geprüft. Ein angenommener Pause-Befehl kann sofort durch Play abgelöst werden,
+auch wenn der Player seine alte Wiedergabemeldung noch nicht geändert hat.
+
+Fehlgeschlagene Befehle nehmen ihre Vorschau zurück und erscheinen als Fehler in
+der Wiedergabeanzeige. Ein neuer erfolgreicher Wiedergabebefehl setzt Play/Pause
+auf Wiedergabe; der automatische Einzeltitel-Stopp setzt es auf Pause. Ein eigener
+Pause-Klick friert den Einzeltitel-Timer sofort ein, ohne auf Player-Meldungen zu
+warten. Die Speicherung selbst startet oder wiederholt keine Wiedergabe. Standby
+und die ausschließlich lesende Wiederanbindung bleiben ohne zusätzliche Befehle.
+Die Symbole sind Bedienwünsche, kein Nachweis der tatsächlichen Geräteausführung.
+
+Sicherung davor:
+[backup/main-2026-10-10-immediate-transport-d87850d](https://github.com/criticallimit/HA-Music/tree/backup/main-2026-10-10-immediate-transport-d87850d),
+Commit `d87850db2944127cd0d13da4a0c60e77434b3254`.

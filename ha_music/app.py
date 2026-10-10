@@ -38,6 +38,7 @@ SPEAKER_FILE = Path(os.environ.get("SPEAKER_FILE", "/data/speaker_levels.json"))
 VIEW_FILE = Path(os.environ.get("VIEW_FILE", "/data/selected_view.json"))
 SESSION_FILE = Path(os.environ.get("SESSION_FILE", "/data/session.json"))
 SOURCE_FILE = Path(os.environ.get("SOURCE_FILE", "/data/last_source.json"))
+TRANSPORT_FILE = Path(os.environ.get("TRANSPORT_FILE", "/data/transport_intent.json"))
 LIBRARY_FILE = Path(os.environ.get("LIBRARY_FILE", "/data/apple_music_library.json"))
 LIBRARY_LOCK = threading.RLock()
 ARTWORK_FILE = Path(os.environ.get("ARTWORK_FILE", "/data/album_artwork.json"))
@@ -826,6 +827,26 @@ def save_remembered(entity, level):
         obj[entity] = level
         write_durable_json(VOLUME_FILE, obj)
         ROOM_REMEMBERED[entity] = level
+
+
+def transport_intent():
+    try:
+        saved = json.loads(TRANSPORT_FILE.read_text())
+        if not isinstance(saved, dict) or type(saved.get("version")) is not int or saved["version"] != 1:
+            return {}
+        result = {"state":saved["state"]} if saved.get("state") in ("playing", "paused") else {}
+        if type(saved.get("shuffle")) is bool:
+            result["shuffle"] = saved["shuffle"]
+        return result
+    except (OSError, ValueError):
+        return {}
+
+
+def save_transport_intent(**intent):
+    with LOCK:
+        write_durable_json(TRANSPORT_FILE, {"version":1, **transport_intent(), **intent})
+
+
 def speaker_levels():
     try:
         data = json.loads(SPEAKER_FILE.read_text())
@@ -1711,6 +1732,7 @@ def single_track_step(session, states, now):
         return not session.get("confirmed") and now-session["started"] >= 60
     entity, state = matches[0]
     attrs = state.get("attributes") or {}
+    own_state = transport_intent().get("state", state["state"])
     session["confirmed"] = True
     session["last_seen"] = now
     session["stop_target"] = entity
@@ -1725,7 +1747,7 @@ def single_track_step(session, states, now):
     position = float(position) if type(position) in (int,float) and 0 <= position <= duration else None
     stamp = attrs.get("media_position_updated_at")
     changed = session.get("position") != position or session.get("stamp") != stamp
-    if state["state"] == "paused":
+    if own_state == "paused":
         if not session.get("paused"):
             session["progress"] = (position if changed and position is not None else
                                    duration - max(0, session["deadline"]-now) if session.get("deadline") is not None else
@@ -1772,6 +1794,7 @@ def single_track_worker(session):
                         play_on_target(session["generation"],session["target"],"custom","pause")
                     with STATE_LOCK:
                         if SINGLE_TRACK is session:
+                            save_transport_intent(state="paused")
                             SINGLE_TRACK = None
                             if not session.get("confirmed"):
                                 SOURCE_RESTORE_ERROR = "Einzeltitel nicht bestätigt; Wiedergabe vorsorglich pausiert."
@@ -1824,6 +1847,7 @@ def play_apple_album_track(favorite_id, track_id, generation, *, playlist=False)
     with STATE_LOCK:
         check_generation(generation)
         save_selected_source("unknown", "")  # A single track must not restore its entire playlist on restart.
+        save_transport_intent(state="playing")
         save_selected_view("apple")
         ACTIVE_APPLE = {**favorite, "target": selection["target"], "kind": "Track", "name": track["name"]}
         APPLE_VERIFICATION_STARTED = None
@@ -1855,6 +1879,7 @@ def play_apple_music(favorite_id, generation, *, startup=False):
         check_generation(generation)
         cancel_single_track()
         save_selected_source("apple", favorite_id)
+        save_transport_intent(state="playing")
         save_selected_view("apple")
         ACTIVE_APPLE = {**favorite, "target": selection["target"]}
         APPLE_VERIFICATION_STARTED = time.monotonic()
@@ -1973,12 +1998,16 @@ def _radio_state():
 
 def group_transport_state(states):
     group = states.get("media_player.wohnung", {}) if "media_player.wohnung" in enabled_device_ids() else {}
-    state = group.get("state", "unavailable")
+    observed = group.get("state", "unavailable")
+    state = transport_intent().get("state", observed)
     features = (group.get("attributes") or {}).get("supported_features", 0)
     features = features if type(features) is int else 0
-    return {"state": state,
-            "can_play": state == "paused" and bool(features & MEDIA_FEATURE_PLAY),
-            "can_pause": state == "playing" and bool(features & MEDIA_FEATURE_PAUSE)}
+    available = observed in ("playing", "paused")
+    return {"state":state, "available":available,
+            "supports_play":bool(features & MEDIA_FEATURE_PLAY),
+            "supports_pause":bool(features & MEDIA_FEATURE_PAUSE),
+            "can_play":available and state == "paused" and bool(features & MEDIA_FEATURE_PLAY),
+            "can_pause":available and state == "playing" and bool(features & MEDIA_FEATURE_PAUSE)}
 
 
 def track_transport_state(states):
@@ -2001,7 +2030,7 @@ def track_transport_state(states):
             MEDIA_FEATURE_PREVIOUS | MEDIA_FEATURE_NEXT | MEDIA_FEATURE_SHUFFLE
         ) or attrs.get("media_content_type") in ("channel", "radio", "url"):
             continue
-        shuffle = attrs.get("shuffle")
+        shuffle = transport_intent().get("shuffle", attrs.get("shuffle"))
         return {"entity_id":entity, "can_previous":bool(features & MEDIA_FEATURE_PREVIOUS),
                 "can_next":bool(features & MEDIA_FEATURE_NEXT),
                 "can_shuffle":bool(features & MEDIA_FEATURE_SHUFFLE) and type(shuffle) is bool,
@@ -2083,6 +2112,7 @@ def playback_status():
             "radio_metadata": {"station": station, "metadata": payload},
             "transport": group_transport_state(states),
             "track_transport": track_transport,
+            "control_intent":transport_intent(),
             "volume_confirmation":volume_confirmation,
             "source_restore_error":source_restore_error,
             "apple_verification": verify_apple_album(verification_favorite, details, verification_elapsed) if apple else None,
@@ -2102,6 +2132,7 @@ def play_station(key, generation):
         check_generation(generation)
         cancel_single_track()
         save_selected_station(key)
+        save_transport_intent(state="playing")
         save_selected_view("radio")
         ACTIVE_APPLE = None
         SOURCE_UNCONFIRMED = False
@@ -2195,6 +2226,10 @@ def perform_control(action, body, generation):
             payload["shuffle"] = body["shuffle"]
         service = {"previous":"media_previous_track", "next":"media_next_track", "shuffle":"shuffle_set"}[command]
         result = startup_request(generation, "/services/media_player/" + service, payload)
+        if command == "shuffle":
+            with STATE_LOCK:
+                check_generation(generation)
+                save_transport_intent(shuffle=body["shuffle"])
         if command in ("previous", "next"):
             cancel_single_track()
         if command in ("previous", "next"):
@@ -2216,8 +2251,12 @@ def perform_control(action, body, generation):
         transport = group_transport_state(state_snapshot())
         if not transport["can_" + command]:
             raise ValueError("Gruppenwiedergabe kann derzeit nicht " + ("fortgesetzt" if command == "play" else "pausiert") + " werden")
-        return startup_request(generation, "/services/media_player/media_" + command,
-                               {"entity_id": "media_player.wohnung"})
+        result = startup_request(generation, "/services/media_player/media_" + command,
+                                 {"entity_id": "media_player.wohnung"})
+        with STATE_LOCK:
+            check_generation(generation)
+            save_transport_intent(state="playing" if command == "play" else "paused")
+        return result
     if action == "room_audio":
         entity, on = body.get("entity_id"), body.get("on")
         if type(on) is not bool:

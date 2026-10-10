@@ -915,7 +915,7 @@ test('track commands coalesce, include selected target and cannot wake standby',
   assert.equal(h.run('trackTransport'),null);
 });
 
-test('shuffle click sends explicit desired state and waits for HA confirmation', async () => {
+test('shuffle click immediately shows explicit desired state without waiting for player confirmation', async () => {
   const h = harness();
   let resolve;
   let desired;
@@ -923,10 +923,10 @@ test('shuffle click sends explicit desired state and waits for HA confirmation',
   h.run('api=reply; radioReadyForViews=true; trackTransport={entity_id:"media_player.wohnung",can_shuffle:true,shuffle:false}; renderTrackTransport(); loadRadioState=async()=>{}; updateSong=async()=>{}');
   const request=h.get('track-shuffle').listeners.click();
   assert.equal(desired,true);
-  assert.equal(h.get('track-shuffle').attributes['aria-pressed'],'false');
+  assert.equal(h.get('track-shuffle').attributes['aria-pressed'],'true');
   resolve({ok:true});
   await request;
-  assert.equal(h.get('track-shuffle').attributes['aria-pressed'],'false');
+  assert.equal(h.get('track-shuffle').attributes['aria-pressed'],'true');
 });
 
 test('old playback reply cannot re-enable cover controls after power off', async () => {
@@ -942,11 +942,11 @@ test('old playback reply cannot re-enable cover controls after power off', async
   assert.equal(h.run('trackTransport'),null);
 });
 
-test('active shuffle sends false and only becomes dim when HA reports ordered playback', async () => {
+test('active shuffle immediately becomes dim and ignores contrary player reports', async () => {
   const h = harness();
   const calls=[];
   h.context.reply=async(action,body)=>{calls.push({action,body});return {ok:true};};
-  h.context.playback=async()=>({playing:true,track_transport:{entity_id:'media_player.wohnung',can_shuffle:true,shuffle:false}});
+  h.context.playback=async()=>({playing:true,track_transport:{entity_id:'media_player.wohnung',can_shuffle:true,shuffle:true}});
   h.run('const originalUpdateSong = updateSong');
   h.run('api=reply; radioReadyForViews=true; trackTransport={entity_id:"media_player.wohnung",can_shuffle:true,shuffle:true}; renderTrackTransport(); loadRadioState=async()=>{}; updateSong=async()=>{}');
   assert.equal(h.get('track-shuffle').classList.contains('active'),true);
@@ -954,7 +954,7 @@ test('active shuffle sends false and only becomes dim when HA reports ordered pl
   assert.equal(calls.length,1);
   assert.equal(calls[0].action,'track_transport');
   assert.equal(calls[0].body.shuffle,false);
-  assert.equal(h.get('track-shuffle').attributes['data-shuffle-state'],'unknown');
+  assert.equal(h.get('track-shuffle').attributes['data-shuffle-state'],'off');
   h.run('api=playback');
   // Call the original polling function again after the request has settled.
   h.run('updateSong = originalUpdateSong');
@@ -991,6 +991,66 @@ test('group commands coalesce and cannot wake standby', async () => {
   resolve({});
   await first;
   assert.equal(button.disabled,true);
+});
+
+test('play pause icon flips before request completion and ignores stale player state', async () => {
+  const h=harness();
+  let resolve;
+  const row=h.run('volumeRow({entity_id:"media_player.wohnung",volume:.3},{},true)');
+  const button=row.children[3].children[1];
+  h.context.reply=action=>action==='group_transport' ? new Promise(r=>{resolve=r;}) : Promise.resolve({transport:{state:'playing',available:true,supports_play:true,supports_pause:true,can_pause:true,can_play:false}});
+  h.run('api=reply; radioReadyForViews=true; groupTransport={state:"playing",available:true,supports_play:true,supports_pause:true,can_pause:true}; renderGroupTransport()');
+  const pause=button.listeners.click();
+  assert.match(button.innerHTML,/m8 5 11 7-11 7Z/);
+  assert.equal(h.run('transportIntent.state'),'paused');
+  resolve({ok:true});await pause;await h.run('updateSong()');
+  assert.match(button.innerHTML,/m8 5 11 7-11 7Z/);
+  assert.equal(button.disabled,false);
+  const play=button.listeners.click();
+  assert.match(button.innerHTML,/M8 5v14M16 5v14/);
+  resolve({ok:true});await play;
+  assert.equal(h.run('transportIntent.state'),'playing');
+});
+
+test('saved transport choices survive fresh browser load while player reports the opposite', async () => {
+  const h=harness();
+  const row=h.run('volumeRow({entity_id:"media_player.wohnung",volume:.3},{},true)');
+  h.context.reply=async()=>({control_intent:{state:'paused',shuffle:true},transport:{state:'playing',available:true,supports_play:true,supports_pause:true},track_transport:{entity_id:'media_player.wohnung',can_shuffle:true,shuffle:false}});
+  h.run('api=reply; radioReadyForViews=true');
+  await h.run('updateSong()');
+  assert.match(row.children[3].children[1].innerHTML,/m8 5 11 7-11 7Z/);
+  assert.equal(h.get('track-shuffle').attributes['aria-pressed'],'true');
+  h.context.reply=async()=>({transport:{state:'playing',available:true,supports_play:true,supports_pause:true},track_transport:{entity_id:'media_player.wohnung',can_shuffle:true,shuffle:false}});
+  await h.run('updateSong()');
+  assert.equal(h.run('transportIntent.state'),'paused');
+  assert.equal(h.get('track-shuffle').attributes['aria-pressed'],'true');
+});
+
+test('failed play pause or shuffle rolls back the immediate icon and reports the failure', async () => {
+  const h=harness();
+  const row=h.run('volumeRow({entity_id:"media_player.wohnung",volume:.3},{},true)');
+  h.context.reply=async()=>{throw new Error('offline');};
+  h.run('api=reply; radioReadyForViews=true; groupTransport={state:"playing",can_pause:true}; trackTransport={entity_id:"media_player.wohnung",can_shuffle:true,shuffle:false}; updateSong=async()=>{}; loadRadioState=async()=>{}; renderGroupTransport()');
+  await h.run('controlGroup("pause")');
+  assert.match(row.children[3].children[1].innerHTML,/M8 5v14M16 5v14/);
+  assert.equal(h.run('transportIntent.state'),undefined);
+  await h.run('controlTrack("shuffle")');
+  assert.equal(h.get('track-shuffle').attributes['aria-pressed'],'false');
+  assert.equal(h.run('transportIntent.shuffle'),undefined);
+  assert.match(h.get('playback-state').textContent,/offline/);
+});
+
+test('standby removes unaccepted transport preview and late failure cannot restore it', async () => {
+  const h=harness();
+  let reject;
+  h.context.reply=()=>new Promise((_,r)=>{reject=r;});
+  h.run('api=reply; radioReadyForViews=true; transportIntent={state:"playing",shuffle:false}; groupTransport={state:"playing",can_pause:true}; updateSong=async()=>{}');
+  const request=h.run('controlGroup("pause")');
+  assert.equal(h.run('transportIntent.state'),'paused');
+  h.run('uiGeneration++; radioReadyForViews=false; displayRadioReadiness(false)');
+  assert.equal(h.run('transportIntent.state'),'playing');
+  reject(new Error('cancelled'));await request;
+  assert.equal(h.run('transportIntent.state'),'playing');
 });
 
 test('playback reply from before group command cannot restore old control state', async () => {

@@ -136,15 +136,27 @@ let transportPending = false;
 let transportEpoch = 0;
 let groupTransport = null;
 let trackTransport = null;
+let transportIntent = {};
+let transportError = "";
+let transportPreview = null;
 let masterTransportButton = null;
+function shuffleIntent() { return transportIntent.shuffle ?? trackTransport?.shuffle; }
+function groupPlaybackState() { return transportIntent.state ?? groupTransport?.state; }
+function canControlGroup(command) {
+  if (!groupTransport) return false;
+  const support = groupTransport["supports_" + command];
+  if (typeof support === "boolean") return groupTransport.available && support &&
+    groupPlaybackState() === (command === "play" ? "paused" : "playing");
+  return Boolean(groupTransport["can_" + command]);
+}
 function renderTrackTransport() {
   for (const [command,label] of [["previous","Vorheriger Titel"],["shuffle","Shuffle"],["next","Nächster Titel"]]) {
     const button = $("track-" + command);
     button.disabled = strictStandby || !radioReadyForViews || mediaPreparing || stationPending || transportPending || !trackTransport?.["can_" + command];
     const shuffle = command === "shuffle";
-    const confirmed = shuffle && trackTransport?.shuffle === true;
+    const confirmed = shuffle && shuffleIntent() === true;
     if (shuffle) {
-      const state = typeof trackTransport?.shuffle === "boolean" ? (confirmed ? "on" : "off") : "unknown";
+      const state = typeof shuffleIntent() === "boolean" ? (confirmed ? "on" : "off") : "unknown";
       button.setAttribute("data-shuffle-state", state);
       button.setAttribute("aria-pressed", String(confirmed));
       button.classList.toggle("active", confirmed);
@@ -159,8 +171,14 @@ function renderTrackTransport() {
 async function controlTrack(command) {
   if (strictStandby || !radioReadyForViews || mediaPreparing || stationPending || transportPending || !trackTransport?.["can_" + command]) return;
   const body = {command, entity_id:trackTransport.entity_id};
-  if (command === "shuffle") body.shuffle = !trackTransport.shuffle;
+  if (command === "shuffle") body.shuffle = !shuffleIntent();
   const generation = uiGeneration;
+  const previousIntent = {...transportIntent};
+  transportError = "";
+  if (command === "shuffle") {
+    transportPreview = {generation, previous:previousIntent};
+    transportIntent.shuffle = body.shuffle;
+  }
   transportPending = true;
   transportEpoch++;
   renderGroupTransport();
@@ -169,12 +187,16 @@ async function controlTrack(command) {
   try {
     await api("track_transport", body);
     if (generation !== uiGeneration || !radioReadyForViews) return;
-    // Do not optimistically flip shuffle: display HA's reported state only.
-    trackTransport = null;
-    groupTransport = null;
+    if (command !== "shuffle") { trackTransport = null; groupTransport = null; }
   } catch (e) {
-    if (generation === uiGeneration) reportError("Titelsteuerung fehlgeschlagen: " + e.message);
+    if (generation === uiGeneration) {
+      transportIntent = previousIntent;
+      transportError = "Titelsteuerung fehlgeschlagen: " + e.message;
+      $("playback-state").textContent = transportError;
+      reportError(transportError);
+    }
   } finally {
+    if (transportPreview?.generation === generation) transportPreview = null;
     transportPending = false;
     renderGroupTransport();
     if (generation === uiGeneration && radioReadyForViews) {
@@ -188,8 +210,8 @@ for (const command of ["previous","shuffle","next"])
 function renderGroupTransport() {
   renderTrackTransport();
   if (!masterTransportButton) return;
-  const pause = groupTransport?.state === "playing";
-  masterTransportButton.disabled = strictStandby || !radioReadyForViews || mediaPreparing || stationPending || transportPending || !(pause ? groupTransport?.can_pause : groupTransport?.can_play);
+  const pause = groupPlaybackState() === "playing";
+  masterTransportButton.disabled = strictStandby || !radioReadyForViews || mediaPreparing || stationPending || transportPending || !canControlGroup(pause ? "pause" : "play");
   const label = transportPending ? "Gruppenbefehl wird gesendet …" :
     masterTransportButton.disabled ? "Gruppensteuerung derzeit nicht verfügbar" :
     pause ? "Gesamte Gruppe pausieren" : "Gesamte Gruppe fortsetzen";
@@ -199,18 +221,27 @@ function renderGroupTransport() {
     (pause ? '<path d="M8 5v14M16 5v14" stroke-linecap="round"/>' : '<path d="m8 5 11 7-11 7Z"/>') + '</svg>';
 }
 async function controlGroup(command) {
-  if (strictStandby || !radioReadyForViews || mediaPreparing || stationPending || transportPending || !groupTransport?.["can_" + command]) return;
+  if (strictStandby || !radioReadyForViews || mediaPreparing || stationPending || transportPending || !canControlGroup(command)) return;
+  const previousIntent = {...transportIntent};
+  const generation = uiGeneration;
+  transportPreview = {generation, previous:previousIntent};
+  transportError = "";
+  transportIntent.state = command === "play" ? "playing" : "paused";
   transportPending = true;
   transportEpoch++;
-  const generation = uiGeneration;
   renderGroupTransport();
   try {
     await api("group_transport", {command});
     if (generation !== uiGeneration || !radioReadyForViews) return;
-    groupTransport = null;
   } catch (e) {
-    if (generation === uiGeneration) reportError("Gruppensteuerung fehlgeschlagen: " + e.message);
+    if (generation === uiGeneration) {
+      transportIntent = previousIntent;
+      transportError = "Gruppensteuerung fehlgeschlagen: " + e.message;
+      $("playback-state").textContent = transportError;
+      reportError(transportError);
+    }
   } finally {
+    if (transportPreview?.generation === generation) transportPreview = null;
     transportPending = false;
     renderGroupTransport();
     if (generation === uiGeneration && radioReadyForViews) updateSong();
@@ -349,6 +380,8 @@ async function updateSong() {
     const info = await api("playback-status");
     if (generation !== uiGeneration || !radioReadyForViews || stationEpoch !== epoch || station !== selectedStation || transportRequestEpoch !== transportEpoch) return;
     if (!transportPending) {
+      if (info.control_intent?.state === "playing" || info.control_intent?.state === "paused") transportIntent.state = info.control_intent.state;
+      if (typeof info.control_intent?.shuffle === "boolean") transportIntent.shuffle = info.control_intent.shuffle;
       groupTransport = info.transport || null;
       trackTransport = info.track_transport || null;
       renderGroupTransport();
@@ -379,17 +412,17 @@ async function updateSong() {
       }
     }
     const unconfirmedVolumes = Object.keys(info.volume_confirmation || {});
-    $("playback-state").textContent = info.source_restore_error || (unconfirmedVolumes.length
+    $("playback-state").textContent = transportError || info.source_restore_error || (unconfirmedVolumes.length
       ? "Lautstärke von " + unconfirmedVolumes.length + " Echo-Gerät(en) noch nicht bestätigt. Hörbare Wiedergabe nicht bestätigt."
       : info.playing ? "Alexa meldet Wiedergabe" : "Alexa meldet derzeit keine aktive Wiedergabe");
-    if (activeApple?.kind === "Album" && info.apple_verification && !info.source_restore_error) {
+    if (activeApple?.kind === "Album" && info.apple_verification && !transportError && !info.source_restore_error) {
       const verification = info.apple_verification;
       const prefix = {confirmed:"Album bestätigt", pending:"Albumprüfung läuft", mismatch:"Falsches Album", unverifiable:"Album nicht überprüfbar"}[verification.status];
       if (prefix) $("playback-state").textContent = prefix + ": " + verification.reason;
     }
   } catch(e) {
     if (generation === uiGeneration && stationEpoch === epoch && transportRequestEpoch === transportEpoch) {
-      $("playback-state").textContent = "Wiedergabestatus nicht verfügbar: " + e.message;
+      $("playback-state").textContent = transportError || "Wiedergabestatus nicht verfügbar: " + e.message;
       groupTransport = null;
       trackTransport = null;
       renderGroupTransport();
@@ -977,12 +1010,15 @@ async function openAlbumTracks(id) {
       button.addEventListener("click", async () => {
         if (button.disabled || albumDialogTrackPending || albumDialogFavorite?.id !== id || generation !== albumDialogGeneration || stationPending || transportPending || strictStandby || !radioReadyForViews || mediaPreparing) return;
         albumDialogTrackPending = true;
+        transportEpoch++;
         for (const choice of $("album-tracks-list").children) choice.disabled = true;
         $("album-play-all").disabled = true;
         $("album-tracks-feedback").textContent = "Titel wird gestartet …";
         try {
           await api(favorite.kind === "Playlist" ? "apple_playlist_track" : "apple_album_track", {favorite:id,track_id:track.id});
           if (generation !== albumDialogGeneration) return;
+          transportIntent.state = "playing";
+          transportError = "";
           closeAlbumTracks();
           await loadRadioState();
           updateSong();
@@ -1018,6 +1054,8 @@ async function startAppleFavorite(id) {
   try {
     await api("apple_music", {favorite:id});
     if (generation !== uiGeneration) return;
+    transportIntent.state = "playing";
+    transportError = "";
     activeApple = favorite;
     selectedStation = "";
     stationEpoch++;
@@ -1063,6 +1101,8 @@ for (const [id,name] of STATIONS) {
     try {
       await api("radio_direct", {station:id});
       if (generation !== uiGeneration) return;
+      transportIntent.state = "playing";
+      transportError = "";
       selectedStation = id;
       activeApple = null;
       updateStationLogo(id);
@@ -1086,7 +1126,11 @@ for (const [id,name] of STATIONS) {
   $("station-list").appendChild(button);
 }
 function displayRadioReadiness(isReady) {
-  if (!isReady) { groupTransport = null; trackTransport = null; }
+  if (!isReady) {
+    if (transportPreview) transportIntent = transportPreview.previous;
+    transportPreview = null;
+    groupTransport = null; trackTransport = null;
+  }
   renderGroupTransport();
   document.querySelector(".now").hidden = !isReady;
   document.querySelector(".dashboard-right").hidden = !isReady;
@@ -1360,7 +1404,7 @@ function volumeRow(p, remembered, master) {
     masterTransportButton = document.createElement("button");
     masterTransportButton.type = "button";
     masterTransportButton.className = "master-transport";
-    masterTransportButton.addEventListener("click", () => controlGroup(groupTransport?.state === "playing" ? "pause" : "play"));
+    masterTransportButton.addEventListener("click", () => controlGroup(groupPlaybackState() === "playing" ? "pause" : "play"));
     controls.append(mute, masterTransportButton);
     row.append(title,slider,label,controls);
     renderGroupTransport();

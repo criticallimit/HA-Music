@@ -30,7 +30,7 @@ class RuntimeTests(unittest.TestCase):
         self.stack = ExitStack()
         self.addCleanup(self.stack.close)
         folder = Path(self.stack.enter_context(tempfile.TemporaryDirectory(dir=ROOT)))
-        for name in ("VOLUME_FILE", "STATION_FILE", "SPEAKER_FILE", "VIEW_FILE", "SESSION_FILE", "SOURCE_FILE", "OPTIONS", "LIBRARY_FILE", "ARTWORK_FILE", "ARTWORK_DIR"):
+        for name in ("VOLUME_FILE", "STATION_FILE", "SPEAKER_FILE", "VIEW_FILE", "SESSION_FILE", "SOURCE_FILE", "TRANSPORT_FILE", "OPTIONS", "LIBRARY_FILE", "ARTWORK_FILE", "ARTWORK_DIR"):
             self.stack.enter_context(patch.object(app, name, folder / (name + ".json")))
         self.stack.enter_context(patch.object(app, "SUPERVISOR_OPTIONS", None))
         self.stack.enter_context(patch.object(app, "ARTWORK_LAST_REQUEST", 0))
