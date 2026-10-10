@@ -3,6 +3,8 @@ from contextlib import ExitStack
 from http.client import HTTPConnection
 import importlib.util
 import json
+import base64
+import hashlib
 from pathlib import Path
 import subprocess
 import sys
@@ -26,6 +28,8 @@ class PlaylistSyncTests(unittest.TestCase):
         self.addCleanup(self.stack.close)
         folder = Path(self.stack.enter_context(tempfile.TemporaryDirectory(dir=ROOT)))
         self.stack.enter_context(patch.object(app, "LIBRARY_FILE", folder / "library.json"))
+        self.stack.enter_context(patch.object(app, "ARTWORK_DIR", folder / "covers"))
+        self.stack.enter_context(patch.object(app, "ARTWORK_FILE", folder / "cover-cache.json"))
         self.key = "s" * 43
         self.stack.enter_context(patch.object(app, "options", return_value={"playlist_sync_token": self.key}))
         self.stack.enter_context(patch.object(app, "ha_request", side_effect=AssertionError("Sync must not contact HA")))
@@ -79,6 +83,55 @@ class PlaylistSyncTests(unittest.TestCase):
             self.assertFalse(self.request()[1]["changed"])
         with self.assertRaises(ValueError):
             app.save_library(before)  # Reject editor saves opened before a sync.
+
+    def test_authenticated_cover_upload_deduplicates_and_track_sync_keeps_local_image(self):
+        picture = b"\x89PNG\r\n\x1a\nlocal fixture"
+        identity = hashlib.sha256(picture).hexdigest()
+        payload = {"cover":identity,"data":base64.b64encode(picture).decode()}
+        with patch.object(app,"urlopen",side_effect=AssertionError("Uploading never uses the internet")):
+            status,result = self.request(path="/api/playlist-artwork-sync",body=payload)
+            self.assertEqual(status,200)
+            self.assertTrue(result["changed"])
+            self.assertFalse(self.request(path="/api/playlist-artwork-sync",body=payload)[1]["changed"])
+            self.assertEqual(app.local_playlist_image(identity),(picture,"image/png"))
+            tracks = [{**self.tracks[0],"cover":identity,"local_covers":True},self.tracks[1]]
+            self.assertEqual(self.request(body={"name":"Mix","tracks":tracks})[0],200)
+            with patch.object(app,"READY",True), patch.object(app,"PREPARING",False), patch.object(app,"STANDBY",threading.Event()):
+                favorite = app.apple_music_selection()["items"][0]
+                rendered = app.playlist_tracks(favorite["id"])["tracks"][0]
+                self.assertEqual(rendered["image"],"api/playlist-art/"+identity)
+                with patch.object(app,"album_cover_search",side_effect=AssertionError("Do not search existing images")):
+                    self.assertEqual(app.playlist_track_cover(favorite["id"],rendered["id"]),{"image":rendered["image"]})
+        handler = object.__new__(app.Handler)
+        handler.client_address = ("172.30.32.2",1)
+        handler.path = "/prefix/api/playlist-art/"+identity
+        from unittest.mock import Mock
+        import io
+        handler.send_response=Mock(); handler.send_header=Mock(); handler.end_headers=Mock();handler.reply=Mock()
+        handler.wfile=io.BytesIO()
+        handler.do_GET()
+        self.assertEqual(handler.wfile.getvalue(),picture)
+        handler.send_header.assert_any_call("Content-Type","image/png")
+        handler.path="/api/playlist-art/..%2Foptions.json"
+        handler.do_GET()
+        self.assertEqual(handler.reply.call_args.args[0],404)
+        handler.path="/api/playlist-art/"+identity
+        handler.client_address=("127.0.0.1",1)
+        handler.do_GET()
+        self.assertEqual(handler.reply.call_args.args[0],403)
+
+    def test_invalid_unauthorized_or_unuploaded_covers_do_not_modify_playlist(self):
+        before = app.LIBRARY_FILE.read_bytes()
+        data=b"\xff\xd8\xfffixture"
+        identity=hashlib.sha256(data).hexdigest()
+        payload={"cover":identity,"data":base64.b64encode(data).decode()}
+        self.assertEqual(self.request(path="/api/playlist-artwork-sync",body=payload,headers={"Authorization":"wrong"})[0],403)
+        for bad in ({**payload,"cover":"../options"},{**payload,"cover":"f"*64}, {**payload,"data":"bad base64"},
+                    {"cover":hashlib.sha256(b"<svg></svg>").hexdigest(),"data":base64.b64encode(b"<svg></svg>").decode()}):
+            self.assertEqual(self.request(path="/api/playlist-artwork-sync",body=bad)[0],400)
+        for reference in (identity,"../options"):
+            self.assertEqual(self.request(body={"name":"Mix","tracks":[{**self.tracks[0],"cover":reference}]})[0],400)
+        self.assertEqual(app.LIBRARY_FILE.read_bytes(),before)
 
     def test_invalid_missing_and_duplicate_names_leave_file_unchanged(self):
         before = app.LIBRARY_FILE.read_bytes()

@@ -5,6 +5,7 @@ from urllib.parse import unquote, urlsplit, urlencode
 from urllib.request import Request, urlopen
 from http.client import HTTPException
 import json
+import base64
 import csv
 import io
 import plistlib
@@ -244,6 +245,14 @@ def normalize_playlist_tracks(tracks):
                 raise ValueError(f"Titel {number}: Ungültige Albumangabe")
             if value.strip():
                 extra[key] = value.strip()
+        if "cover" in track:
+            if not isinstance(track["cover"], str) or not re.fullmatch(r"[a-f0-9]{64}", track["cover"]):
+                raise ValueError(f"Titel {number}: Ungültige Coverzuordnung")
+            extra["cover"] = track["cover"]
+        if "local_covers" in track:
+            if type(track["local_covers"]) is not bool:
+                raise ValueError(f"Titel {number}: Ungültige Coverquelle")
+            extra["local_covers"] = track["local_covers"]
         identity_fields = [number, name, artist] + ([extra] if extra else [])
         identity = int(hashlib.sha256(json.dumps(identity_fields, sort_keys=True).encode()).hexdigest()[:12], 16) + 1
         result.append({"id":identity, "number":number, "name":name, "artist":artist, **extra})
@@ -424,6 +433,12 @@ def sync_playlist(body):
     if not isinstance(name, str) or not name.strip() or len(name) > 200:
         raise ValueError("Ungültiger Playlistname")
     tracks = normalize_playlist_tracks(body.get("tracks"))
+    for identity in {track["cover"] for track in tracks if track.get("cover")}:
+        if identity:
+            try:
+                local_playlist_image(identity)  # Require uploaded bytes before committing references.
+            except (OSError, ValueError):
+                raise ValueError("Playlistcover bitte zuerst übertragen") from None
     if "create" in body and type(body["create"]) is not bool:
         raise ValueError("Ungültige Auswahl für neue Playlists")
     with LIBRARY_LOCK:
@@ -489,6 +504,25 @@ def artwork_cache():
         return {}
 
 
+def artwork_search_index():
+    try:
+        value = json.loads((ARTWORK_DIR / "search-index.json").read_text(encoding="utf-8"))
+        return value if isinstance(value, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def remember_artwork_search(key, identity):
+    """Called under ARTWORK_LOCK; successful mappings outlive the query cache."""
+    index = artwork_search_index()
+    if index.get(key) == identity:
+        return
+    index[key] = identity
+    with LOCK:
+        ARTWORK_DIR.mkdir(parents=True, exist_ok=True)
+        write_durable_json(ARTWORK_DIR / "search-index.json", index)
+
+
 def image_mime(data):
     if data.startswith(b"\xff\xd8\xff"):
         return "image/jpeg"
@@ -497,6 +531,43 @@ def image_mime(data):
     if data.startswith(b"RIFF") and data[8:12] == b"WEBP":
         return "image/webp"
     raise ValueError("Coverantwort ist kein unterstütztes Bild")
+
+
+def local_playlist_image(identity):
+    if not isinstance(identity, str) or not re.fullmatch(r"[a-f0-9]{64}", identity):
+        raise ValueError("Ungültige Coverzuordnung")
+    data = (ARTWORK_DIR / "playlists" / f"{identity}.image").read_bytes()
+    if not 0 < len(data) <= 128 * 1024 or hashlib.sha256(data).hexdigest() != identity:
+        raise ValueError("Ungültiges Playlistcover")
+    return data, image_mime(data)
+
+
+def sync_playlist_artwork(body):
+    """Authenticated local upload; content addressed, deduplicated, no network or HA."""
+    identity, encoded = body.get("cover"), body.get("data")
+    if not isinstance(identity, str) or not re.fullmatch(r"[a-f0-9]{64}", identity) or not isinstance(encoded, str) or len(encoded) > 175000:
+        raise ValueError("Ungültiges Playlistcover")
+    try:
+        data = base64.b64decode(encoded, validate=True)
+    except ValueError:
+        raise ValueError("Ungültiges Playlistcover") from None
+    if not 0 < len(data) <= 128 * 1024 or hashlib.sha256(data).hexdigest() != identity:
+        raise ValueError("Ungültiges Playlistcover")
+    image_mime(data)
+    with ARTWORK_LOCK:
+        folder = ARTWORK_DIR / "playlists"
+        folder.mkdir(parents=True, exist_ok=True)
+        destination = folder / f"{identity}.image"
+        changed = not destination.exists() or destination.read_bytes() != data
+        if changed:
+            temporary = destination.with_suffix(".tmp")
+            try:
+                with temporary.open("wb") as stream:
+                    stream.write(data); stream.flush(); os.fsync(stream.fileno())
+                temporary.replace(destination)
+            finally:
+                temporary.unlink(missing_ok=True)
+    return {"ok":True, "changed":changed, "tracks":0}
 
 
 def local_album_image(identity):
@@ -509,6 +580,8 @@ def local_album_image(identity):
 
 
 def stored_album(identity):
+    if type(identity) is not int or not 0 < identity < 10**16:
+        return None
     try:
         album = json.loads((ARTWORK_DIR / f"{identity}.json").read_text(encoding="utf-8"))
         if not isinstance(album, dict) or album.get("album_id") != identity:
@@ -583,7 +656,7 @@ def album_cover_search(body, *, max_search_length=200):
     with ARTWORK_LOCK:
         cache = artwork_cache()
         entry = cache.get(key, {})
-        saved = stored_album(identity) if identity else None
+        saved = stored_album(identity) if identity else stored_album(artwork_search_index().get(key))
         if saved:
             albums = [saved]
         elif isinstance(entry, dict) and type(entry.get("at")) in (int, float) and time.time() - entry["at"] < 86400 and isinstance(entry.get("items"), list):
@@ -627,9 +700,11 @@ def album_cover_search(body, *, max_search_length=200):
             normalized(album.get("name", "")), normalized(album.get("artist", "") + " " + album.get("name", "")),
             normalized(album.get("name", "") + " " + album.get("artist", "")))]
         selected = matches[0] if len(matches) == 1 else None
-        if selected and identity and not saved:
+        if selected and not saved:
             selected = store_album_image(selected)
             albums = [selected]
+        if selected:
+            remember_artwork_search(key, selected["album_id"])
         return {"items":albums, "selected":selected}
 
 
@@ -1390,8 +1465,8 @@ def apple_music_selection():
     for favorite in snapshot["items"]:
         item = dict(favorite)
         item["id"] = library_item_id(item)
-        if item.get("album_id"):
-            saved = stored_album(item["album_id"])
+        if item["kind"] == "Album":
+            saved = stored_album(item.get("album_id") or artwork_search_index().get("search:" + (item.get("search") or item["name"]).strip().casefold()))
             if saved:
                 item["artwork"] = saved
         items.append(item)
@@ -1489,17 +1564,87 @@ def playlist_tracks(favorite_id):
     tracks = favorite.get("tracks")
     if tracks is None:
         raise ValueError("Bitte unter Playlists verwalten eine Titelliste importieren")
-    cache = artwork_cache() if any(track.get("album") for track in tracks) else {}
+    index = artwork_search_index()
+    checked_images, checked_albums = {}, {}
     rendered = []
     for track in tracks:
-        entry = cache.get("search:" + playlist_album_search(track).casefold(), {})
-        cover = matching_playlist_album(entry.get("items", []), track) if isinstance(entry, dict) else None
+        if track.get("cover"):
+            try:
+                if track["cover"] not in checked_images:
+                    local_playlist_image(track["cover"])
+                    checked_images[track["cover"]] = True
+                rendered.append({**track, "image":f"api/playlist-art/{track['cover']}"})
+                continue
+            except (OSError, ValueError):
+                pass
+        key = playlist_catalog_key(track)
+        if key not in checked_albums:
+            checked_albums[key] = stored_album(index.get(key))
+        cover = checked_albums[key]
         rendered.append({**track, **({"image":cover["image"]} if cover and cover.get("image") else {})})
     return {"album":favorite["name"], "artist":"Importierte Playlist", "tracks":rendered}
 
 
 def playlist_album_search(track):
     return (track.get("album", "") + " " + (track.get("album_artist") or track["artist"])).strip()
+
+
+def playlist_catalog_key(track):
+    return ("search:" + playlist_album_search(track).casefold() if track.get("album") else
+            "song:" + json.dumps([track["name"].casefold(), track["artist"].casefold()], ensure_ascii=False))
+
+
+def playlist_song_cover(track):
+    """Fallback for old exports without album metadata; exact title and artist only."""
+    global ARTWORK_LAST_REQUEST
+    key = playlist_catalog_key(track)
+    with ARTWORK_LOCK:
+        saved = stored_album(artwork_search_index().get(key))
+        if saved:
+            return saved
+        cache = artwork_cache()
+        entry = cache.get(key, {})
+        if isinstance(entry, dict) and type(entry.get("at")) in (int, float) and time.time() - entry["at"] < 86400:
+            albums = entry.get("items", [])
+        else:
+            if STANDBY.is_set() or not READY or PREPARING:
+                raise RuntimeError("Coversuche erst verfügbar, wenn HA Music bereit ist")
+            if time.monotonic() - ARTWORK_LAST_REQUEST < 4:
+                raise RuntimeError("Coversuche kurz ausgelastet. Bitte erneut versuchen.")
+            ARTWORK_LAST_REQUEST = time.monotonic()
+            generation = RESTORE_GENERATION
+            params = {"country":"DE", "entity":"song", "limit":25, "term":track["name"] + " " + track["artist"]}
+            with urlopen(Request("https://itunes.apple.com/search?" + urlencode(params), headers={"Accept":"application/json"}), timeout=8) as response:
+                with RESPONSE_LOCK:
+                    check_generation(generation)
+                    ACTIVE_RESPONSES.add(response)
+                try:
+                    raw = response.read(262145)
+                finally:
+                    with RESPONSE_LOCK:
+                        ACTIVE_RESPONSES.discard(response)
+            check_generation(generation)
+            if len(raw) > 262144:
+                raise ValueError("Antwort der Coversuche ist zu groß")
+            data = json.loads(raw)
+            results = data.get("results") if isinstance(data, dict) else None
+            if not isinstance(results, list):
+                raise ValueError("Ungültige Antwort der Coversuche")
+            def normalized(value):
+                return " ".join(re.findall(r"\w+", unicodedata.normalize("NFKC", value).casefold())) if isinstance(value, str) else ""
+            songs = [{**song,"collectionType":"Album"} for song in results[:25] if isinstance(song, dict)
+                     and song.get("kind") == "song" and normalized(song.get("trackName")) == normalized(track["name"])
+                     and normalized(song.get("artistName")) == normalized(track["artist"])]
+            albums = album_candidates({"results":songs})
+            cache[key] = {"at":time.time(),"items":albums}
+            cache = dict(sorted(cache.items(), key=lambda pair:pair[1].get("at",0) if isinstance(pair[1],dict) else 0)[-100:])
+            with LOCK:
+                write_durable_json(ARTWORK_FILE,cache)
+        if len(albums) != 1:
+            return None
+        cover = store_album_image(albums[0])
+        remember_artwork_search(key, cover["album_id"])
+        return cover
 
 
 def matching_playlist_album(albums, track):
@@ -1520,11 +1665,18 @@ def playlist_track_cover(favorite_id, track_id):
     track = next((item for item in playlist_tracks(favorite_id)["tracks"] if item["id"] == track_id), None)
     if track is None:
         raise ValueError("Titel gehört nicht zur gespeicherten Playlist")
+    if track.get("image"):
+        return {"image":track["image"]}
     if not track.get("album"):
-        return {"image":""}
+        cover = playlist_song_cover(track)
+        return {"image":cover["image"] if cover else ""}
     result = album_cover_search({"search":playlist_album_search(track)}, max_search_length=401)
     cover = matching_playlist_album(result.get("items"), track)
-    return {"image":cover.get("image", "") if cover else ""}
+    if cover:
+        with ARTWORK_LOCK:
+            cover = store_album_image(cover)
+            remember_artwork_search(playlist_catalog_key(track), cover["album_id"])
+    return {"image":cover["image"] if cover else ""}
 
 
 def play_apple_album_track(favorite_id, track_id, generation, *, playlist=False):
@@ -2114,6 +2266,19 @@ class Handler(BaseHTTPRequestHandler):
             return self.reply(403, {"error": "Ingress only"})
         path = unquote(urlsplit(self.path).path)
         name = path.rsplit("/", 1)[-1]
+        if "/api/playlist-art/" in path:
+            try:
+                content, mime = local_playlist_image(name)
+            except (OSError, ValueError):
+                return self.reply(404, {"error":"Cover nicht gefunden"})
+            self.send_response(200)
+            self.send_header("Content-Type", mime)
+            self.send_header("Content-Length", str(len(content)))
+            self.send_header("Cache-Control", "private, max-age=31536000, immutable")
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.end_headers()
+            self.wfile.write(content)
+            return
         if "/api/album-art/" in path:
             if not re.fullmatch(r"[1-9][0-9]{0,15}", name):
                 return self.reply(404, {"error":"Cover nicht gefunden"})
@@ -2207,7 +2372,7 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(content)
 
     def do_POST(self):
-        if self.path == "/api/playlist-sync":
+        if self.path in ("/api/playlist-sync", "/api/playlist-artwork-sync"):
             # The optional host port exposes only this capability. Never accept
             # a Supervisor/HA token or trust forwarded ingress headers here.
             token = options().get("playlist_sync_token", "")
@@ -2220,10 +2385,11 @@ class Handler(BaseHTTPRequestHandler):
             if self.headers.get_content_type() != "application/json":
                 return self.reply(415, {"error": "JSON required"})
             try:
-                body = json.loads(self.read_request_body(2097152))
+                artwork = self.path == "/api/playlist-artwork-sync"
+                body = json.loads(self.read_request_body(192 * 1024 if artwork else 2097152))
                 if not isinstance(body, dict):
                     raise ValueError("Invalid body")
-                return self.reply(200, sync_playlist(body))
+                return self.reply(200, sync_playlist_artwork(body) if artwork else sync_playlist(body))
             except (ValueError, TypeError) as exc:
                 return self.reply(400, {"error": str(exc)})
             except OSError:

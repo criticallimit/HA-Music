@@ -41,16 +41,24 @@ automatisch angelegt. Ihr anfänglicher Alexa-Befehl lautet `spiel playlist NAME
 und kann später in HA Music bearbeitet werden. Bestehende Alexa-Befehle und Alben
 bleiben erhalten. Du kannst diese Auswahl ausschalten, um ausschließlich
 vorhandene Playlists zu aktualisieren. Der Sync-Schlüssel erlaubt diese beiden
-Playlist-Operationen, keine Wiedergabe oder andere Add-on-Funktionen.
+Playlist-Operationen und die Übertragung zugehöriger Coverbilder, keine Wiedergabe
+oder andere Add-on-Funktionen.
 
 ## Danach reicht Öffnen
 
-Die App überträgt auch Album und Albuminterpret jedes Titels. Für vorhandene
-Playlists einmal die aktuelle App herunterladen und erneut synchronisieren.
-HA Music zeigt dann Albumcover neben den einzelnen Titeln und verwendet den
-Album-Namen im Einzeltitelbefehl. Cover stammen aus dem öffentlichen Apple-Katalog;
-bei fehlender oder uneindeutiger Zuordnung bleibt ein Musik-Platzhalter sichtbar.
-Titel ohne Albumangabe können weiterhin abgespielt werden.
+Die App überträgt Album, Albuminterpret und verfügbare Coverbilder aus der Musik-App.
+Cover werden als kleine JPEG-Bilder übertragen; identische Bilder nur einmal pro
+Synchronisierung. HA Music speichert die Bilder dauerhaft im eigenen Datenverzeichnis
+und liefert sie lokal aus. Die App zeigt die Anzahl übertragener Cover und Titel
+ohne verfügbares Bild an. Vorhandene Playlists einmal mit der aktuellen App erneut
+synchronisieren. Der Albumname wird auch im Einzeltitelbefehl verwendet.
+
+Nur fehlende Bilder werden im öffentlichen Apple-Katalog gesucht und bei eindeutigem
+Treffer dauerhaft lokal gespeichert. Ohne Treffer bleibt ein Musik-Platzhalter;
+fehlende Cover werden frühestens nach 24 Stunden erneut gesucht. Gespeicherte Bilder
+haben keine Ablauffrist. Diese Regeln gelten auch für Albumkacheln. Titel ohne
+Albumangabe verwenden Titel und Interpret für die Coversuche und bleiben abspielbar.
+Bei Standby werden keine Suchanfragen ausgeführt.
 
 Adresse und Auswahl werden gespeichert, der Schlüssel im macOS-Schlüsselbund.
 Bei aktivem **Beim Öffnen synchronisieren** reicht künftig ein Doppelklick auf

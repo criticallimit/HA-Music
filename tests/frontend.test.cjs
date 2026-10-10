@@ -315,6 +315,51 @@ test('untrusted playlist artwork is rejected and a delayed cover cannot fill a c
   assert.equal(h.run('playlistCoverResults.size'),0);
 });
 
+test('uploaded playlist covers render locally and only missing images request a fallback', async () => {
+  const h=harness(),calls=[], cover='api/playlist-art/'+'a'.repeat(64);
+  h.context.reply=async(action,body)=>{
+    calls.push({action,body});
+    if(action==='playlist-cover')return {image:'api/album-art/12'};
+    return {tracks:[{id:1,number:1,name:'One',artist:'Singer',image:cover,local_covers:true},
+      {id:2,number:2,name:'Two',artist:'Singer',local_covers:true},
+      {id:3,number:3,name:'Three',artist:'Singer',local_covers:true}]};
+  };
+  h.run('api=reply;radioReadyForViews=true;renderAppleSelection({available:true,items:[{id:"p",kind:"Playlist",name:"List"}]})');
+  await h.run('openAlbumTracks("p")');
+  assert.equal(h.get('album-tracks-list').children[0].children[1].children[0].src,cover);
+  await h.timers.find(t=>t.delay===0).callback();
+  assert.equal(calls.at(-1).body.track_id,2);
+  assert.equal(h.get('album-tracks-list').children[1].children[1].children[0].src,'api/album-art/12');
+  await h.timers.filter(t=>t.delay===4500).at(-1).callback();
+  assert.equal(calls.at(-1).body.track_id,3); // Same artist without album must not merge different songs.
+  assert.equal(h.run('validAppleImage("api/playlist-art/../options")'),'');
+  assert.equal(h.run('validAppleImage("api/playlist-art/"+"A".repeat(64))'),'');
+});
+
+test('an album without a search result retains a placeholder and retries after the cooldown', async () => {
+  const h=harness(),calls=[];
+  h.context.reply=async action=>{calls.push(action);return {selected:null,items:[]};};
+  h.run('api=reply;radioReadyForViews=true;renderAppleSelection({available:true,items:[{id:"a",kind:"Album",name:"Unknown"}]})');
+  await h.timers.find(t=>t.delay===4500).callback();
+  assert.deepEqual(calls,['album-covers']);
+  h.run('queueAlbumCovers()');
+  assert.equal(h.timers.filter(t=>t.delay===4500).length,1);
+  h.run('albumCoverResults.get("a:auto").retryAt=0;queueAlbumCovers()');
+  await h.timers.filter(t=>t.delay===4500).at(-1).callback();
+  assert.deepEqual(calls,['album-covers','album-covers']);
+});
+
+test('a missing local picture is searched again even if an old browser result remains cached', async () => {
+  const h=harness(),calls=[];
+  h.context.reply=async action=>{calls.push(action);return action==='playlist-cover' ? {image:'api/album-art/13'} :
+    {tracks:[{id:1,number:1,name:'Song',artist:'Singer',album:'Album'}]};};
+  h.run('api=reply;radioReadyForViews=true;playlistCoverResults.set(playlistCoverKey({name:"Song",artist:"Singer",album:"Album"}),{image:"api/album-art/12",expires:Date.now()+86400000});renderAppleSelection({available:true,items:[{id:"p",kind:"Playlist",name:"List"}]})');
+  await h.run('openAlbumTracks("p")');
+  await h.timers.find(t=>t.delay===0).callback();
+  assert.deepEqual(calls,['playlist-tracks','playlist-cover']);
+  assert.equal(h.get('album-tracks-list').children[0].children[1].children[0].src,'api/album-art/13');
+});
+
 test('playlist without export keeps whole-playlist playback and offers import', async () => {
   const h=harness();let started;
   h.context.reply=async()=>{throw Error('Bitte eine Titelliste importieren');};

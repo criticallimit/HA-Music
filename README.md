@@ -388,8 +388,21 @@ zusätzlichen Angaben zu übernehmen. Ganze Playlists behalten ihre Reihenfolge
 und Alexa-Befehle, einschließlich der selbst sortierten Kacheln.
 
 Playlist-Titellisten zeigen je Titel ein kleines Albumcover, Interpret und Album.
-Die Bilder werden anhand von Album und Albuminterpret aus dem öffentlichen
-Apple-Katalog zugeordnet, nachgeladen und zwischengespeichert. Eine Suche bedient
+Die Mac-App überträgt verfügbare Cover aus der Musik-App als JPEG mit 320 × 320 Pixeln.
+HA Music speichert diese Bilder dauerhaft unter `/data/album_covers/playlists`,
+identische Bilder nur einmal, und liefert sie ausschließlich über den lokalen Ingress aus.
+Bildübertragung und Playlist-Update verwenden denselben Synchronisierungsschlüssel;
+pro Bild höchstens 128 KiB. Die Titelliste bleibt auf 2 MiB begrenzt und wird erst
+aktualisiert, nachdem alle darin referenzierten Bilder erfolgreich übertragen wurden.
+
+Nur fehlende Bilder werden anhand von Album und Albuminterpret im öffentlichen
+Apple-Katalog gesucht, heruntergeladen und dauerhaft im Add-on gespeichert.
+Ohne Albumangabe wird nur ein eindeutiger Treffer für Titel und Interpret verwendet.
+Erfolgreiche Bildzuordnungen überleben Neustarts und den Ablauf des Such-Caches;
+eine erneute Suche erfolgt nur bei fehlenden Bildern. Erfolglose Suchergebnisse
+werden 24 Stunden gespeichert, danach können weiterhin fehlende Bilder erneut
+gesucht werden. Dies gilt auch für automatisch gefundene Albumkachel-Cover.
+Eine Suche bedient
 alle sichtbaren Titel desselben Albums; Schließen oder Standby beendet weitere
 Anfragen. Fehlende oder nicht eindeutige Cover werden durch einen Musik-Platzhalter
 ersetzt. Die Titelauswahl funktioniert auch ohne Bild. Einzeltitelbefehle enthalten
@@ -397,3 +410,6 @@ keinen Zusatz „auf Apple Music“.
 
 Sicherung davor:
 [backup/main-2026-10-10-playlist-albums-fe6654b](https://github.com/criticallimit/HA-Music/tree/backup/main-2026-10-10-playlist-albums-fe6654b), Commit `fe6654bcda2f8db06a3f2b7d73a9c93088bf57d2`.
+
+Sicherung vor lokaler Coverübertragung und dauerhaften Suchzuordnungen:
+[backup/main-2026-10-10-local-playlist-covers-2fd4168](https://github.com/criticallimit/HA-Music/tree/backup/main-2026-10-10-local-playlist-covers-2fd4168), Commit `2fd4168eacee50d34b82a422ab9bdee8a215e871`.

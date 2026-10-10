@@ -319,16 +319,26 @@ final class PlaylistApp: NSObject, NSApplicationDelegate, NSTableViewDataSource,
             DispatchQueue.global(qos: .userInitiated).async {
                 var success = 0
                 var failures: [String] = []
+                var uploadedCovers = Set<String>()
+                var missingCovers = 0
                 for (index, choice) in selected.enumerated() {
                     DispatchQueue.main.async { self.show("\(index + 1)/\(selected.count): \(choice.name) …") }
                     do {
-                        let tracks = try SyncCore.tracks(id: choice.id)
+                        let tracks = try SyncCore.withArtworks(SyncCore.tracks(id: choice.id), playlistID: choice.id)
+                        let coverEndpoint = endpoint.deletingLastPathComponent().appendingPathComponent("playlist-artwork-sync")
+                        for track in tracks {
+                            if let cover = track.cover, !uploadedCovers.contains(cover), let payload = try SyncCore.artworkPayload(track) {
+                                _ = try SyncTransport().send(endpoint: coverEndpoint, key: token, payload: payload)
+                                uploadedCovers.insert(cover)
+                            }
+                        }
                         let data = try SyncCore.payload(name: choice.target, tracks: tracks, create: create)
                         _ = try SyncTransport().send(endpoint: endpoint, key: token, payload: data)
+                        missingCovers += tracks.filter { $0.cover == nil }.count
                         success += 1
                     } catch { failures.append(choice.name + ": " + error.localizedDescription) }
                 }
-                let message = failures.isEmpty ? "\(success) Playlists erfolgreich synchronisiert. Titellisten in HA Music erneut öffnen." :
+                let message = failures.isEmpty ? "\(success) Playlists mit \(uploadedCovers.count) lokalen Covern synchronisiert. \(missingCovers) Titel ohne verfügbares Cover. Titellisten in HA Music erneut öffnen." :
                     "\(success) erfolgreich, \(failures.count) fehlgeschlagen. Bisherige Listen fehlgeschlagener Übertragungen bleiben erhalten.\n" + failures.prefix(2).joined(separator: "\n")
                 DispatchQueue.main.async {
                     self.setBusy(false)
@@ -359,6 +369,32 @@ if CommandLine.arguments.contains("--self-test") {
         let decoded = try JSONDecoder().decode([MusicTrack].self, from: JSONEncoder().encode(tracks))
         assert(decoded[0].album == "Debut" && decoded[0].albumArtist == "Björk")
         assert(object["create"] as! Bool)
+        let bitmap = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 64, pixelsHigh: 32,
+            bitsPerSample: 8, samplesPerPixel: 3, hasAlpha: false, isPlanar: false,
+            colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)!
+        for x in 0..<64 { for y in 0..<32 { bitmap.setColor(.blue, atX: x, y: y) } }
+        let thumbnail = SyncCore.thumbnail(bitmap.representation(using: .png, properties: [:])!)!
+        let decodedImage = NSBitmapImageRep(data: thumbnail)!
+        assert(decodedImage.pixelsWide == 320 && decodedImage.pixelsHigh == 320)
+        assert(decodedImage.colorAt(x: 160, y: 160)!.usingColorSpace(.deviceRGB)!.blueComponent > 0.8)
+        assert(SyncCore.thumbnail(Data("not an image".utf8)) == nil)
+        var illustrated = tracks[0]
+        illustrated.artworkData = thumbnail; illustrated.cover = SyncCore.coverIdentity(thumbnail); illustrated.localCovers = true
+        let imagePayload = try JSONSerialization.jsonObject(with: SyncCore.artworkPayload(illustrated)!) as! [String: String]
+        assert(Data(base64Encoded: imagePayload["data"]!) == thumbnail && imagePayload["cover"] == illustrated.cover)
+        let illustratedPayload = try JSONSerialization.jsonObject(with: SyncCore.payload(name: "Mix", tracks: [illustrated], create: false)) as! [String: Any]
+        let illustratedTrack = (illustratedPayload["tracks"] as! [[String: Any]])[0]
+        assert(illustratedTrack["cover"] as! String == illustrated.cover && illustratedTrack["artworkData"] == nil)
+        let scriptFolder = FileManager.default.temporaryDirectory.appendingPathComponent("ha-music-script-" + UUID().uuidString)
+        try FileManager.default.createDirectory(at: scriptFolder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: scriptFolder) }
+        let scriptFile = scriptFolder.appendingPathComponent("artwork.applescript")
+        try SyncCore.artworkScript(folder: scriptFolder, playlistID: "0123456789ABCDEF").write(to: scriptFile, atomically: true, encoding: .utf8)
+        let compiler = Process()
+        compiler.executableURL = URL(fileURLWithPath: "/usr/bin/osacompile")
+        compiler.arguments = ["-o", scriptFolder.appendingPathComponent("artwork.scpt").path, scriptFile.path]
+        try compiler.run(); compiler.waitUntilExit()
+        assert(compiler.terminationStatus == 0, "Music artwork export script must compile")
         do { _ = try SyncCore.payload(name: "Mix", tracks: [], create: false); fatalError("Empty playlist accepted") } catch is SyncFailure { }
         try SyncCore.validateKey(SyncKeychain.generate())
         let value = try SyncCore.quoted("\"; throw new Error('injected')")
@@ -369,9 +405,12 @@ if CommandLine.arguments.contains("--self-test") {
 }
 
 // Used only by the CI loopback fixture; normal users launch the app in Finder.
-if CommandLine.arguments.count == 5 && CommandLine.arguments[1] == "--transport-test" {
+if CommandLine.arguments.count == 5 && ["--transport-test", "--artwork-transport-test"].contains(CommandLine.arguments[1]) {
     do {
-        let endpoint = try SyncCore.endpoint(CommandLine.arguments[2])
+        var endpoint = try SyncCore.endpoint(CommandLine.arguments[2])
+        if CommandLine.arguments[1] == "--artwork-transport-test" {
+            endpoint = endpoint.deletingLastPathComponent().appendingPathComponent("playlist-artwork-sync")
+        }
         let payload = try Data(contentsOf: URL(fileURLWithPath: CommandLine.arguments[4]))
         let result = try SyncTransport().send(endpoint: endpoint, key: CommandLine.arguments[3], payload: payload)
         print("Confirmed \(result.tracks) tracks")

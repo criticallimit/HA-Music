@@ -41,8 +41,11 @@ macOS-Berechtigungen müssen einmalig auf deinem eigenen Mac geprüft werden.
 Projekt und Anleitung:
 https://github.com/criticallimit/HA-Music/blob/main/tools/MAC_PLAYLIST_APP.md
 
-Diese App überträgt auch Album und Albuminterpret je Titel. Nach einem Update
+Diese App überträgt Album, Albuminterpret und verfügbare Coverbilder je Titel. Nach einem Update
 die Playlists einmal erneut synchronisieren. In HA Music erscheinen dann Cover
 neben den Titeln, und Alexa erhält bei vorhandenen Albumangaben:
 spiel TITEL von INTERPRET aus dem Album ALBUM
-Cover werden anhand der Albumangaben aus dem öffentlichen Apple-Katalog geladen.
+Cover aus der Musik-App werden dauerhaft lokal in HA Music gespeichert.
+Nur fehlende Cover werden im öffentlichen Apple-Katalog gesucht; eindeutige Treffer
+werden ebenfalls dauerhaft lokal gespeichert. Ohne Treffer bleibt ein Platzhalter.
+Eine erfolglose Suche wird frühestens nach 24 Stunden erneut versucht.

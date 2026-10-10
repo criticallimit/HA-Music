@@ -55,8 +55,8 @@ class NativeTransportTests(unittest.TestCase):
         self.server.server_close()
         self.thread.join(timeout=3)
 
-    def run_transport(self):
-        return subprocess.run([BINARY, "--transport-test", self.url, self.key, str(self.payload)],
+    def run_transport(self, artwork=False):
+        return subprocess.run([BINARY, "--artwork-transport-test" if artwork else "--transport-test", self.url, self.key, str(self.payload)],
                               capture_output=True, text=True, timeout=45)
 
     def test_unicode_order_duplicates_and_scoped_payload(self):
@@ -72,6 +72,20 @@ class NativeTransportTests(unittest.TestCase):
         self.assertEqual(len(self.requests), 1)
         self.assertIn("um", result.stderr)
         self.assertNotIn(self.key, result.stdout + result.stderr)
+
+    def test_cover_upload_uses_same_key_and_scoped_endpoint_with_exact_bytes(self):
+        import base64
+        import hashlib
+        picture=b"\xff\xd8\xff"+b"cover"*18000
+        payload={"cover":hashlib.sha256(picture).hexdigest(),"data":base64.b64encode(picture).decode()}
+        self.payload.write_text(json.dumps(payload))
+        result=self.run_transport(artwork=True)
+        self.assertEqual(result.returncode,0,result.stderr)
+        self.assertEqual(self.requests,[("/api/playlist-artwork-sync","Bearer "+self.key,payload)])
+        self.status=403
+        result=self.run_transport(artwork=True)
+        self.assertNotEqual(result.returncode,0)
+        self.assertNotIn(self.key,result.stdout+result.stderr)
 
     def test_authorization_error_never_claims_success_or_echoes_response(self):
         self.status = 403

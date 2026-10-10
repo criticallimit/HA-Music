@@ -1041,11 +1041,17 @@ class RuntimeTests(unittest.TestCase):
         track = favorite["tracks"][0]
         cover = {"album_id":123,"name":"The Album","artist":"Album Singer","image":"https://a.mzstatic.com/test.jpg"}
         app.ARTWORK_FILE.write_text(json.dumps({"search:the album album singer":{"items":[cover],"at":time.time()}}))
-        self.assertEqual(app.playlist_tracks(favorite["id"])["tracks"][0]["image"],cover["image"])
-        with patch.object(app,"album_cover_search",return_value={"items":[cover]}) as search, patch.object(app,"perform") as play:
-            self.assertEqual(app.playlist_track_cover(favorite["id"],track["id"]),{"image":cover["image"]})
-            search.assert_called_once_with({"search":"The Album Album Singer"},max_search_length=401)
+        self.assertNotIn("image",app.playlist_tracks(favorite["id"])["tracks"][0])
+        with patch.object(app,"urlopen") as opened, patch.object(app,"perform") as play:
+            opened.return_value.__enter__.return_value.read.return_value = b"\xff\xd8\xfflocal jpeg"
+            self.assertEqual(app.playlist_track_cover(favorite["id"],track["id"]),{"image":"api/album-art/123"})
+            self.assertEqual(opened.call_count,1)
             play.assert_not_called()
+        app.ARTWORK_FILE.write_text("{}")
+        with patch.object(app,"album_cover_search",side_effect=AssertionError("Successful covers persist")):
+            self.assertEqual(app.playlist_track_cover(favorite["id"],track["id"]),{"image":"api/album-art/123"})
+            self.assertEqual(app.playlist_tracks(favorite["id"])["tracks"][0]["image"],"api/album-art/123")
+        (app.ARTWORK_DIR / "123.image").unlink()
         with patch.object(app,"album_cover_search",return_value={"items":[{**cover,"artist":"Different"}]}) as search:
             self.assertEqual(app.playlist_track_cover(favorite["id"],track["id"]),{"image":""})
         with patch.object(app,"album_cover_search") as search:
@@ -1055,6 +1061,56 @@ class RuntimeTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 app.playlist_track_cover(favorite["id"],track["id"])
             search.assert_not_called()
+
+    def test_song_cover_fallback_is_exact_persistent_and_retries_only_missing_images(self):
+        app.READY = True
+        song = {**self.album_record(), "kind":"song", "trackName":"Song", "artistName":"Singer"}
+        track = {"name":"Song","artist":"Singer"}
+        picture = b"\xff\xd8\xfflocal fallback"
+        with patch.object(app,"urlopen") as opened:
+            opened.return_value.__enter__.return_value.read.side_effect = [json.dumps({"results":[song]}).encode(),picture]
+            cover = app.playlist_song_cover(track)
+            self.assertEqual(cover["image"],"api/album-art/12")
+            self.assertEqual(opened.call_count,2)
+        app.ARTWORK_FILE.write_text("{}")
+        with patch.object(app,"urlopen",side_effect=AssertionError("Local images do not expire")):
+            self.assertEqual(app.playlist_song_cover(track),cover)
+        (app.ARTWORK_DIR / "12.image").unlink()
+        app.ARTWORK_LAST_REQUEST = 0
+        with patch.object(app,"urlopen") as opened:
+            opened.return_value.__enter__.return_value.read.side_effect = [json.dumps({"results":[song]}).encode(),picture]
+            self.assertEqual(app.playlist_song_cover(track),cover)
+            self.assertEqual(opened.call_count,2)
+
+    def test_song_cover_mismatch_and_ambiguous_results_keep_placeholder_and_negative_cache(self):
+        app.READY = True
+        song = {**self.album_record(),"kind":"song","trackName":"Song","artistName":"Singer"}
+        for results in ([{**song,"artistName":"Wrong"}], [{**song,"trackName":"Other"}], [song,{**song,"collectionId":13}]):
+            app.ARTWORK_LAST_REQUEST = 0
+            app.ARTWORK_FILE.write_text("{}")
+            with patch.object(app,"urlopen") as opened:
+                opened.return_value.__enter__.return_value.read.return_value = json.dumps({"results":results}).encode()
+                self.assertIsNone(app.playlist_song_cover({"name":"Song","artist":"Singer"}))
+                self.assertIsNone(app.playlist_song_cover({"name":"Song","artist":"Singer"}))
+                self.assertEqual(opened.call_count,1)
+        app.ARTWORK_FILE.write_text("{}")
+        app.STANDBY.set()
+        with self.assertRaises(RuntimeError):
+            app.playlist_song_cover({"name":"Song","artist":"Singer"})
+
+    def test_auto_album_cover_is_local_and_search_mapping_survives_cache_expiry_and_restart(self):
+        app.READY = True
+        with patch.object(app,"urlopen") as opened:
+            opened.return_value.__enter__.return_value.read.side_effect = [json.dumps({"results":[self.album_record()]}).encode(), b"\xff\xd8\xffjpeg"]
+            result = app.album_cover_search({"search":"Dreams"})
+            self.assertEqual(result["selected"]["image"],"api/album-art/12")
+            self.assertEqual(opened.call_count,2)
+        app.ARTWORK_FILE.write_text("{}")
+        app.STANDBY.set()
+        with patch.object(app,"urlopen",side_effect=AssertionError("No internet for saved artwork")):
+            self.assertEqual(app.album_cover_search({"search":"Dreams"})["selected"]["image"],"api/album-art/12")
+        app.LIBRARY_FILE.write_text(json.dumps([{"name":"Dreams","kind":"Album","search":"Dreams"}]))
+        self.assertEqual(app.apple_music_selection()["items"][0]["artwork"]["image"],"api/album-art/12")
 
     def test_playlist_import_http_accepts_exports_over_64kb_but_remains_bounded(self):
         content = "Name\tArtist\n" + ("N"*180 + "\t" + "A"*180 + "\n")*200
@@ -1249,16 +1305,16 @@ class RuntimeTests(unittest.TestCase):
     def test_album_cover_search_uses_public_catalog_and_caches_without_playback(self):
         app.READY = True
         with patch.object(app, "urlopen") as opened, patch.object(app, "ha_request", side_effect=AssertionError("No HA")):
-            opened.return_value.__enter__.return_value.read.return_value = json.dumps({"results":[self.album_record()]}).encode()
+            opened.return_value.__enter__.return_value.read.side_effect = [json.dumps({"results":[self.album_record()]}).encode(),b"\xff\xd8\xffjpeg"]
             found = app.album_cover_search({"search":"Singer Dreams"})
             self.assertEqual(found["selected"]["album_id"], 12)
-            self.assertTrue(found["selected"]["image"].endswith("600x600bb.jpg"))
-            request = opened.call_args.args[0]
+            self.assertEqual(found["selected"]["image"],"api/album-art/12")
+            request = opened.call_args_list[0].args[0]
             self.assertTrue(request.full_url.startswith("https://itunes.apple.com/search?"))
             self.assertNotIn("Authorization", request.headers)
             app.STANDBY.set()
             self.assertEqual(app.album_cover_search({"search":"Singer Dreams"}), found)
-            self.assertEqual(opened.call_count, 1)
+            self.assertEqual(opened.call_count, 2)
         self.monitor.select.assert_not_called()
 
     def test_album_cover_search_does_not_guess_between_two_albums_or_versions(self):

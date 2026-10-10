@@ -1,5 +1,7 @@
 import Foundation
 import Security
+import AppKit
+import CryptoKit
 
 struct SyncFailure: LocalizedError {
     let message: String
@@ -16,9 +18,17 @@ struct MusicTrack: Codable {
     let artist: String
     let album: String?
     let albumArtist: String?
-    enum CodingKeys: String, CodingKey { case name, artist, album; case albumArtist = "album_artist" }
-    init(name: String, artist: String, album: String? = nil, albumArtist: String? = nil) {
+    let musicID: String?
+    var cover: String? = nil
+    var localCovers: Bool? = nil
+    var artworkData: Data? = nil
+    enum CodingKeys: String, CodingKey {
+        case name, artist, album, cover
+        case albumArtist = "album_artist", musicID = "music_id", localCovers = "local_covers"
+    }
+    init(name: String, artist: String, album: String? = nil, albumArtist: String? = nil, musicID: String? = nil) {
         self.name = name; self.artist = artist; self.album = album; self.albumArtist = albumArtist
+        self.musicID = musicID
     }
 }
 
@@ -99,10 +109,10 @@ enum SyncCore {
         return data
     }
 
-    static func runMusic(_ script: String) throws -> Data {
+    static func runMusic(_ script: String, language: String = "JavaScript") throws -> Data {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
-        process.arguments = ["-l", "JavaScript", "-"]
+        process.arguments = ["-l", language, "-"]
         let input = Pipe(), output = Pipe(), errors = Pipe()
         process.standardInput = input
         process.standardOutput = output
@@ -149,9 +159,106 @@ enum SyncCore {
         const tracks = matches[0].tracks();
         if (tracks.length > 1000) throw new Error('Too many tracks');
         function optional(read) { try { return read() || ''; } catch (_) { return ''; } }
-        JSON.stringify(tracks.map(t => ({name: t.name(), artist: t.artist(), album: optional(() => t.album()), album_artist: optional(() => t.albumArtist())})));
+        JSON.stringify(tracks.map(t => ({name: t.name(), artist: t.artist(), album: optional(() => t.album()), album_artist: optional(() => t.albumArtist()), music_id: optional(() => t.persistentID())})));
         """
         return try JSONDecoder().decode([MusicTrack].self, from: runMusic(script))
+    }
+
+    static func thumbnail(_ data: Data) -> Data? {
+        guard data.count <= 8 * 1024 * 1024, let source = NSBitmapImageRep(data: data),
+              source.pixelsWide > 0, source.pixelsHigh > 0,
+              source.pixelsWide <= 8192, source.pixelsHigh <= 8192,
+              let bitmap = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 320, pixelsHigh: 320,
+                bitsPerSample: 8, samplesPerPixel: 3, hasAlpha: false, isPlanar: false,
+                colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0),
+              let context = NSGraphicsContext(bitmapImageRep: bitmap) else { return nil }
+        let image = NSImage(size: NSSize(width: CGFloat(source.pixelsWide), height: CGFloat(source.pixelsHigh)))
+        image.addRepresentation(source)
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = context
+        context.imageInterpolation = .high
+        NSColor.black.setFill()
+        NSRect(x: 0, y: 0, width: 320, height: 320).fill()
+        let scale = min(320 / CGFloat(source.pixelsWide), 320 / CGFloat(source.pixelsHigh))
+        let width = CGFloat(source.pixelsWide) * scale, height = CGFloat(source.pixelsHigh) * scale
+        image.draw(in: NSRect(x: (320-width)/2, y: (320-height)/2, width: width, height: height),
+                   from: .zero, operation: .sourceOver, fraction: 1)
+        context.flushGraphics()
+        NSGraphicsContext.restoreGraphicsState()
+        guard let result = bitmap.representation(using: .jpeg, properties: [.compressionFactor: 0.75]),
+              result.count <= 128 * 1024 else { return nil }
+        return result
+    }
+
+    static func coverIdentity(_ data: Data) -> String {
+        SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+    }
+
+    static func artworkPayload(_ track: MusicTrack) throws -> Data? {
+        guard let data = track.artworkData, let cover = track.cover else { return nil }
+        guard data.count <= 128 * 1024, coverIdentity(data) == cover else {
+            throw SyncFailure(message: "Das Playlistcover ist ungültig.")
+        }
+        return try JSONEncoder().encode(["cover": cover, "data": data.base64EncodedString()])
+    }
+
+    static func withArtworks(_ tracks: [MusicTrack], playlistID: String) throws -> [MusicTrack] {
+        guard playlistID.range(of: "^[A-Fa-f0-9]{16}$", options: .regularExpression) != nil else {
+            throw SyncFailure(message: "Die Playlist-ID der Musik-App ist ungültig.")
+        }
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("ha-music-art-" + UUID().uuidString)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let script = try artworkScript(folder: folder, playlistID: playlistID)
+        _ = try runMusic(script, language: "AppleScript")
+        var cache: [String: Data] = [:]
+        return tracks.map { input in
+            var track = input
+            track.localCovers = true
+            guard let id = track.musicID, id.range(of: "^[A-Fa-f0-9]{16}$", options: .regularExpression) != nil else { return track }
+            if let existing = cache[id] {
+                track.artworkData = existing; track.cover = coverIdentity(existing); return track
+            }
+            let file = folder.appendingPathComponent(id + ".image")
+            guard let size = try? file.resourceValues(forKeys: [.fileSizeKey]).fileSize,
+                  size <= 8 * 1024 * 1024, let raw = try? Data(contentsOf: file), let image = thumbnail(raw) else { return track }
+            cache[id] = image
+            track.artworkData = image; track.cover = coverIdentity(image)
+            return track
+        }
+    }
+
+    static func artworkScript(folder: URL, playlistID: String) throws -> String {
+        let path = "\"" + (folder.path + "/").replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"") + "\""
+        return """
+        tell application "Music"
+            set p to first user playlist whose persistent ID is \(try quoted(playlistID))
+            set selectedTracks to every track of p
+            if (count of selectedTracks) > 1000 then error "Too many tracks"
+            repeat with t in selectedTracks
+                set fileHandle to missing value
+                try
+                    set trackID to persistent ID of t
+                    set picture to raw data of artwork 1 of t
+                    set outputPath to \(path) & trackID & ".image"
+                    tell current application
+                        set fileHandle to open for access (POSIX file outputPath) with write permission
+                        set eof fileHandle to 0
+                        write picture to fileHandle
+                        close access fileHandle
+                    end tell
+                    set fileHandle to missing value
+                on error
+                    if fileHandle is not missing value then
+                        try
+                            tell current application to close access fileHandle
+                        end try
+                    end if
+                end try
+            end repeat
+        end tell
+        return "done"
+        """
     }
 }
 

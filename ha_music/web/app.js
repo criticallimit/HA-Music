@@ -464,6 +464,7 @@ let albumCoverPending = false;
 function validAppleImage(value) {
   if (typeof value !== "string") return "";
   if (/^api\/album-art\/[1-9][0-9]{0,15}$/.test(value)) return value;
+  if (/^api\/playlist-art\/[a-f0-9]{64}$/.test(value)) return value;
   try { const url = new URL(value); return url.protocol === "https:" && !url.username && !url.password && (!url.port || url.port === "443") && (url.hostname === "mzstatic.com" || url.hostname.endsWith(".mzstatic.com")) ? url.href : ""; }
   catch (_) { return ""; }
 }
@@ -510,7 +511,7 @@ function queueAlbumCovers() {
     const generation = uiGeneration, key = coverKey(candidate);
     try {
       const result = await api("album-covers", {search:candidate.search || candidate.name, ...(candidate.album_id ? {album_id:candidate.album_id} : {})});
-      albumCoverResults.set(key, {album:result.selected});
+      albumCoverResults.set(key, {album:result.selected, retryAt:Date.now()+(result.selected ? 60000 : 86400000)});
       if (generation === uiGeneration && radioReadyForViews && !strictStandby &&
           appleSelection.items.some(item => coverKey(item) === key)) applyAlbumCover(appleButtons.get(candidate.id), result.selected);
     } catch (_) { albumCoverResults.set(key, {album:null, retryAt:Date.now()+60000}); }
@@ -860,7 +861,7 @@ let albumDialogGeneration = 0;
 let albumDialogTrackPending = false;
 const playlistCoverResults = new Map();
 function playlistCoverKey(track) {
-  return JSON.stringify([track.album || "", track.album_artist || track.artist]);
+  return JSON.stringify([track.album ? "album" : "song", track.album || track.name, track.album_artist || track.artist]);
 }
 function setPlaylistTrackCover(art, url) {
   const [image, placeholder] = art.children;
@@ -963,9 +964,9 @@ async function openAlbumTracks(id) {
         const placeholder = document.createElement("span"); placeholder.className = "playlist-track-art-placeholder"; placeholder.textContent = "♫";
         art.append(image,placeholder);
         const key = playlistCoverKey(track), cached = playlistCoverResults.get(key);
-        const cover = validAppleImage(track.image) || (cached?.expires > Date.now() ? cached.image : "");
+        const cover = validAppleImage(track.image);
         setPlaylistTrackCover(art,cover);
-        if (track.album && !cover && !(cached?.expires > Date.now())) {
+        if (!cover && !(cached?.expires > Date.now() && !cached.image)) {
           if (!coverJobs.has(key)) coverJobs.set(key,{key,track,art:[]});
           coverJobs.get(key).art.push(art);
         }
@@ -997,8 +998,8 @@ async function openAlbumTracks(id) {
     }
     if (favorite.kind === "Playlist") {
       loadPlaylistCovers(coverJobs,id,generation);
-      if (result.tracks?.length && !result.tracks.some(track => track.album))
-        $("album-tracks-feedback").textContent = "Für Albumcover bitte die Playlist mit der aktuellen Mac-App erneut synchronisieren.";
+      if (result.tracks?.length && !result.tracks.some(track => track.album || track.local_covers))
+        $("album-tracks-feedback").textContent = "Fehlende Cover werden gesucht und lokal gespeichert. Die aktuelle Mac-App überträgt Cover und Albumnamen direkt.";
     }
   } catch (error) {
     if (generation === albumDialogGeneration) $("album-tracks-feedback").textContent = "Titelliste nicht verfügbar: " + error.message;
