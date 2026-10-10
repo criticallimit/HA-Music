@@ -1,6 +1,19 @@
 # HA Music
 
-Home-Assistant-Add-on für Alexa-Multiroom-Radio und Apple-Music-Favoriten mit Ingress-Oberfläche und Lovelace-Karte. Entwicklungsstand auf `main`, Version **0.0.6**. Apple Music wird über das in Alexa verknüpfte Konto abgespielt; ein automatischer Mediathekabruf ist noch nicht implementiert.
+Home-Assistant-Add-on für Alexa-Multiroom-Radio und Apple-Music-Favoriten mit Ingress-Oberfläche und Lovelace-Karte. Entwicklungsstand auf `main`, Version **0.0.6**. Apple Music wird über das in Alexa verknüpfte Konto abgespielt. Playlists und Alben können zusätzlich über Music Assistant importiert werden.
+
+## Apple-Music-Mediathek aus Music Assistant importieren
+
+HA Music verwendet Music Assistant ausschließlich als **lesende Datenquelle**. Die Apple-Music-Wiedergabe bleibt bei Alexa; Music Assistant übernimmt weder die Lautsprechersteuerung noch das Streaming durch HA Music.
+
+1. In Music Assistant Apple Music verbinden und die Mediathek synchronisieren lassen.
+2. In Music Assistant unter **Einstellungen → Profil** einen langlebigen API-Zugriffstoken erstellen.
+3. In **HA Music → Add-on → Konfiguration** `music_assistant_url` (z. B. `http://192.168.1.10:8095`) und `music_assistant_token` eintragen. Die Adresse muss vom HA-Music-Container erreichbar sein, nicht nur im Browser.
+4. HA Music neu starten, einschalten und unter **Apple Music** auf **Music Assistant aktualisieren** klicken. Danach aktualisiert HA Music die Liste im eingeschalteten Betrieb ungefähr alle 30 Minuten.
+
+Importiert werden nur Einträge mit Apple-Music-Providerzuordnung. Manuell angelegte Favoriten und insbesondere eigene Alexa-Befehle bleiben in `/data/apple_music_library.json` unangetastet. Importierte Einträge werden getrennt in `/data/music_assistant_import.json` gespeichert. Gleiche Art und gleicher Name werden zugunsten des manuellen Eintrags zusammengeführt. Eine erfolgreiche Synchronisierung ersetzt die letzte importierte Liste; bei Verbindungsfehlern bleibt der letzte erfolgreiche Import erhalten. Im ausgeschalteten Zustand führt HA Music keine automatischen Importanfragen aus. Zum Aktualisieren muss auch Music Assistant erreichbar sein. Musik Assistant selbst muss für die Wiedergabe nicht erreichbar sein.
+
+Die von Music Assistant gelieferte Playlistbezeichnung wird als Alexa-Befehl `spiel playlist <Name>` beziehungsweise `spiel album <Name>` verwendet. Bei Alexa-Namenskonflikten oder Wiedergabeproblemen einen manuellen Favoriten mit identischem Namen und individuellem Alexa-Text anlegen. Es werden **keine** Apple-Anmeldedaten oder Developer Tokens in HA Music benötigt. Der Music-Assistant-Token ist vertraulich zu behandeln.
 
 ## Automatische Wiederanbindung nach Add-on-Neustart
 
