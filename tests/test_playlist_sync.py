@@ -203,11 +203,11 @@ class PlaylistSyncTests(unittest.TestCase):
             {"ok": True, "missing": [missing], "checked": 1})
         cover_path = app.ARTWORK_DIR / "playlists"
         cover_path.mkdir(parents=True)
-        (cover_path / (existing + ".image")).write_bytes(b"\\x89PNG\\r\\n\\x1a\\n" + picture)
+        (cover_path / (existing + ".image")).write_bytes(b"\x89PNG\r\n\x1a\n" + picture)
         # The digest does not match those bytes, so the presence check must reject it.
         self.assertIn(existing, self.request(path="/api/playlist-artwork-check",
             body={"covers": [existing]})[1]["missing"])
-        real_image = b"\\x89PNG\\r\\n\\x1a\\n" + picture
+        real_image = b"\x89PNG\r\n\x1a\n" + picture
         valid_hash = hashlib.sha256(real_image).hexdigest()
         (cover_path / (valid_hash + ".image")).write_bytes(real_image)
         status, data = self.request(path="/api/playlist-artwork-check",
