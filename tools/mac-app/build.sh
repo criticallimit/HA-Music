@@ -14,7 +14,7 @@ lipo -create "$output/architectures/arm64" "$output/architectures/x86_64" -outpu
 cp tools/mac-app/Info.plist "$app/Contents/Info.plist"
 codesign --force --options runtime --entitlements tools/mac-app/Entitlements.plist --sign - "$app"
 codesign --verify --deep --strict "$app"
-lipo -verify_arch arm64 x86_64 "$app/Contents/MacOS/HA Music Playlist Sync"
+lipo "$app/Contents/MacOS/HA Music Playlist Sync" -verify_arch arm64 x86_64
 cp tools/mac-app/LIESMICH.txt "$output/LIESMICH.txt"
 ditto -c -k --sequesterRsrc --keepParent "$app" "$output/HA-Music-Playlist-Sync.zip"
 echo "Built universal Mac app: $output/HA-Music-Playlist-Sync.zip"
