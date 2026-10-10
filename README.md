@@ -284,4 +284,4 @@ width: 800
 height: 620
 ```
 
-Werte sind Pixelzahlen ohne `px` (Breite 200–4000, Höhe 200–5000). Die Breite wird auf die verfügbare Dashboard-Spaltenbreite begrenzt; sie kann keine schmalere Spalte vergrößern. Für eine feste Höhe muss der eingebettete Inhalt bei Bedarf innerhalb der Karte scrollen. Ohne feste Höhe bleibt die dynamische Messung aktiv.
+Werte sind Pixelzahlen ohne `px` (Breite 200–4000, Höhe 200–5000). Die Breite wird auf die verfügbare Dashboard-Spaltenbreite begrenzt; sie kann keine schmalere Spalte vergrößern. Wenn Breite und Höhe gesetzt sind, wird die eingebettete Oberfläche proportional auf die verfügbare Fläche verkleinert, statt innerhalb der Karte zu scrollen. Bei sehr kleinen Abmessungen werden Schrift und Bedienelemente entsprechend kleiner. Wenn nur ein Maß gesetzt ist, gilt für das andere weiterhin die bisherige automatische bzw. Dashboard-Größe.
