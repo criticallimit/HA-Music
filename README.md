@@ -417,3 +417,10 @@ Sicherung vor lokaler Coverübertragung und dauerhaften Suchzuordnungen:
 Zwischenstände vor den auf macOS geprüften Exportkorrekturen:
 [backup/main-2026-10-10-cover-thumbnail-0c50c29](https://github.com/criticallimit/HA-Music/tree/backup/main-2026-10-10-cover-thumbnail-0c50c29), Commit `0c50c29bd6b34d18a5411ffe80203291c68624af`;
 [backup/main-2026-10-10-cover-script-93c496c](https://github.com/criticallimit/HA-Music/tree/backup/main-2026-10-10-cover-script-93c496c), Commit `93c496c784feca8b79d5ece395f15da5a744e50b`.
+
+Die aktualisierte `tools/HA-Music-Playlist-Sync.zip` stammt aus dem erfolgreichen
+[Mac-CI-Build 38056289103](https://github.com/criticallimit/HA-Music/actions/runs/38056289103)
+des Quellstands `9c5b3faabcd51388a004ff796a7a3a28d6850cdf` (Intel und Apple Silicon,
+native Bildverkleinerung, AppleScript-Kompilierung, Transport und Oberfläche geprüft).
+Sicherung vor dem ZIP-Austausch:
+[backup/main-2026-10-10-local-cover-zip-9c5b3fa](https://github.com/criticallimit/HA-Music/tree/backup/main-2026-10-10-local-cover-zip-9c5b3fa), Commit `9c5b3faabcd51388a004ff796a7a3a28d6850cdf`.
