@@ -1282,6 +1282,77 @@ def play_on_target(generation, target, media_type, content):
         "entity_id":target, "media":{"media_content_type":media_type, "media_content_id":content, "metadata":{}}})
 
 
+def album_tracks(favorite_id):
+    """Catalog titles only; album identity comes from a saved favorite."""
+    favorite = next((x for x in apple_music_selection()["items"] if x["id"] == favorite_id and x["kind"] == "Album"), None)
+    if favorite is None:
+        raise ValueError("Album nicht gefunden")
+    if STANDBY.is_set() or not READY or PREPARING:
+        raise ValueError("HA Music ist ausgeschaltet")
+    album_id = favorite.get("album_id")
+    if not album_id:
+        raise ValueError("Bitte diesem Album zuerst über Alben verwalten eine eindeutige Cover-/Albumzuordnung zuweisen")
+    generation = RESTORE_GENERATION
+    url = "https://itunes.apple.com/lookup?" + urlencode({"id": album_id, "entity": "song", "country": "DE", "limit": 200})
+    request = Request(url, headers={"Accept": "application/json"})
+    with urlopen(request, timeout=8) as response:
+        with RESPONSE_LOCK:
+            check_generation(generation)
+            ACTIVE_RESPONSES.add(response)
+        try:
+            raw = response.read(262145)
+        finally:
+            with RESPONSE_LOCK:
+                ACTIVE_RESPONSES.discard(response)
+    check_generation(generation)
+    if len(raw) > 262144:
+        raise ValueError("Album-Titelliste zu groß")
+    records = json.loads(raw).get("results", [])
+    if not isinstance(records, list):
+        raise ValueError("Ungültige Antwort von Apple")
+    album = next((x for x in records if isinstance(x, dict) and x.get("wrapperType") == "collection" and x.get("collectionId") == album_id), None)
+    if album is None:
+        raise ValueError("Album im Apple-Katalog nicht gefunden")
+    tracks = []
+    for item in records:
+        if not isinstance(item, dict) or item.get("wrapperType") != "track" or item.get("collectionId") != album_id:
+            continue
+        title, artist = item.get("trackName"), item.get("artistName")
+        if not all(isinstance(v, str) and 0 < len(v.strip()) <= 200 and not any(ord(c) < 32 for c in v) for v in (title, artist)):
+            continue
+        tracks.append({"id": item.get("trackId"), "name": title, "artist": artist,
+                       "number": item.get("trackNumber") if type(item.get("trackNumber")) is int else len(tracks) + 1})
+    tracks.sort(key=lambda item: item["number"])
+    return {"album": favorite["name"], "artist": album.get("artistName", ""), "tracks": tracks[:200]}
+
+
+def play_apple_album_track(favorite_id, track_id, generation):
+    global ACTIVE_APPLE, APPLE_VERIFICATION_STARTED, SOURCE_UNCONFIRMED, SOURCE_RESTORE_ERROR
+    if type(track_id) is not int or not 0 < track_id < 10**16:
+        raise ValueError("Ungültige Titel-ID")
+    selection = apple_music_selection()
+    if not selection["available"]:
+        raise ValueError("Apple-Music-Steuergerät nicht bereit")
+    data = album_tracks(favorite_id)
+    track = next((x for x in data["tracks"] if x["id"] == track_id), None)
+    if track is None:
+        raise ValueError("Titel gehört nicht zum gespeicherten Album")
+    check_generation(generation)
+    command = "spiel " + track["name"] + " von " + track["artist"] + " auf Apple Music"
+    result = play_on_target(generation, selection["target"], "APPLE_MUSIC", command)
+    favorite = next(item for item in selection["items"] if item["id"] == favorite_id)
+    with STATE_LOCK:
+        check_generation(generation)
+        save_selected_source("apple", favorite_id)
+        save_selected_view("apple")
+        ACTIVE_APPLE = {**favorite, "target": selection["target"], "kind": "Track", "name": track["name"]}
+        APPLE_VERIFICATION_STARTED = None
+        SOURCE_UNCONFIRMED = False
+        SOURCE_RESTORE_ERROR = None
+        MONITOR.select("")
+    return result
+
+
 def play_apple_music(favorite_id, generation, *, startup=False):
     global ACTIVE_APPLE, SOURCE_UNCONFIRMED, SOURCE_RESTORE_ERROR, APPLE_VERIFICATION_STARTED
     selection = apple_music_selection()
@@ -1604,6 +1675,8 @@ def perform(action, body):
             return play_station(body.get("station"), generation)
         if action == "apple_music":
             return play_apple_music(body.get("favorite"), generation)
+        if action == "apple_album_track":
+            return play_apple_album_track(body.get("favorite"), body.get("track_id"), generation)
         return perform_control(action, body, generation)
 
 
@@ -1851,6 +1924,8 @@ class Handler(BaseHTTPRequestHandler):
         if name == "status" and "/api/" in path:
             return self.reply(200, {"radio": "direct_presets",
                                     "apple_music": "alexa_favorites", "backend": "connected" if TOKEN else "unavailable"})
+        if name == "album-tracks" and "/api/" in path:
+            return self.reply(405, {"error":"POST required"})
         if name == "apple-library" and "/api/" in path:
             try:
                 return self.reply(200, library_snapshot())
@@ -1928,7 +2003,7 @@ class Handler(BaseHTTPRequestHandler):
             return self.reply(403, {"error": "Ingress only"})
         path = unquote(urlsplit(self.path).path)
         action = path.rsplit("/", 1)[-1]
-        if "/api/" not in path or action not in ("volume", "room_audio", "group_transport", "track_transport", "radio_direct", "apple_music", "radio_power", "selected_view", "dashboard_card_installed", "apple-library", "album-covers"):
+        if "/api/" not in path or action not in ("volume", "room_audio", "group_transport", "track_transport", "radio_direct", "apple_music", "radio_power", "selected_view", "dashboard_card_installed", "apple-library", "album-covers", "album-tracks", "apple_album_track"):
             return self.reply(404, {"error": "Not found"})
         if self.headers.get("Sec-Fetch-Site") == "cross-site":
             return self.reply(403, {"error": "Cross-site request rejected"})
@@ -1938,6 +2013,8 @@ class Handler(BaseHTTPRequestHandler):
             body = json.loads(self.read_request_body(65536) if action == "apple-library" else self.read_request_body())
             if not isinstance(body, dict):
                 raise ValueError("Invalid body")
+            if action == "album-tracks":
+                return self.reply(200, album_tracks(body.get("favorite")))
             if action == "album-covers":
                 return self.reply(200, album_cover_search(body))
             if action == "apple-library":
