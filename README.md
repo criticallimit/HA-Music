@@ -417,7 +417,7 @@ Zwischenstände vor den auf macOS geprüften Exportkorrekturen:
 [backup/main-2026-10-10-cover-thumbnail-0c50c29](https://github.com/criticallimit/HA-Music/tree/backup/main-2026-10-10-cover-thumbnail-0c50c29), Commit `0c50c29bd6b34d18a5411ffe80203291c68624af`;
 [backup/main-2026-10-10-cover-script-93c496c](https://github.com/criticallimit/HA-Music/tree/backup/main-2026-10-10-cover-script-93c496c), Commit `93c496c784feca8b79d5ece395f15da5a744e50b`.
 
-Die aktualisierte `tools/HA-Music-Playlist-Sync.zip` stammt aus dem erfolgreichen
+Die damals aktualisierte `tools/HA-Music-Playlist-Sync.zip` stammte aus dem erfolgreichen
 [Mac-CI-Build 38056289103](https://github.com/criticallimit/HA-Music/actions/runs/38056289103)
 des Quellstands `9c5b3faabcd51388a004ff796a7a3a28d6850cdf` (Intel und Apple Silicon,
 native Bildverkleinerung, AppleScript-Kompilierung, Transport und Oberfläche geprüft).
@@ -459,3 +459,14 @@ Diese Änderungen sind automatisiert geprüft, nicht mit den Echos im Heimnetz.
 Sicherung davor:
 [backup/main-2026-10-10-persistent-volume-single-track-30b0300](https://github.com/criticallimit/HA-Music/tree/backup/main-2026-10-10-persistent-volume-single-track-30b0300),
 Commit `30b030029ae5950c6ff19fe5cfd4d015b7a73306`.
+
+Die ZIP in `tools/HA-Music-Playlist-Sync.zip` enthält jetzt die auf macOS gebaute
+und geprüfte App mit Titellängen des Quellstands
+`e7f6603193446b62b71ea328870915acb0a7a03a`. Intel und Apple Silicon, native
+Selbstprüfung, vier Transporttests und Fensterprüfung waren erfolgreich:
+[GitHub-Prüflauf](https://github.com/criticallimit/HA-Music/actions/runs/38057399331).
+ZIP-SHA256: `5fd7cd47ccbb66a802916d6bd3ac550aedbff7bd7e1ed228986b898e4e8d85fb`.
+
+Sicherung vor der erneuerten ZIP:
+[backup/main-2026-10-10-single-track-mac-zip-e7f6603](https://github.com/criticallimit/HA-Music/tree/backup/main-2026-10-10-single-track-mac-zip-e7f6603),
+Commit `e7f6603193446b62b71ea328870915acb0a7a03a`.
