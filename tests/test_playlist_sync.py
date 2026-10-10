@@ -194,6 +194,32 @@ class PlaylistSyncTests(unittest.TestCase):
                    "data": base64.b64encode(too_big).decode()})
         self.assertEqual(status, 400)
 
+    def test_cover_presence_check_is_authenticated_and_deduplicated(self):
+        picture = b"PNG data" + b"x" * 30
+        existing = hashlib.sha256(picture).hexdigest()
+        missing = "a" * 64
+        self.assertEqual(self.request(path="/api/playlist-artwork-check",
+            body={"covers": [missing, missing]})[1],
+            {"ok": True, "missing": [missing], "checked": 1})
+        cover_path = app.ARTWORK_DIR / "playlists"
+        cover_path.mkdir(parents=True)
+        (cover_path / (existing + ".image")).write_bytes(b"\\x89PNG\\r\\n\\x1a\\n" + picture)
+        # The digest does not match those bytes, so the presence check must reject it.
+        self.assertIn(existing, self.request(path="/api/playlist-artwork-check",
+            body={"covers": [existing]})[1]["missing"])
+        real_image = b"\\x89PNG\\r\\n\\x1a\\n" + picture
+        valid_hash = hashlib.sha256(real_image).hexdigest()
+        (cover_path / (valid_hash + ".image")).write_bytes(real_image)
+        status, data = self.request(path="/api/playlist-artwork-check",
+            body={"covers": [valid_hash, missing, valid_hash]})
+        self.assertEqual(status, 200)
+        self.assertEqual(data["missing"], [missing])
+        self.assertEqual(data["checked"], 2)
+        self.assertEqual(self.request(path="/api/playlist-artwork-check",
+            body={"covers": ["invalid"]})[0], 400)
+        self.assertEqual(self.request(path="/api/playlist-artwork-check",
+            body={"covers": [valid_hash]}, headers={"Authorization":"Bearer wrong"})[0], 403)
+
     def test_authenticated_cover_upload_deduplicates_and_track_sync_keeps_local_image(self):
         picture = b"\x89PNG\r\n\x1a\nlocal fixture"
         identity = hashlib.sha256(picture).hexdigest()
