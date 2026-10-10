@@ -54,4 +54,5 @@ jobs:
           node --check ha_music/lovelace/ha-music-card.js
           node --check ha_music/lovelace/ha-music-card-loader.js
           node --test tests/frontend.test.cjs
+          node --test tests/layout.test.cjs
 

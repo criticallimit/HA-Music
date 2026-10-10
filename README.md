@@ -286,6 +286,15 @@ Sicherung davor: [backup/main-2026-10-09-before-editable-alexa-text-ac18388](htt
 
 ## Lovelace-Kartengröße
 
+Radio und Apple Music verwenden dieselbe verfügbare Höhe und Skalierung.
+Die Playlist-/Album-Auswahl wird auf den verbleibenden Platz der Radioansicht
+begrenzt, statt Cover und Regler zusätzlich zu verkleinern. Bei wenig Höhe
+stehen Playlists und Alben nebeneinander als kompakte, separat scrollbare Listen.
+Bei mehr Platz bleiben die beiden Bereiche untereinander. Das Apple-Cover wird
+in der eingebetteten Karte vollständig eingepasst. Die direkte Add-on-Ansicht
+behält ihr bisheriges Layout. Sicherung davor:
+[backup/main-2026-10-10-apple-layout-2fb0b8d](https://github.com/criticallimit/HA-Music/tree/backup/main-2026-10-10-apple-layout-2fb0b8d), Commit `2fb0b8d5cb57117ca91754d38555eaa56a1bad5b`.
+
 Die Karte übernimmt die verfügbare Dashboard-Spaltenbreite. Ihre Höhe richtet sich automatisch nach dem verbleibenden Bildschirmplatz unterhalb der Kartenposition, mit 16 Pixeln Abstand zum unteren Rand. Die gesamte Oberfläche bleibt ohne äußere Scrollbalken sichtbar; falls Bedienelemente mehr Platz benötigen, wird sie proportional verkleinert. Die Berechnung reagiert auf Fenstergröße und mobile Bildschirmhöhe.
 
 ```yaml

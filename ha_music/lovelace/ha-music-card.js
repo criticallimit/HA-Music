@@ -260,6 +260,11 @@ class HAMusicCard extends HTMLElement {
       iframe.style.transform = "scale(" + ratio + ")";
       iframe.style.overflow = "hidden";
       iframe.setAttribute("scrolling", "no");
+      if (this._lastFitHeight !== this._availableHeight || this._lastFitIframe !== iframe) {
+        this._lastFitHeight = this._availableHeight;
+        this._lastFitIframe = iframe;
+        iframe.contentWindow?.postMessage({type:"ha-music-available-height",height:this._availableHeight}, window.location.origin);
+      }
     }
   }
 
@@ -346,6 +351,8 @@ class HAMusicCard extends HTMLElement {
     this._iframe = null;
     this._measuredHeight = null;
     this._availableHeight = null;
+    this._lastFitHeight = null;
+    this._lastFitIframe = null;
   }
 
   getCardSize() {

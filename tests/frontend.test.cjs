@@ -14,6 +14,21 @@ function cardHarness(config, width, height) {
   return {instance,card,iframe:instance._iframe,context};
 }
 
+test('Host sends available height once per change and for a replacement iframe', () => {
+  const h = cardHarness({},600,1000), messages=[];
+  h.context.window.location={origin:'http://ha.test'};
+  h.iframe.contentWindow={postMessage(message,origin){messages.push({message,origin});}};
+  h.instance._applyDimensions();h.instance._applyDimensions();
+  assert.equal(messages.length,1);
+  assert.equal(messages[0].message.height,400);
+  assert.equal(messages[0].message.type,'ha-music-available-height');
+  assert.equal(messages[0].origin,'http://ha.test');
+  h.context.window.innerHeight=616;h.instance._applyDimensions();
+  assert.equal(messages[1].message.height,500);
+  h.instance._iframe={...h.iframe};h.instance._applyDimensions();
+  assert.equal(messages.length,3);
+});
+
 test('automatic height fits content below the card on mobile and desktop without scrolling', () => {
   for (const width of [390,1200]) {
     const {instance,card,iframe} = cardHarness({},width,1000);

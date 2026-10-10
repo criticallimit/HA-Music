@@ -24,8 +24,47 @@ if (new URLSearchParams(window.location.search).get("ha_music_card") === "1" && 
   document.documentElement.classList.add("ha-dashboard-fit");
   let pendingHeightFrame = 0;
   let lastReportedHeight = 0;
+  const setAvailableHeight = height => {
+    if (Number.isFinite(height) && height > 0 && height <= 10000)
+      document.documentElement.style.setProperty("--ha-card-available-height", height + "px");
+  };
+  const fitAppleLibrary = () => {
+    const library = document.getElementById("apple-library");
+    const right = document.querySelector(".dashboard-right");
+    const artwork = document.querySelector(".now");
+    const stations = document.getElementById("station-list");
+    if (!library || library.hidden || !right || right.hidden || !artwork || artwork.hidden || !stations) return;
+    const gap = parseFloat(getComputedStyle(right).rowGap) || 0;
+    const controls = [...right.children].filter(child => child !== library && child !== stations && !child.hidden &&
+      getComputedStyle(child).display !== "none" && !["absolute", "fixed"].includes(getComputedStyle(child).position));
+    const controlsHeight = controls.reduce((height, child) => height + child.getBoundingClientRect().height, 0) + gap * controls.length;
+    // Measure the same radio footer at this width without showing it, moving
+    // live controls, duplicating listeners, or changing the active view.
+    const probe = stations.cloneNode(true);
+    probe.removeAttribute("id");
+    probe.querySelectorAll("[id]").forEach(child => child.removeAttribute("id"));
+    probe.hidden = false;
+    probe.inert = true;
+    probe.setAttribute("aria-hidden", "true");
+    Object.assign(probe.style, {position:"fixed", visibility:"hidden", pointerEvents:"none", left:"0", top:"0",
+      width:right.getBoundingClientRect().width + "px", margin:"0"});
+    document.body.appendChild(probe);
+    const stationHeight = Math.max(72, probe.getBoundingClientRect().height);
+    probe.remove();
+    const art = artwork.getBoundingClientRect(), panel = right.getBoundingClientRect();
+    const sameRow = Math.abs(art.top - panel.top) < 1;
+    const referenceHeight = sameRow ? Math.max(art.height, controlsHeight + stationHeight) : controlsHeight + stationHeight;
+    const budget = Math.max(72, Math.floor(referenceHeight - controlsHeight));
+    library.style.setProperty("--ha-library-height", budget + "px");
+    library.classList.toggle("ha-library-compact", budget < 200);
+    for (const grid of library.querySelectorAll(".stations")) {
+      grid.style.setProperty("--ha-library-tile-height", Math.max(32, Math.min(120, grid.clientHeight)) + "px");
+    }
+  };
   const reportHeight = () => {
     pendingHeightFrame = 0;
+    setAvailableHeight(window.frameElement?.parentElement?.clientHeight);
+    fitAppleLibrary();
     const shell = document.querySelector(".shell");
     if (!shell) return;
     const height = Math.ceil(shell.getBoundingClientRect().height);
@@ -40,8 +79,20 @@ if (new URLSearchParams(window.location.search).get("ha_music_card") === "1" && 
     const observer = new ResizeObserver(scheduleHeight);
     observer.observe(document.querySelector(".shell"));
   }
+  if (window.MutationObserver) {
+    // Switching views and importing favorites can leave the shell's size
+    // unchanged. Observe those changes too; sizing styles are deliberately
+    // excluded to prevent a measurement loop.
+    new MutationObserver(scheduleHeight).observe(document.querySelector(".shell"),
+      {subtree:true, childList:true, attributes:true, attributeFilter:["hidden"]});
+  }
   window.addEventListener("load", scheduleHeight);
   window.addEventListener("resize", scheduleHeight);
+  window.addEventListener("message", event => {
+    if (event.source !== window.parent || event.origin !== window.location.origin || event.data?.type !== "ha-music-available-height") return;
+    setAvailableHeight(Number(event.data.height));
+    scheduleHeight();
+  });
   scheduleHeight();
 }
 
