@@ -156,6 +156,29 @@ class PlaylistSyncTests(unittest.TestCase):
         self.assertEqual(result["skipped_empty"], 1)
         self.assertEqual(app.library_snapshot()["items"][-1]["tracks"][0]["name"], "Across the Border")
 
+    def test_mac_and_ipad_sync_preserve_missing_cover_and_optional_metadata(self):
+        picture = b"\\x89PNG\\r\\n\\x1a\\ncover"
+        digest = hashlib.sha256(picture).hexdigest()
+        self.assertEqual(self.request(path="/api/playlist-artwork-sync", body={
+            "cover": digest, "data": base64.b64encode(picture).decode()})[0], 200)
+        original = [{"name":"Same", "artist":"Artist", "album":"Album",
+                     "album_artist":"Band", "duration":261, "cover":digest,
+                     "local_covers":True}]
+        self.assertEqual(self.request(body={"name":"Mix", "tracks":original})[0], 200)
+        minimal = [{"name":"Same", "artist":"Artist"}]
+        self.assertEqual(self.request(body={"name":"Mix", "tracks":minimal})[0], 200)
+        track = app.library_snapshot()["items"][0]["tracks"][0]
+        self.assertEqual(track["cover"], digest)
+        self.assertEqual(track["album"], "Album")
+        self.assertEqual(track["duration"], 261)
+        self.assertEqual(self.request(path="/api/ipad-playlists-sync", body={
+            "playlists":[{"name":"Mix","tracks":minimal}]})[0], 200)
+        self.assertEqual(app.library_snapshot()["items"][0]["tracks"][0]["cover"], digest)
+        changed_album = [{"name":"Same", "artist":"Artist", "album":"Different"}]
+        self.assertEqual(self.request(path="/api/ipad-playlists-sync", body={
+            "playlists":[{"name":"Mix","tracks":changed_album}]})[0], 200)
+        self.assertNotIn("cover", app.library_snapshot()["items"][0]["tracks"][0])
+
     def test_original_resolution_cover_up_to_three_megabytes(self):
         # Uncompressed test bytes mimic large image uploads; the server stores bytes unchanged.
         picture = b"\x89PNG\r\n\x1a\n" + b"pixel" * 450000
