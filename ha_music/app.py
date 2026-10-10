@@ -1471,7 +1471,7 @@ def verify_apple_album(favorite, metadata, elapsed):
         return {"status": "unverifiable", "reason": "Alexa liefert keinen Albumnamen"}
     expected = favorite.get("name", "")
     def normalize(value):
-        return re.sub(r"[^\\w]+", "", unicodedata.normalize("NFKC", value).casefold())
+        return re.sub(r"[^\w]+", "", unicodedata.normalize("NFKC", value).casefold())
     if normalize(actual) != normalize(expected):
         return {"status": "mismatch", "reason": "Alexa meldet anderes Album: " + actual[:160]}
     # Album title match alone cannot establish the exact recording or edition.
