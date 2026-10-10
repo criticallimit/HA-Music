@@ -258,6 +258,15 @@ def normalize_playlist_tracks(tracks):
             extra["local_covers"] = track["local_covers"]
         if track.get("duration") is not None:
             duration = track["duration"]
+            if isinstance(duration, str):
+                # iPad Shortcuts formats Music duration as m:ss or h:mm:ss.
+                parts = duration.strip().split(":")
+                if len(parts) in (2, 3) and all(part.isascii() and part.isdigit() for part in parts):
+                    values = [int(part) for part in parts]
+                    if all(value < 60 for value in values[1:]):
+                        duration = sum(value * 60 ** i for i, value in enumerate(reversed(values)))
+                elif re.fullmatch(r"[0-9]+(?:\\.[0-9]+)?", duration.strip()):
+                    duration = float(duration.strip())
             if type(duration) not in (int, float) or not 0 < duration <= 86400:
                 raise ValueError(f"Titel {number}: Ungültige Titellänge")
             extra["duration"] = float(duration)
