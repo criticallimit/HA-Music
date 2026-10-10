@@ -1494,6 +1494,27 @@ test('Charts rejects delayed broadcast metadata including ingress and absolute s
  h.run('api=reply');await h.run('updateSong()');assert.equal(h.get('current-cover').src,'https://example.test/music.jpg');
 });
 
+test('delayed external radio artwork cannot flash after switching sources even with music content type',async()=>{
+ const h=harness();
+ const old={title:'Radio programme',artist:'Presenter',image:'https://cdn.example.test/station.png',content_type:'music'};
+ h.context.reply=async()=>({details:old});h.run('api=reply;radioReadyForViews=true;selectedStation="wdr2";updateStationLogo(selectedStation)');
+ await h.run('updateSong()');
+ h.run('selectedStation="charts";stationEpoch++;updateStationLogo(selectedStation)');
+ for(let i=0;i<3;i++){await h.run('updateSong()');assert.equal(h.get('current-cover').hidden,true);}
+ h.context.reply=async()=>({details:{...old,title:'Fresh track',artist:'New artist'}});h.run('api=reply');
+ await h.run('updateSong()');assert.equal(h.get('current-cover').hidden,true);
+ h.context.reply=async()=>({details:{title:'Fresh track',artist:'New artist',image:'https://cdn.example.test/fresh.jpg',content_type:'music'}});h.run('api=reply');
+ await h.run('updateSong()');assert.equal(h.get('current-cover').src,'https://cdn.example.test/fresh.jpg');
+});
+
+test('external station logos with recognizable broadcast titles are rejected after reload',async()=>{
+ const h=harness();h.run('radioReadyForViews=true;selectedStation="charts"');
+ for(const title of ['WDR 2','WDR Zwei','1LIVE','SWR3']){
+  h.context.reply=async()=>({details:{title,image:'https://cdn.example.test/logo.png',content_type:'music'}});h.run('api=reply');
+  await h.run('updateSong()');assert.equal(h.get('current-cover').hidden,true);
+ }
+});
+
 
 test('browsing Apple and Radio keeps the playing station branding and clears leftover artwork padding',()=>{
  const h=harness();

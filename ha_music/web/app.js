@@ -326,6 +326,11 @@ const STATION_LOGOS = {
   "wdr2": "wdr2.svg",
   "swr3": "swr3.svg"
 };
+const broadcastMetadataSeen = new Set();
+const broadcastImagesSeen = new Set();
+function artworkMetadataKey(details) {
+  return JSON.stringify([details?.title || "", details?.artist || "", details?.album || "", details?.image || ""]);
+}
 function setNowArtwork(image, alt, radio = false) {
   document.querySelector(".now").classList.toggle("radio-selected", radio);
   const cover = $("current-cover");
@@ -410,11 +415,18 @@ async function updateSong() {
     }
     let details = info.details;
     const isRadio = !activeApple && ["wdr2","1live","swr3"].includes(station);
+    if (isRadio && details) {
+      broadcastMetadataSeen.add(artworkMetadataKey(details));
+      if (broadcastMetadataSeen.size > 64) broadcastMetadataSeen.delete(broadcastMetadataSeen.values().next().value);
+      if (details.image) broadcastImagesSeen.add(details.image);
+      if (broadcastImagesSeen.size > 64) broadcastImagesSeen.delete(broadcastImagesSeen.values().next().value);
+    }
     // Alexa can keep the previous broadcast metadata after accepting a music
     // command. Never turn that stale station logo into a music cover.
     const imagePath = typeof details?.image === "string" ? details.image.split(/[?#]/)[0] : "";
     const broadcastLogo = Object.values(STATION_LOGOS).some(logo => imagePath === logo || imagePath.endsWith("/" + logo));
-    if (!isRadio && (broadcastLogo || ["radio", "channel"].includes(details?.content_type))) details = null;
+    const broadcastTitle = /^(wdr\s*(2|zwei)|1\s*live|eins\s*live|swr\s*3)$/i.test((details?.title || "").trim());
+    if (!isRadio && (broadcastLogo || broadcastTitle || broadcastImagesSeen.has(details?.image) || broadcastMetadataSeen.has(artworkMetadataKey(details)) || ["radio", "channel"].includes(details?.content_type))) details = null;
     if (isRadio && info.radio_metadata) applyRadioMetadata(info.radio_metadata);
     $("current-title").textContent = activeApple ? (details?.title || activeApple.name) : STATIONS.find(s => s[0] === station)?.[1] || details?.title || "Kein Sender ausgewählt";
     if (!isRadio) {

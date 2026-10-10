@@ -53,12 +53,16 @@ const artwork='<svg xmlns="http://www.w3.org/2000/svg" width="300" height="300">
    }
    await surface.evaluate(async()=>{
     activeApple=null;selectedStation='wdr2';updateStationLogo(selectedStation);show('radio');
+    api=async()=>({details:{title:'Old programme',artist:'Presenter',image:'/api/album-art/98',content_type:'music'}});
+    await updateSong();
     window.frameBefore=document.querySelector('.art').getBoundingClientRect().toJSON();
     show('apple');show('radio');
     selectedStation='charts';updateStationLogo(selectedStation);
     api=async()=>({details:{title:'WDR 2',image:'/api/hassio_ingress/session/wdr2.svg?old=1',content_type:'music'}});
     await updateSong();
    });
+   assert.ok(await surface.locator('#current-cover').evaluate(image=>image.hidden));
+   await surface.evaluate(async()=>{api=async()=>({details:{title:'Old programme',artist:'Presenter',image:'/api/album-art/98',content_type:'music'}});await updateSong();await updateSong();});
    assert.ok(await surface.locator('#current-cover').evaluate(image=>image.hidden));
    await surface.evaluate(async()=>{api=async()=>({details:{title:'Lush Life',artist:'Zara Larsson',image:'/api/album-art/99',content_type:'music'}});await updateSong();});
    await surface.waitForFunction(()=>!document.getElementById('current-cover').hidden);

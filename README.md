@@ -603,3 +603,17 @@ aktualisiert kein bereits installiertes Add-on.
 Sicherung davor:
 [backup/main-2026-10-10-source-cover-ca8b6f3](https://github.com/criticallimit/HA-Music/tree/backup/main-2026-10-10-source-cover-ca8b6f3),
 Commit `ca8b6f3971d624caf32622668b94d828f136ca68`.
+
+## Kein altes Senderbild nach dem Wechsel zu Musik
+
+Die Ansicht erkennt zusätzlich zuvor gemeldete Radio-Metadaten und Bildadressen.
+Damit wird auch ein externes Senderbild verworfen, das Alexa verspätet und mit
+Inhaltstyp „music“ meldet. Ein zwischenzeitlich neuer Titel allein gibt das alte
+Senderbild nicht wieder frei. Bis ein neues Cover vorliegt, bleibt der
+Platzhalter erhalten; gespeicherte Albumcover haben weiterhin Vorrang.
+Regressions- und Browsertests prüfen diese Antwortfolge auch im echten
+Lovelace-iframe sowie auf der Ingress-Seite.
+
+Sicherung davor:
+[backup/main-2026-10-10-radio-flash-f898235](https://github.com/criticallimit/HA-Music/tree/backup/main-2026-10-10-radio-flash-f898235),
+Commit `f898235c4c073e6721da4353c1edeb498c44d91f`.
