@@ -157,7 +157,7 @@ class PlaylistSyncTests(unittest.TestCase):
         self.assertEqual(app.library_snapshot()["items"][-1]["tracks"][0]["name"], "Across the Border")
 
     def test_mac_and_ipad_sync_preserve_missing_cover_and_optional_metadata(self):
-        picture = b"\\x89PNG\\r\\n\\x1a\\ncover"
+        picture = b"\x89PNG\r\n\x1a\ncover"
         digest = hashlib.sha256(picture).hexdigest()
         self.assertEqual(self.request(path="/api/playlist-artwork-sync", body={
             "cover": digest, "data": base64.b64encode(picture).decode()})[0], 200)
