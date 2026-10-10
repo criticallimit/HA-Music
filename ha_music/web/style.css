@@ -216,3 +216,10 @@ html.ha-dashboard-card .station.active,html.ha-dashboard-card nav button.active{
 #library-editor-feedback{min-height:20px}
 @media(max-width:550px){.library-editor-row{grid-template-columns:1fr}.library-editor-row button{justify-self:end}.library-editor{padding:16px}}
 
+
+.album-tracks-dialog{box-sizing:border-box;width:min(570px,calc(100vw - 24px));max-height:85vh;overflow:auto}
+.album-tracks-list{display:flex;flex-direction:column;gap:5px;margin-top:12px;max-height:48vh;overflow-y:auto}
+.album-track-choice{width:100%;padding:12px;text-align:left;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);cursor:pointer}
+.album-track-choice:hover,.album-track-choice:focus-visible{border-color:var(--accent)}
+#album-play-all{padding:10px 14px;background:var(--accent);color:var(--text);border-radius:8px}
+#album-tracks-feedback{min-height:1.5em}
