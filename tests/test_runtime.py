@@ -896,7 +896,7 @@ class RuntimeTests(unittest.TestCase):
                         app.play_apple_music(identity, 10, startup=startup)
                     request.assert_called_once_with("/services/media_player/play_media", {
                         "entity_id":"media_player.wohnzimmer", "media":{
-                            "media_content_type":"custom", "media_content_id":text, "metadata":{}}})
+                            "media_content_type":"APPLE_MUSIC", "media_content_id":text, "metadata":{}}})
                 snapshot = app.library_snapshot()
                 edited = dict(snapshot["items"][0], command="spiel playlist anderer Name")
                 app.save_library({"items":[edited], "revision":snapshot["revision"]})
