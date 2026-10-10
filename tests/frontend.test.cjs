@@ -6,17 +6,17 @@ const path = require('node:path');
 
 function cardHarness(config, width, height) {
   const card = {clientWidth:width,style:{}};
-  const context = vm.createContext({HTMLElement:class {},customElements:{get:()=>true},window:{customCards:[]}});
+  const context = vm.createContext({HTMLElement:class {},customElements:{get:()=>true},window:{customCards:[],innerHeight:516},CustomEvent:class {constructor(name,options){this.detail=options.detail;}}});
   vm.runInContext(fs.readFileSync(path.join(__dirname,'../ha_music/lovelace/ha-music-card.js'),'utf8'),context);
   const instance = vm.runInContext('Object.create(HAMusicCard.prototype)',context);
-  Object.assign(instance,{_config:config,_measuredHeight:height,style:{},shadowRoot:{querySelector:()=>card},
+  Object.assign(instance,{_config:config,_measuredHeight:height,style:{},getBoundingClientRect:()=>({top:100}),shadowRoot:{querySelector:()=>card},
     _iframe:{style:{},attributes:{},setAttribute(k,v){this.attributes[k]=v;},removeAttribute(k){delete this.attributes[k];}}});
-  return {instance,card,iframe:instance._iframe};
+  return {instance,card,iframe:instance._iframe,context};
 }
 
-test('height alone fits all content into the Lovelace card without scrolling', () => {
+test('automatic height fits content below the card on mobile and desktop without scrolling', () => {
   for (const width of [390,1200]) {
-    const {instance,card,iframe} = cardHarness({height:400,width:null},width,1000);
+    const {instance,card,iframe} = cardHarness({},width,1000);
     instance._applyDimensions();
     assert.equal(card.style.height,'400px');
     assert.equal(iframe.style.width,width+'px');
@@ -29,17 +29,37 @@ test('height alone fits all content into the Lovelace card without scrolling', (
   }
 });
 
-test('configured width fits the actual host and automatic height clears scaling', () => {
-  const {instance,card,iframe} = cardHarness({height:400,width:1200},600,800);
+test('viewport resize recomputes automatic height and old dimensions are ignored', () => {
+  const {instance,card,iframe,context} = cardHarness({height:2000,width:1200},600,800);
   instance._applyDimensions();
+  assert.equal(instance.style.width,'100%');
+  assert.equal(card.style.height,'400px');
   assert.equal(iframe.style.width,'600px');
   assert.equal(iframe.style.transform,'scale(0.5)');
-  instance._config.height=null;
+  context.window.innerHeight=916;
   instance._applyDimensions();
-  assert.equal(card.style.height,'');
-  assert.equal(iframe.style.transform,'');
+  assert.equal(card.style.height,'800px');
+  assert.equal(iframe.style.transform,'scale(1)');
   assert.equal(iframe.style.height,'800px');
-  assert.equal(iframe.attributes.scrolling,undefined);
+  assert.equal(iframe.attributes.scrolling,'no');
+  context.window.visualViewport={height:500,offsetTop:100};
+  card.clientWidth=390;
+  instance._applyDimensions();
+  assert.equal(card.style.height,'484px');
+  assert.equal(iframe.style.width,'390px');
+});
+
+test('theme edits remove obsolete width and height while preserving other card settings', () => {
+  const {context}=cardHarness({},600,800);
+  const editor=vm.runInContext('Object.create(HAMusicCardEditor.prototype)',context);
+  let changed;
+  editor._config={type:'custom:ha-music-card',width:800,height:600,grid_options:{columns:12}};
+  editor.dispatchEvent=event=>{changed=event.detail.config;};
+  editor._changed({theme:'My theme'});
+  assert.equal(changed.width,undefined);
+  assert.equal(changed.height,undefined);
+  assert.equal(changed.theme,'My theme');
+  assert.equal(changed.grid_options.columns,12);
 });
 
 function harness() {

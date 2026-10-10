@@ -92,6 +92,18 @@ nav button.active{background:var(--surface);border-color:var(--accent);box-shado
  .station{min-height:90px}
 }
 
+/* Dashboard embedding: compact controls, with scrolling confined to libraries. */
+html.ha-dashboard-fit,html.ha-dashboard-fit body{overflow:hidden}
+html.ha-dashboard-fit .now{height:clamp(240px,calc(100dvh - 88px),720px)}
+html.ha-dashboard-fit .dashboard-right{min-height:0;gap:8px}
+html.ha-dashboard-fit .master-volume{min-height:64px;padding:8px 16px}
+html.ha-dashboard-fit .speaker-list .player-row{min-height:64px;padding:8px 16px;gap:4px 12px}
+html.ha-dashboard-fit .station:not(.apple-favorite){min-height:72px;gap:5px}
+html.ha-dashboard-fit .apple-library{gap:10px}
+html.ha-dashboard-fit .apple-library .stations{max-height:clamp(110px,22vh,220px);overflow-y:auto;overflow-x:hidden;align-content:start;overscroll-behavior:contain;scrollbar-gutter:stable;padding-right:4px}
+html.ha-dashboard-fit .apple-library-note{font-size:11px}
+@media(max-width:650px){html.ha-dashboard-fit .now{height:260px}html.ha-dashboard-fit .shell{padding:10px}html.ha-dashboard-fit .master-volume,html.ha-dashboard-fit .speaker-list .player-row{padding:8px 12px}}
+
 /* Classic IEC-style distinct I / O controls, matching the approved concept A. */
 .power-buttons button{display:flex;align-items:center;justify-content:center;background:#20252d}
 .power-buttons .power-icon{display:block;font-family:Arial,Helvetica,sans-serif;font-size:26px;font-weight:650;line-height:1}

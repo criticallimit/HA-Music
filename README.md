@@ -185,7 +185,7 @@ Unter **Apple Music → Plus neben Playlists → Titelliste importieren** beim g
 
 Auf dem Mac: Playlist auswählen, **Ablage → Mediathek → Playlist exportieren**, Format XML oder Text wählen ([Apple-Anleitung](https://support.apple.com/de-de/guide/music/mus27cd5060f/mac)). Alternativ eine CSV mit Titel und Interpret importieren. Ein erneuter Import ersetzt nach Übernehmen die vorherige Titelliste; Änderungen in Apple Music werden nicht automatisch synchronisiert. Playlists ohne Import können im Dialog weiterhin vollständig abgespielt werden.
 
-Die bestehende Albumauswahl, Radio-/Standby-Steuerung und Skalierung auf die konfigurierte Kartenhöhe bleiben erhalten. Die tatsächliche Alexa-Erkennung eines importierten Songs muss auf den Geräten geprüft werden. Kein Developer-Zugang, keine MusicKit-Anmeldung, kein Release oder Versionswechsel.
+Die bestehende Albumauswahl, Radio-/Standby-Steuerung und automatische Kartenanpassung bleiben erhalten. Die tatsächliche Alexa-Erkennung eines importierten Songs muss auf den Geräten geprüft werden. Kein Developer-Zugang, keine MusicKit-Anmeldung, kein Release oder Versionswechsel.
 
 ### Quadratische Kacheln und Albumcover
 
@@ -286,12 +286,10 @@ Sicherung davor: [backup/main-2026-10-09-before-editable-alexa-text-ac18388](htt
 
 ## Lovelace-Kartengröße
 
-Im visuellen Karteneditor lassen sich **Breite (Pixel)** und **Höhe (Pixel)** unabhängig voneinander festlegen. Leere Felder bedeuten: Breite entsprechend dem Home-Assistant-Dashboard und Höhe automatisch passend zum Inhalt. Alternativ in YAML:
+Die Karte übernimmt die verfügbare Dashboard-Spaltenbreite. Ihre Höhe richtet sich automatisch nach dem verbleibenden Bildschirmplatz unterhalb der Kartenposition, mit 16 Pixeln Abstand zum unteren Rand. Die gesamte Oberfläche bleibt ohne äußere Scrollbalken sichtbar; falls Bedienelemente mehr Platz benötigen, wird sie proportional verkleinert. Die Berechnung reagiert auf Fenstergröße und mobile Bildschirmhöhe.
 
 ```yaml
 type: custom:ha-music-card
-width: 800
-height: 620
 ```
 
-Werte sind Pixelzahlen ohne `px` (Breite 200–4000, Höhe 200–5000). Die Breite wird auf die verfügbare Dashboard-Spaltenbreite begrenzt; sie kann keine schmalere Spalte vergrößern. Wenn Breite und Höhe gesetzt sind, wird die eingebettete Oberfläche proportional auf die verfügbare Fläche verkleinert, statt innerhalb der Karte zu scrollen. Bei sehr kleinen Abmessungen werden Schrift und Bedienelemente entsprechend kleiner. Wenn nur ein Maß gesetzt ist, gilt für das andere weiterhin die bisherige automatische bzw. Dashboard-Größe.
+Breiten- und Höhenfelder sind aus dem Karteneditor entfernt. Alte `width`-/`height`-Angaben werden ignoriert und bei der nächsten Theme-Änderung im Editor entfernt. Playlists und Alben besitzen jeweils einen begrenzten, intern scrollbareren Bereich; zusätzliche Favoriten vergrößern die Karte nicht. Die direkte Add-on-Seite behält ihr normales responsives Layout. Bearbeitungs- und Titelauswahldialoge können weiterhin intern scrollen.

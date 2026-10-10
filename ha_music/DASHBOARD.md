@@ -12,14 +12,12 @@ Beim Start des Add-ons werden die Karten-Dateien nach `/config/www/` kopiert.
 
 ```yaml
 type: custom:ha-music-card
-height: 1050
 ```
 
-Die Höhe (`height`) lässt sich in Pixeln einstellen. Die Karte verwendet dieselbe Ingress-Oberfläche wie das Add-on; beim Rendern im Dashboard übernimmt sie die aktiven Home-Assistant-Theme-Farben. Ein optionales `theme`-Feld erlaubt eine abweichende Theme-Auswahl für diese Karte.
+Die Karte übernimmt die Spaltenbreite des Dashboards und passt sich automatisch an die verbleibende Bildschirmhöhe unter ihrer Position an. Es gibt keine Breiten-/Höheneingabe und keine äußeren Karten-Scrollbalken. Lange Playlist- und Albumlisten sind innerhalb ihres jeweiligen Bereichs scrollbar. Die Karte verwendet dieselbe Ingress-Oberfläche wie das Add-on und übernimmt die aktiven Home-Assistant-Theme-Farben. Ein optionales `theme`-Feld erlaubt eine abweichende Theme-Auswahl für diese Karte.
 
 ```yaml
 type: custom:ha-music-card
-height: 1050
 theme: Dirk
 ```
 

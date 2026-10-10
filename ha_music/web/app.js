@@ -21,6 +21,7 @@ if (window.parent !== window) {
 // Report actual visible content height to the Lovelace host.
 // ResizeObserver reacts when the radio powers on/off or speaker controls change.
 if (new URLSearchParams(window.location.search).get("ha_music_card") === "1" && window.parent !== window) {
+  document.documentElement.classList.add("ha-dashboard-fit");
   let pendingHeightFrame = 0;
   let lastReportedHeight = 0;
   const reportHeight = () => {
