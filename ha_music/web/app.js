@@ -130,6 +130,7 @@ let volumeRevision = 0;
 let masterRoomLevels = {};
 const roomVolumeRows = new Map();
 const requestedRoomVolumes = new Map();
+const volumeEditing = new Map();
 const ROOM_VOLUME_PREVIEW_MS = 60000;
 let transportPending = false;
 let transportEpoch = 0;
@@ -1031,13 +1032,18 @@ function masterView(groups, saved) {
   if (!group) return null;
   // The master setting is independent; individual room changes must not move it.
   const volume = saved?.["media_player.wohnung"] ?? group.volume ?? 0;
-  return {...group, volume};
+  return {...group, volume:requestedRoomLevel({...group, volume})};
+}
+function previewVolume(entity, level, revision, masterPreview = false) {
+  requestedRoomVolumes.set(entity, {level, revision, generation:uiGeneration,
+    expires:Date.now()+ROOM_VOLUME_PREVIEW_MS, settleUntil:Date.now()+3000, masterPreview});
 }
 function previewMasterVolume(level) {
   const revision = ++volumeRevision;
+  previewVolume("media_player.wohnung", level, revision);
   for (const [entity, room] of roomVolumeRows) {
     if (!(masterRoomLevels[entity] > 0)) continue;
-    requestedRoomVolumes.set(entity, {level, revision, generation:uiGeneration, expires:Date.now()+ROOM_VOLUME_PREVIEW_MS});
+    previewVolume(entity, level, revision, true);
     room.render(level);
   }
   return revision;
@@ -1050,11 +1056,19 @@ function discardMasterPreview(revision) {
     if (room) room.render(room.observed);
   }
 }
+function settleVolumePreview(revision) {
+  // Start the bounded wait after the command returns, including slow groups.
+  for (const request of requestedRoomVolumes.values()) {
+    if (request.revision !== revision) continue;
+    request.expires = Date.now()+ROOM_VOLUME_PREVIEW_MS;
+    request.settleUntil = Date.now()+3000;
+  }
+}
 function requestedRoomLevel(p) {
   const request = requestedRoomVolumes.get(p.entity_id);
   if (!request) return p.volume;
   if (request.generation !== uiGeneration || Date.now() >= request.expires ||
-      (typeof p.volume === "number" && Math.abs(p.volume-request.level) < 0.005)) {
+      (Date.now() >= request.settleUntil && typeof p.volume === "number" && Math.abs(p.volume-request.level) < 0.005)) {
     requestedRoomVolumes.delete(p.entity_id);
     return p.volume;
   }
@@ -1092,28 +1106,33 @@ function volumeRow(p, remembered, master) {
         label.textContent = slider.value + "%";
         renderAudioButton();
         if (!radioReadyForViews || mediaPreparing || strictStandby) return;
+        volumeEditing.set(p.entity_id, uiGeneration);
         if (master) previewMasterVolume(Number(slider.value)/100);
         else {
-          volumeRevision++;
-          requestedRoomVolumes.delete(p.entity_id);
+          previewVolume(p.entity_id, Number(slider.value)/100, ++volumeRevision);
           masterRoomLevels[p.entity_id] = Number(slider.value)/100;
         }
       });
+      slider.addEventListener("blur", () => {
+        volumeEditing.delete(p.entity_id);
+        refreshPlayers();
+      });
       slider.addEventListener("change", async () => {
+        volumeEditing.delete(p.entity_id);
         if (!radioReadyForViews || mediaPreparing || strictStandby) return;
         const generation = uiGeneration;
         const volume = Number(slider.value)/100;
         const revision = master ? previewMasterVolume(volume) : ++volumeRevision;
         if (!master) {
-          requestedRoomVolumes.delete(p.entity_id);
+          previewVolume(p.entity_id, volume, revision);
           masterRoomLevels[p.entity_id] = volume;
         }
         volumeRequests++;
         slider.disabled = mute.disabled = true;
-        try { await api("volume",{entity_id:p.entity_id,volume}); if(generation !== uiGeneration) return; if(volume>0)previous.set(p.entity_id,volume);label.textContent=slider.value+"%";renderAudioButton(); }
-        catch(e){if(generation === uiGeneration){if(master)discardMasterPreview(revision);reportError(e.message);}}
+        try { await api("volume",{entity_id:p.entity_id,volume}); if(generation !== uiGeneration) return; settleVolumePreview(revision); if(volume>0)previous.set(p.entity_id,volume);label.textContent=slider.value+"%";renderAudioButton(); }
+        catch(e){if(generation === uiGeneration){discardMasterPreview(revision);renderLevel(p.volume);reportError(e.message);}}
         finally { volumeRequests--; slider.disabled = mute.disabled = !radioReadyForViews || mediaPreparing; refreshPlayers();
-          if(master)setTimeout(()=>{if(generation === uiGeneration)refreshPlayers();},ROOM_VOLUME_PREVIEW_MS); }
+          setTimeout(()=>{if(generation === uiGeneration)refreshPlayers();},ROOM_VOLUME_PREVIEW_MS); }
       });
       mute.addEventListener("click",async () => {
         if (!radioReadyForViews || mediaPreparing || strictStandby) return;
@@ -1122,21 +1141,26 @@ function volumeRow(p, remembered, master) {
         const next = current > 0 ? 0 : (previous.get(p.entity_id) || remembered[p.entity_id] || 0.3);
         if(current>0) previous.set(p.entity_id,current);
         const revision = master ? previewMasterVolume(next) : ++volumeRevision;
-        if (master) renderLevel(next);
-        else requestedRoomVolumes.delete(p.entity_id);
+        renderLevel(next);
+        if (!master) {
+          previewVolume(p.entity_id, next, revision);
+          masterRoomLevels[p.entity_id] = next;
+        }
         volumeRequests++;
         slider.disabled = mute.disabled = true;
         try {
-          const response = await api(master ? "volume" : "room_audio", master ? {entity_id:p.entity_id,volume:next} : {entity_id:p.entity_id,on:current===0});
+          // Send the exact displayed level; stale Alexa state must not turn a
+          // quick unmute into a no-op or restore an older percentage.
+          await api("volume", {entity_id:p.entity_id,volume:next});
           if (generation !== uiGeneration) return;
-          slider.value = Math.round((master ? next : response.volume)*100);
-          if (!master) masterRoomLevels[p.entity_id] = response.volume;
+          settleVolumePreview(revision);
+          slider.value = Math.round(next*100);
           label.textContent=slider.value+"%";
           renderAudioButton();
         }
-        catch(e){if(generation === uiGeneration){if(master)discardMasterPreview(revision);reportError(e.message);}}
+        catch(e){if(generation === uiGeneration){discardMasterPreview(revision);renderLevel(p.volume);reportError(e.message);}}
         finally { volumeRequests--; slider.disabled = mute.disabled = !radioReadyForViews || mediaPreparing; refreshPlayers();
-          if(master)setTimeout(()=>{if(generation === uiGeneration)refreshPlayers();},ROOM_VOLUME_PREVIEW_MS); }
+          setTimeout(()=>{if(generation === uiGeneration)refreshPlayers();},ROOM_VOLUME_PREVIEW_MS); }
       });
 
   if (master) {
@@ -1165,14 +1189,23 @@ async function refresh() {
 }
 
 async function refreshPlayers() {
-  if (strictStandby || !radioReadyForViews || playersRequestRunning || volumeRequests) return;
+  for (const [entity, generation] of volumeEditing) {
+    if (generation !== uiGeneration) volumeEditing.delete(entity);
+  }
+  if (strictStandby || !radioReadyForViews || playersRequestRunning || volumeRequests || volumeEditing.size) return;
   playersRequestRunning = true;
   const generation = uiGeneration;
   const revision = volumeRevision;
   try {
     const {players,groups,remembered,saved_levels,master_room_levels} = await api("players");
-    if (generation !== uiGeneration || revision !== volumeRevision || !radioReadyForViews || volumeRequests) return;
+    if (generation !== uiGeneration || revision !== volumeRevision || !radioReadyForViews || volumeRequests || volumeEditing.size) return;
     masterRoomLevels = master_room_levels || Object.fromEntries(players.map(p=>[p.entity_id,saved_levels?.[p.entity_id] ?? p.volume]));
+    for (const [entity, request] of requestedRoomVolumes) {
+      if (!request.masterPreview && entity !== "media_player.wohnung" &&
+          request.generation === uiGeneration && Date.now() < request.expires) {
+        masterRoomLevels[entity] = request.level;
+      }
+    }
     roomVolumeRows.clear();
     const master = masterView(groups, saved_levels);
     masterTransportButton = null;

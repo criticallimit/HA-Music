@@ -328,3 +328,19 @@ Die App ist ad hoc signiert, nicht mit Developer ID signiert/notarisiert;
 der erste Start kann eine macOS-Freigabe benötigen. Keine Release-Veröffentlichung
 und keine Add-on-Versionsänderung. Sicherung davor:
 [backup/main-2026-10-10-mac-click-app-2f4e880](https://github.com/criticallimit/HA-Music/tree/backup/main-2026-10-10-mac-click-app-2f4e880), Commit `2f4e8804e24d421ef12c14c418ef41585e762dc6`.
+
+## Stabile Lautstärkeregler und Stummschalter
+
+Master- und Raumregler zeigen Eingaben sofort an. Während des Ziehens werden die
+Regler nicht durch Statusabfragen ersetzt. Raum-Stummschalter reagieren sofort und
+senden den konkret angezeigten Zielwert; beim Einschalten wird der zuletzt gewählte
+positive Wert wiederhergestellt. Verzögerte Alexa-Werte überschreiben diese Anzeige
+bis zur Bestätigung nicht (höchstens 60 Sekunden nach der Befehlsantwort, mit einer
+dreisekündigen Einschwingfrist). Danach gelten wieder gemeldete Werte und externe
+Änderungen. Fehlgeschlagene Befehle werden angezeigt und die Vorschau zurückgenommen.
+Radio und Apple Music verwenden dieselben Regler; Standby und Wiedergabe bleiben
+unverändert. Die Browserprüfungen simulieren verzögerte Rückmeldungen; tatsächliche
+Geräteausführung muss im Heimnetz geprüft werden.
+
+Sicherung davor:
+[backup/main-2026-10-10-volume-controls-0462046](https://github.com/criticallimit/HA-Music/tree/backup/main-2026-10-10-volume-controls-0462046), Commit `0462046186c6f710500a61fd5aa74fdd173b0a9c`.
