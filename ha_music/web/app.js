@@ -336,7 +336,7 @@ function setNowArtwork(image, alt, radio = false) {
   const cover = $("current-cover");
   // Keep artwork geometry tied to its source, including while moving the panel
   // between views. Explicitly clear any padding left by an older stylesheet.
-  cover.style.objectFit = radio ? "contain" : "cover";
+  cover.style.objectFit = "contain";
   cover.style.padding = "0px";
   if (image) {
     cover.alt = alt;

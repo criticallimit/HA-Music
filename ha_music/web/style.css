@@ -24,9 +24,9 @@ nav button.active{background:var(--surface);border-color:var(--accent);box-shado
    Do not constrain it by natural SVG dimensions or by absolute pixel width. */
 .now.radio-selected .art{background:#fff}
 .now.radio-selected .art img:not([hidden]){object-fit:contain;padding:0}
-/* AMAZON: square album art covers the full surface; this is intentional. */
+/* Music artwork scales uniformly into the available rectangle without cropping. */
 .now:not(.radio-selected) .art{background:#17191d}
-.now:not(.radio-selected) .art img:not([hidden]){object-fit:cover;padding:0}
+.now:not(.radio-selected) .art img:not([hidden]){object-fit:contain;padding:0}
 .now-overlay{position:absolute;left:-1px;right:-1px;bottom:-1px;min-height:193px;display:flex;flex-direction:column;justify-content:flex-start;padding:40px 25px 17px;color:#fff;background:linear-gradient(transparent,rgba(12,14,19,.7) 32%,#303237 calc(100% - 32px),#303237)}
 .now-head{height:28px;flex:0 0 28px}
 .now-head small{display:none}
@@ -117,7 +117,7 @@ html.ha-dashboard-fit .ha-library-compact .album-store-link{display:none}
 html.ha-dashboard-fit .ha-library-compact .apple-playlist .apple-favorite-label{inset:2px 4px}
 html.ha-dashboard-fit .ha-library-compact .station-icon{left:16px;top:50%;width:24px;height:24px}
 html.ha-dashboard-fit .ha-library-compact .apple-empty{min-height:32px;padding:4px;font-size:11px}
-html.ha-dashboard-fit .now:not(.radio-selected) .art img:not([hidden]){object-fit:cover;padding:0}
+html.ha-dashboard-fit .now:not(.radio-selected) .art img:not([hidden]){object-fit:contain;padding:0}
 @media(max-width:650px){html.ha-dashboard-fit .now{height:260px}html.ha-dashboard-fit .shell{padding:10px}html.ha-dashboard-fit .master-volume,html.ha-dashboard-fit .speaker-list .player-row{padding:8px 12px}}
 
 /* One shared tile size; only the lists scroll when their space is exhausted. */

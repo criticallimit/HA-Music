@@ -24,7 +24,7 @@ const artwork='<svg xmlns="http://www.w3.org/2000/svg" width="300" height="300">
  let browser;
  try{
   browser=await chromium.launch({headless:true,...(process.env.HA_MUSIC_BROWSER?{executablePath:process.env.HA_MUSIC_BROWSER}:{})});
-  for(const mode of ["ingress","card","embedded-card"]) for(const width of [1200,390]){
+  for(const mode of ["ingress","card","embedded-card"]) for(const width of [1200,940,700,390]){
    const page=await browser.newPage({viewport:{width,height:900}});
    const errors=[];page.on('pageerror',error=>errors.push(error.message));
    await page.goto('http://127.0.0.1:'+server.address().port+(mode==='embedded-card'?'/card-test':''));
@@ -47,7 +47,7 @@ const artwork='<svg xmlns="http://www.w3.org/2000/svg" width="300" height="300">
      return {lists,art:{width:art.width,height:art.height},image:{width:r.width,height:r.height,padding:style.padding,fit:style.objectFit},albumFits:Array.from(document.querySelectorAll('.apple-album-cover')).map(img=>getComputedStyle(img).objectFit)};
     });
     for(const list of result.lists){assert.equal(list.tiles.length,20);assert.ok(list.scroll>list.height);for(const tile of list.tiles){assert.equal(tile.width,120);assert.equal(tile.height,120);}}
-    assert.equal(result.image.width,result.art.width);assert.equal(result.image.height,result.art.height);assert.equal(result.image.padding,'0px');assert.equal(result.image.fit,'cover');assert.ok(result.albumFits.every(fit=>fit==='contain'));
+    assert.equal(result.image.width,result.art.width);assert.equal(result.image.height,result.art.height);assert.equal(result.image.padding,'0px');assert.equal(result.image.fit,'contain');assert.ok(result.albumFits.every(fit=>fit==='contain'));
     for(const id of ['apple-playlist-list','apple-album-list']){await surface.locator('#'+id).evaluate(list=>{list.scrollTop=list.scrollHeight;});assert.ok(await surface.locator('#'+id).evaluate(list=>list.scrollTop>0));}
     console.log('PASS: '+mode+', viewport '+width+', library height '+height+', equal 120px squares, independent scrolling, full artwork');
    }

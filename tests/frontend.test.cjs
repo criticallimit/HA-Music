@@ -1535,7 +1535,7 @@ test('radio to album transition replaces source geometry and browsing does not r
  const h=albumHarness();
  h.run('selectedStation="wdr2";updateStationLogo(selectedStation);activeApple=appleSelection.items[0];selectedStation="";showAppleArtwork();show("radio");show("apple")');
  assert.equal(h.get('current-cover').src,'api/album-art/12');
- assert.equal(h.get('current-cover').style.objectFit,'cover');
+ assert.equal(h.get('current-cover').style.objectFit,'contain');
  assert.equal(h.get('current-cover').style.padding,'0px');
  assert.equal(h.get('.now').classList.contains('radio-selected'),false);
 });
@@ -1555,7 +1555,7 @@ test('album artwork previews at click and stale state or Alexa mismatch cannot r
  stateReply({stations:[],power:'on',ready:'on',selected_view:'apple',apple_music:{items:[],available:true,active:old}});await state;
  assert.equal(h.run('activeApple.id'),'a');assert.equal(h.get('current-cover').src,'api/album-art/12');
  await h.run('updateSong()');assert.equal(h.get('current-cover').src,'api/album-art/12');
- assert.equal(h.get('current-cover').style.padding,'0px');assert.equal(h.get('current-cover').style.objectFit,'cover');
+ assert.equal(h.get('current-cover').style.padding,'0px');assert.equal(h.get('current-cover').style.objectFit,'contain');
 });
 
 test('failed album request restores prior artwork rather than leaving its preview',async()=>{

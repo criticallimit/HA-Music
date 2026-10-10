@@ -617,3 +617,18 @@ Lovelace-iframe sowie auf der Ingress-Seite.
 Sicherung davor:
 [backup/main-2026-10-10-radio-flash-f898235](https://github.com/criticallimit/HA-Music/tree/backup/main-2026-10-10-radio-flash-f898235),
 Commit `f898235c4c073e6721da4353c1edeb498c44d91f`.
+
+## Große Cover ohne Beschnitt bei schmaler Breite
+
+Die große Bildanzeige verwendet für Musikcover und Senderlogos einheitlich
+`object-fit: contain`, auch in der eingebetteten Karte. Die vorherige
+Musikregel `cover` füllte das Rechteck durch Beschnitt und konnte dadurch
+bei geringer Breite Bildteile links und rechts entfernen. Die neue Regel
+verkleinert das vollständige Bild proportional ohne zusätzliche Innenabstände.
+Je nach Seitenverhältnis bleibt freie Fläche neben oder über dem Bild.
+Die Browserprüfung deckt nun auch 940 und 700 Pixel breite Ansichten ab,
+zusätzlich zu Desktop und Mobilgerät, jeweils einschließlich echter Karte.
+
+Sicherung davor:
+[backup/main-2026-10-10-fit-cover-617edde](https://github.com/criticallimit/HA-Music/tree/backup/main-2026-10-10-fit-cover-617edde),
+Commit `617edde686676a7839d6a1edbcc6bc21545e4c13`.
