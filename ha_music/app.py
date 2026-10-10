@@ -381,6 +381,30 @@ def save_library(body):
         return library_snapshot()
 
 
+def library_item_id(item):
+    identity = {key:item[key] for key in ("name", "kind", "search")}
+    return hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()[:24]
+
+
+def reorder_library(body):
+    """Reorder existing favorites only, retaining all metadata and other kinds."""
+    kind, order = body.get("kind"), body.get("order")
+    if kind not in ("Playlist", "Album") or not isinstance(order, list) or any(not isinstance(value, str) for value in order):
+        raise ValueError("Ungültige Sortierung")
+    with LIBRARY_LOCK:
+        current = library_snapshot()
+        if body.get("revision") != current["revision"]:
+            raise ValueError("Die Liste wurde inzwischen geändert. Bitte erneut sortieren.")
+        favorites = {library_item_id(item):item for item in current["items"] if item["kind"] == kind}
+        if len(order) != len(favorites) or len(set(order)) != len(order) or set(order) != set(favorites):
+            raise ValueError("Die Sortierung muss alle vorhandenen Einträge genau einmal enthalten")
+        ordered = iter(favorites[value] for value in order)
+        entries = [next(ordered) if item["kind"] == kind else item for item in current["items"]]
+        with LOCK:
+            write_durable_json(LIBRARY_FILE, entries)
+        return library_snapshot()
+
+
 def sync_playlist(body):
     """Update playlist tracks; optionally add a playlist, never issue commands."""
     name = body.get("name")
@@ -1349,10 +1373,10 @@ def apple_music_selection():
         group = ""
         target = ""
     items = []
-    for favorite in library_snapshot(config)["items"]:
+    snapshot = library_snapshot(config)
+    for favorite in snapshot["items"]:
         item = dict(favorite)
-        identity = {key:item[key] for key in ("name", "kind", "search")}
-        item["id"] = hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()[:24]
+        item["id"] = library_item_id(item)
         if item.get("album_id"):
             saved = stored_album(item["album_id"])
             if saved:
@@ -1361,7 +1385,7 @@ def apple_music_selection():
     with STATE_LOCK:
         active = deepcopy(ACTIVE_APPLE)
         available = LAST_POWER == "on" and READY and not PREPARING and not STANDBY.is_set()
-    return {"items": items, "available": available and target in enabled_device_ids(),
+    return {"items": items, "revision":snapshot["revision"], "available": available and target in enabled_device_ids(),
             "target": target, "group": group, "active": active}
 
 
@@ -2151,14 +2175,14 @@ class Handler(BaseHTTPRequestHandler):
             return self.reply(403, {"error": "Ingress only"})
         path = unquote(urlsplit(self.path).path)
         action = path.rsplit("/", 1)[-1]
-        if "/api/" not in path or action not in ("volume", "room_audio", "group_transport", "track_transport", "radio_direct", "apple_music", "radio_power", "selected_view", "dashboard_card_installed", "apple-library", "album-covers", "album-tracks", "apple_album_track", "playlist-tracks", "playlist-import", "apple_playlist_track"):
+        if "/api/" not in path or action not in ("volume", "room_audio", "group_transport", "track_transport", "radio_direct", "apple_music", "radio_power", "selected_view", "dashboard_card_installed", "apple-library", "apple-library-order", "album-covers", "album-tracks", "apple_album_track", "playlist-tracks", "playlist-import", "apple_playlist_track"):
             return self.reply(404, {"error": "Not found"})
         if self.headers.get("Sec-Fetch-Site") == "cross-site":
             return self.reply(403, {"error": "Cross-site request rejected"})
         if self.headers.get_content_type() != "application/json":
             return self.reply(415, {"error": "JSON required"})
         try:
-            body = json.loads(self.read_request_body(2097152) if action in ("apple-library", "playlist-import") else self.read_request_body())
+            body = json.loads(self.read_request_body(2097152) if action in ("apple-library", "playlist-import", "apple-library-order") else self.read_request_body())
             if not isinstance(body, dict):
                 raise ValueError("Invalid body")
             if action == "album-tracks":
@@ -2171,6 +2195,9 @@ class Handler(BaseHTTPRequestHandler):
                 return self.reply(200, album_cover_search(body))
             if action == "apple-library":
                 saved = save_library(body)
+                return self.reply(200, {**saved, "selection": apple_music_selection()})
+            if action == "apple-library-order":
+                saved = reorder_library(body)
                 return self.reply(200, {**saved, "selection": apple_music_selection()})
             if action == "dashboard_card_installed":
                 mark_dashboard_card_installed()

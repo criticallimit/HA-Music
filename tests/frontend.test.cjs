@@ -106,6 +106,97 @@ function albumHarness() {
   return h;
 }
 
+function sortingHarness() {
+  const h=harness();
+  const selection={available:true,revision:'original',items:[
+    {id:'p1',kind:'Playlist',name:'One',tracks:[{id:1,name:'Song'}]},
+    {id:'a1',kind:'Album',name:'Album One',album_id:12},
+    {id:'p2',kind:'Playlist',name:'Two'},
+    {id:'a2',kind:'Album',name:'Album Two',album_id:13},
+    {id:'p3',kind:'Playlist',name:'Three'}]};
+  h.context.selection=selection;
+  h.run('radioReadyForViews=true; renderAppleSelection(selection); api=(action,body)=>reply(action,body)');
+  return {...h,selection};
+}
+
+test('sorting saves only existing IDs and retains the new order across reloads without playback', async () => {
+  const h=sortingHarness(), calls=[];
+  h.context.reply=async(action,body)=>{
+    calls.push({action,body});
+    return {selection:{...h.selection,revision:'saved',items:[h.selection.items[2],h.selection.items[1],h.selection.items[4],h.selection.items[3],h.selection.items[0]]}};
+  };
+  h.get('apple-playlists-sort').listeners.click();
+  await h.get('apple-playlist-list').children[0].listeners.click();
+  assert.equal(calls.length,0,'Sorting clicks must not start playback or open a track list');
+  await h.run('reorderAppleFavorite("Playlist","p1","p3")');
+  assert.equal(calls[0].action,'apple-library-order');
+  assert.deepEqual(Array.from(calls[0].body.order),['p2','p3','p1']);
+  assert.equal(calls[0].body.revision,'original');
+  assert.equal(calls[0].body.items,undefined);
+  assert.deepEqual(h.get('apple-playlist-list').children.map(c=>c.attributes['data-favorite-id']),['p2','p3','p1']);
+  assert.deepEqual(h.get('apple-album-list').children.map(c=>c.attributes['data-favorite-id']),['a1','a2']);
+  h.run('appleItemsSignature=""; renderAppleSelection(appleSelection)');
+  assert.deepEqual(h.get('apple-playlist-list').children.map(c=>c.attributes['data-favorite-id']),['p2','p3','p1']);
+  assert.equal(h.get('apple-sort-feedback').textContent,'Reihenfolge gespeichert.');
+});
+
+test('pending reorder keeps its preview through polling and serializes further moves', async () => {
+  const h=sortingHarness();let resolve;
+  h.context.reply=()=>new Promise(r=>{resolve=r;});
+  const pending=h.run('reorderAppleFavorite("Playlist","p1","p2")');
+  h.run('renderAppleSelection(selection)');
+  assert.equal(h.get('apple-playlist-list').children[0].attributes['data-favorite-id'],'p2');
+  assert.equal(h.get('apple-playlists-sort').disabled,true);
+  await h.run('reorderAppleFavorite("Playlist","p3","p2")');
+  const saved=h.run('appleSelection');resolve({selection:{...saved,revision:'saved'}});await pending;
+  assert.equal(h.get('apple-playlists-sort').disabled,false);
+  assert.equal(h.run('appleSelection.revision'),'saved');
+});
+
+test('failed reorder reloads a concurrent import instead of overwriting it', async () => {
+  const h=sortingHarness(),calls=[];
+  const latest={...h.selection,revision:'imported',items:[...h.selection.items,{id:'p4',name:'Imported',kind:'Playlist'}]};
+  h.context.reply=async action=>{calls.push(action);if(action==='apple-library-order')throw new Error('Liste inzwischen geändert');return {apple_music:latest};};
+  h.get('apple-playlists-sort').listeners.click();
+  await h.run('reorderAppleFavorite("Playlist","p1","p2")');
+  assert.deepEqual(calls,['apple-library-order','radio-state']);
+  assert.equal(h.run('appleSelection.revision'),'imported');
+  assert.equal(h.get('apple-playlist-list').children.length,4);
+  assert.match(h.get('apple-sort-feedback').textContent,/nicht gespeichert/);
+  assert.equal(h.run('librarySortBusy'),false);
+});
+
+test('album keyboard sorting moves the complete cover entry and preserves playlists', async () => {
+  const h=sortingHarness();
+  h.context.reply=async(action,body)=>({selection:{...h.selection,revision:'saved',items:[h.selection.items[0],h.selection.items[3],h.selection.items[2],h.selection.items[1],h.selection.items[4]]}});
+  h.get('apple-albums-sort').listeners.click();
+  let prevented=false;
+  await h.get('apple-album-list').children[0].children[0].listeners.keydown({key:'ArrowRight',preventDefault(){prevented=true;}});
+  assert.equal(prevented,true);
+  assert.deepEqual(h.get('apple-album-list').children.map(c=>c.attributes['data-favorite-id']),['a2','a1']);
+  assert.deepEqual(h.get('apple-playlist-list').children.map(c=>c.attributes['data-favorite-id']),['p1','p2','p3']);
+});
+
+test('pointer drag cancellation is inert and dropping saves a move only within the same section', async () => {
+  const h=sortingHarness(),calls=[];
+  h.context.reply=async(action,body)=>{calls.push({action,body});return {selection:h.run('appleSelection')};};
+  h.get('apple-playlists-sort').listeners.click();
+  let button=h.get('apple-playlist-list').children[0];
+  button.setPointerCapture=()=>{};button.hasPointerCapture=()=>true;button.releasePointerCapture=()=>{};
+  const event={pointerId:1,button:0,clientX:50,clientY:50,preventDefault(){}};
+  h.get('apple-playlist-list').getBoundingClientRect=()=>({top:0,bottom:100});
+  let target=h.get('apple-album-list').children[0];
+  h.context.document.elementFromPoint=()=>({closest:()=>target});
+  button.listeners.pointerdown(event);button.listeners.pointermove(event);await button.listeners.pointerup(event);
+  assert.equal(calls.length,0);
+  target=h.get('apple-playlist-list').children[2];
+  button.listeners.pointerdown(event);button.listeners.pointermove(event);button.listeners.pointercancel(event);
+  assert.equal(calls.length,0);assert.equal(h.run('libraryDrag'),null);
+  button.listeners.pointerdown(event);button.listeners.pointermove(event);await button.listeners.pointerup(event);
+  assert.equal(calls.length,1);
+  assert.deepEqual(Array.from(calls[0].body.order),['p2','p3','p1']);
+});
+
 test('album dialog uses saved cover immediately and renders numbered accessible play rows', async () => {
   const h = albumHarness();
   h.context.reply = async () => ({artist:'Singer',image:'api/album-art/12',tracks:[{id:9,number:1,name:'Song <safe>'}]});

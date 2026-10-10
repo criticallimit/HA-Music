@@ -344,3 +344,22 @@ Geräteausführung muss im Heimnetz geprüft werden.
 
 Sicherung davor:
 [backup/main-2026-10-10-volume-controls-0462046](https://github.com/criticallimit/HA-Music/tree/backup/main-2026-10-10-volume-controls-0462046), Commit `0462046186c6f710500a61fd5aa74fdd173b0a9c`.
+
+## Playlists und Alben selbst sortieren
+
+Neben jeder Überschrift aktiviert **↕** den Sortiermodus für die jeweilige Liste.
+Kacheln mit Maus oder Finger an die gewünschte Stelle ziehen; der Zielplatz wird
+hervorgehoben. Lange Listen scrollen beim Ziehen am Rand automatisch weiter.
+Mit Tastatur eine Kachel fokussieren und mit den Pfeiltasten verschieben.
+**✓** beendet den Sortiermodus. Während des Sortierens öffnen Kachelklicks keine
+Titelliste und starten keine Wiedergabe.
+
+Jede Verschiebung wird sofort zentral im Add-on gespeichert, unabhängig vom
+Browser, und bleibt nach Neuladen sowie Add-on-Neustart erhalten. Playlists und
+Alben werden getrennt sortiert. Cover, Titel, Alexa-Befehle und die andere Liste
+bleiben erhalten. Gleichzeitige Änderungen oder Mac-Importe werden durch eine
+Revisionsprüfung geschützt; bei Konflikten wird die aktuelle Liste geladen und
+die fehlgeschlagene Sortierung gemeldet.
+
+Sicherung davor:
+[backup/main-2026-10-10-favorite-order-c918c45](https://github.com/criticallimit/HA-Music/tree/backup/main-2026-10-10-favorite-order-c918c45), Commit `c918c455454d98ab1a4897bbdb71f368ab68c37a`.

@@ -455,6 +455,9 @@ let libraryEditorKind = "Playlist";
 let libraryEditorSnapshot = null;
 let libraryEditorRows = [];
 let libraryEditorBusy = false;
+let librarySortKind = null;
+let librarySortBusy = false;
+let libraryDrag = null;
 const albumCoverResults = new Map();
 let albumCoverTimer = false;
 let albumCoverPending = false;
@@ -516,6 +519,7 @@ function queueAlbumCovers() {
 }
 function libraryEditorControls(busy) {
   libraryEditorBusy = busy;
+  renderLibrarySortControls();
   for (const id of ["library-editor-save", "library-editor-add", "library-editor-close", "library-editor-cancel"])
     $(id).disabled = busy;
   for (const row of libraryEditorRows) {
@@ -623,6 +627,9 @@ async function searchEditorAlbumCover(row) {
   finally { libraryEditorControls(false); }
 }
 async function openLibraryEditor(kind) {
+  if (librarySortBusy || libraryDrag) return;
+  librarySortKind = null;
+  renderAppleSelection(appleSelection);
   if (libraryEditorBusy || $("library-editor").open) return;
   libraryEditorKind = kind; libraryEditorSnapshot = null; libraryEditorRows = [];
   $("library-editor-rows").replaceChildren();
@@ -672,7 +679,124 @@ $("library-editor-close").addEventListener("click", closeLibraryEditor);
 $("library-editor-cancel").addEventListener("click", closeLibraryEditor);
 $("library-editor").addEventListener("cancel", event => { event.preventDefault(); closeLibraryEditor(); });
 $("library-editor-form").addEventListener("submit", submitLibraryEditor);
-function renderAppleSelection(selection) {
+function renderLibrarySortControls() {
+  for (const [kind, id] of [["Playlist","apple-playlists-sort"],["Album","apple-albums-sort"]]) {
+    const button = $(id), active = librarySortKind === kind;
+    button.textContent = active ? "✓" : "↕";
+    button.disabled = librarySortBusy || libraryEditorBusy;
+    button.setAttribute("aria-pressed", String(active));
+    button.setAttribute("aria-label", active ? "Sortieren beenden" : (kind === "Playlist" ? "Playlists" : "Alben") + " sortieren");
+    button.title = active ? "Fertig – Reihenfolge wird automatisch gespeichert" : "Sortieren: Kacheln ziehen oder mit Pfeiltasten verschieben";
+    $(kind === "Playlist" ? "apple-playlists-edit" : "apple-albums-edit").disabled = librarySortBusy || libraryEditorBusy;
+  }
+}
+for (const [kind, id] of [["Playlist","apple-playlists-sort"],["Album","apple-albums-sort"]]) {
+  $(id).addEventListener("click", () => {
+    if (librarySortBusy || libraryDrag || libraryEditorBusy) return;
+    librarySortKind = librarySortKind === kind ? null : kind;
+    $("apple-sort-feedback").textContent = librarySortKind ? "Kacheln ziehen oder mit Pfeiltasten verschieben. Die Reihenfolge wird automatisch gespeichert." : "Sortieren beendet.";
+    renderAppleSelection(appleSelection);
+  });
+}
+async function reorderAppleFavorite(kind, source, target) {
+  if (librarySortBusy || source === target) return;
+  const before = appleSelection;
+  const favorites = before.items.filter(item => item.kind === kind);
+  const from = favorites.findIndex(item => item.id === source), to = favorites.findIndex(item => item.id === target);
+  if (from < 0 || to < 0 || !before.revision) return;
+  favorites.splice(to, 0, favorites.splice(from, 1)[0]);
+  let index = 0;
+  const items = before.items.map(item => item.kind === kind ? favorites[index++] : item);
+  librarySortBusy = true;
+  libraryEpoch++;
+  $("apple-sort-feedback").textContent = "Reihenfolge wird gespeichert …";
+  renderAppleSelection({...before, items}, true);
+  try {
+    const result = await api("apple-library-order", {kind, order:favorites.map(item => item.id), revision:before.revision});
+    libraryEpoch++;
+    $("apple-sort-feedback").textContent = "Reihenfolge gespeichert.";
+    renderAppleSelection(result.selection, true);
+  } catch (e) {
+    libraryEpoch++;
+    $("apple-sort-feedback").textContent = "Sortierung nicht gespeichert: " + e.message;
+    renderAppleSelection(before, true);
+    // Read the current library after a conflicting edit/import; never overwrite it.
+    try {
+      // radio-state supplies artwork, IDs and the matching revision together.
+      const state = await api("radio-state");
+      if (state.apple_music) renderAppleSelection(state.apple_music, true);
+    } catch (_) { /* Keep the visible error and last known list. */ }
+  } finally {
+    librarySortBusy = false;
+    renderAppleSelection(appleSelection, true);
+    appleButtons.get(source)?.focus?.();
+  }
+}
+function attachFavoriteSorting(button, item, favorite) {
+  item.setAttribute("data-favorite-id", favorite.id);
+  item.setAttribute("data-favorite-kind", favorite.kind);
+  button.addEventListener("pointerdown", event => {
+    if (librarySortKind !== favorite.kind || librarySortBusy || event.button !== 0) return;
+    event.preventDefault();
+    button.setPointerCapture(event.pointerId);
+    libraryDrag = {pointer:event.pointerId, source:favorite.id, kind:favorite.kind, target:favorite.id, item, targetItem:null};
+    item.classList.add("favorite-dragging");
+  });
+  const move = event => {
+    const drag = libraryDrag;
+    if (!drag || drag.pointer !== event.pointerId || drag.source !== favorite.id) return;
+    const target = document.elementFromPoint(event.clientX,event.clientY)?.closest("[data-favorite-id]");
+    drag.targetItem?.classList.remove("favorite-drop-target");
+    drag.targetItem = null; drag.target = drag.source;
+    if (target?.getAttribute("data-favorite-kind") === drag.kind) {
+      drag.target = target.getAttribute("data-favorite-id");
+      drag.targetItem = target;
+      if (drag.target !== drag.source) target.classList.add("favorite-drop-target");
+    }
+    const container = $(drag.kind === "Album" ? "apple-album-list" : "apple-playlist-list");
+    const rect = container.getBoundingClientRect();
+    const before = container.scrollTop;
+    if (event.clientY < rect.top+28) container.scrollTop -= 20;
+    else if (event.clientY > rect.bottom-28) container.scrollTop += 20;
+    if (container.scrollTop !== before && !drag.scrollFrame) {
+      const point = {pointerId:event.pointerId,clientX:event.clientX,clientY:event.clientY};
+      drag.scrollFrame = requestAnimationFrame(() => {
+        drag.scrollFrame = 0;
+        if (libraryDrag === drag) move(point);
+      });
+    }
+  };
+  button.addEventListener("pointermove", event => {
+    if (libraryDrag?.scrollFrame) {
+      cancelAnimationFrame(libraryDrag.scrollFrame);
+      libraryDrag.scrollFrame = 0;
+    }
+    move(event);
+  });
+  const finish = (event, cancel = false) => {
+    const drag = libraryDrag;
+    if (!drag || drag.pointer !== event.pointerId || drag.source !== favorite.id) return;
+    libraryDrag = null;
+    if (drag.scrollFrame) cancelAnimationFrame(drag.scrollFrame);
+    drag.item.classList.remove("favorite-dragging");
+    drag.targetItem?.classList.remove("favorite-drop-target");
+    if (button.hasPointerCapture(event.pointerId)) button.releasePointerCapture(event.pointerId);
+    if (!cancel) return reorderAppleFavorite(drag.kind,drag.source,drag.target);
+  };
+  button.addEventListener("pointerup", event => finish(event));
+  button.addEventListener("pointercancel", event => finish(event,true));
+  button.addEventListener("lostpointercapture", event => finish(event,true));
+  button.addEventListener("keydown", event => {
+    if (librarySortKind !== favorite.kind || librarySortBusy || !["ArrowLeft","ArrowRight","ArrowUp","ArrowDown"].includes(event.key)) return;
+    event.preventDefault();
+    const favorites = appleSelection.items.filter(item => item.kind === favorite.kind);
+    const index = favorites.findIndex(item => item.id === favorite.id);
+    const target = favorites[index + (["ArrowLeft","ArrowUp"].includes(event.key) ? -1 : 1)];
+    if (target) return reorderAppleFavorite(favorite.kind,favorite.id,target.id);
+  });
+}
+function renderAppleSelection(selection, force = false) {
+  if (!force && (librarySortBusy || libraryDrag)) return;
   appleSelection = selection || {items:[], available:false};
   const items = Array.isArray(appleSelection.items) ? appleSelection.items : [];
   const signature = JSON.stringify(items);
@@ -697,29 +821,38 @@ function renderAppleSelection(selection) {
         if (kind === "Playlist") label.style.setProperty("--playlist-font-size", (favorite.name.length > 60 ? 11 : favorite.name.length > 30 ? 13 : 17) + "px");
         button.title = favorite.name; button.setAttribute("aria-label", favorite.name);
         button.append(icon,label);
-        button.addEventListener("click", () => openAlbumTracks(favorite.id));
+        button.addEventListener("click", () => {
+          if (!librarySortKind && !librarySortBusy) return openAlbumTracks(favorite.id);
+        });
         appleButtons.set(favorite.id,button);
         if (kind === "Album") {
           const entry = document.createElement("div"); entry.className = "apple-album-entry"; entry.title = favorite.name;
           const link = document.createElement("a"); link.className = "album-store-link"; link.textContent = "Apple Music ↗";
           link.hidden = true; link.target = "_blank"; link.rel = "noopener noreferrer";
           button.artworkLink = link; entry.append(button,link); container.appendChild(entry);
+          attachFavoriteSorting(button, entry, favorite);
           if (radioReadyForViews && !strictStandby) applyAlbumCover(button, savedAlbumCover(favorite) || albumCoverResults.get(coverKey(favorite))?.album);
-        } else container.appendChild(button);
+        } else {
+          container.appendChild(button);
+          attachFavoriteSorting(button, button, favorite);
+        }
       }
     }
   }
   for (const [id,button] of appleButtons) {
-    button.disabled = stationPending || transportPending || !radioReadyForViews || mediaPreparing || strictStandby || !appleSelection.available;
+    const sorting = librarySortKind === items.find(item => item.id === id)?.kind;
+    button.classList.toggle("favorite-sortable", sorting);
+    button.disabled = librarySortBusy || (!sorting && (Boolean(librarySortKind) || stationPending || transportPending || !radioReadyForViews || mediaPreparing || strictStandby || !appleSelection.available));
     button.classList.toggle("active", activeApple?.id === id);
     button.setAttribute("aria-pressed", String(activeApple?.id === id));
     const item = items.find(item => item.id === id);
     if (item?.kind === "Album" && radioReadyForViews && !strictStandby && !mediaPreparing)
       applyAlbumCover(button, savedAlbumCover(item) || albumCoverResults.get(coverKey(item))?.album);
   }
-  $("apple-library-note").textContent = items.length && !appleSelection.available && radioReadyForViews && !mediaPreparing
+  $("apple-library-note").textContent = librarySortKind ? $("apple-sort-feedback").textContent : items.length && !appleSelection.available && radioReadyForViews && !mediaPreparing
     ? "Apple-Music-Steuergerät unter Add-on → Konfiguration auswählen und unter Alexa-Geräte auf Aktiv setzen."
     : "Playlists und Alben über das Plus neben der Überschrift verwalten. Dein Apple-Music-Konto muss in Alexa verknüpft sein.";
+  renderLibrarySortControls();
   queueAlbumCovers();
 }
 let albumDialogFavorite = null;

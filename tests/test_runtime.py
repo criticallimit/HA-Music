@@ -1019,6 +1019,73 @@ class RuntimeTests(unittest.TestCase):
         handler.do_GET()
         self.assertEqual(handler.reply.call_args.args[0], 405)
 
+    def test_favorite_reorder_is_durable_preserves_metadata_other_kind_and_never_plays(self):
+        entries = [
+            {"kind":"Playlist", "name":"First", "command":"spiel playlist First", "tracks":[{"name":"Song", "artist":"Artist"}]},
+            {"kind":"Album", "name":"Album One", "command":"spiel album One", "album_id":123},
+            {"kind":"Playlist", "name":"Second", "command":"spiel playlist Custom"},
+            {"kind":"Album", "name":"Album Two", "command":"spiel album Two", "album_id":456}]
+        saved = app.save_library({"items":entries, "revision":app.library_snapshot()["revision"]})
+        ids = [app.library_item_id(item) for item in saved["items"] if item["kind"] == "Playlist"]
+        app.STANDBY.set()
+        with patch.object(app, "ha_request") as request, patch.object(app, "perform") as perform:
+            reordered = app.reorder_library({"kind":"Playlist", "order":ids[::-1], "revision":saved["revision"]})
+            request.assert_not_called()
+            perform.assert_not_called()
+        self.assertEqual(reordered["items"], [saved["items"][2],saved["items"][1],saved["items"][0],saved["items"][3]])
+        self.assertEqual(json.loads(app.LIBRARY_FILE.read_text()), reordered["items"])
+        self.assertEqual(app.library_snapshot(), reordered)
+        self.assertEqual([item["id"] for item in app.apple_music_selection()["items"]],
+                         [app.library_item_id(item) for item in reordered["items"]])
+        self.assertEqual(app.apple_music_selection()["revision"], reordered["revision"])
+        album_ids = [app.library_item_id(item) for item in reordered["items"] if item["kind"] == "Album"]
+        final = app.reorder_library({"kind":"Album", "order":album_ids[::-1], "revision":reordered["revision"]})
+        self.assertEqual(final["items"], [saved["items"][2],saved["items"][3],saved["items"][0],saved["items"][1]])
+
+    def test_invalid_favorite_order_cannot_remove_duplicate_or_cross_kinds(self):
+        saved = app.save_library({"items":[{"kind":"Playlist", "name":"One"},{"kind":"Playlist", "name":"Two"},{"kind":"Album", "name":"Album"}],
+                                  "revision":app.library_snapshot()["revision"]})
+        one,two,album = [app.library_item_id(item) for item in saved["items"]]
+        for kind,order in (("Playlist",[one]),("Playlist",[one,one]),("Playlist",[one,album]),
+                           ("Playlist",[one,"unknown"]),("Radio",[one,two]),("Playlist",[one,{}]),("Playlist","invalid")):
+            with self.subTest(kind=kind,order=order), self.assertRaises(ValueError):
+                app.reorder_library({"kind":kind,"order":order,"revision":saved["revision"]})
+            self.assertEqual(app.library_snapshot(), saved)
+
+    def test_sort_conflict_preserves_a_concurrent_mac_playlist_import(self):
+        saved = app.save_library({"items":[{"kind":"Playlist", "name":"One"},{"kind":"Playlist", "name":"Two"}],
+                                  "revision":app.library_snapshot()["revision"]})
+        ids = [app.library_item_id(item) for item in saved["items"]]
+        app.sync_playlist({"name":"One", "tracks":[{"name":"Imported song", "artist":"Artist"}]})
+        imported = app.library_snapshot()
+        with self.assertRaises(ValueError):
+            app.reorder_library({"kind":"Playlist", "order":ids[::-1], "revision":saved["revision"]})
+        self.assertEqual(app.library_snapshot(), imported)
+
+    def test_order_endpoint_requires_ingress_and_never_dispatches_playback(self):
+        saved = app.save_library({"items":[{"kind":"Playlist", "name":"One"},{"kind":"Playlist", "name":"Two"}],
+                                  "revision":app.library_snapshot()["revision"]})
+        body = json.dumps({"kind":"Playlist", "order":[app.library_item_id(item) for item in saved["items"]][::-1],
+                           "revision":saved["revision"]}).encode()
+        for peer,site,status in (("127.0.0.1","same-origin",403),("172.30.32.2","cross-site",403),("172.30.32.2","same-origin",200)):
+            handler = object.__new__(app.Handler)
+            handler.client_address = (peer, 1)
+            handler.path = "/api/apple-library-order"
+            handler.headers = Message()
+            handler.headers["Content-Type"] = "application/json"
+            handler.headers["Content-Length"] = str(len(body))
+            handler.headers["Sec-Fetch-Site"] = site
+            handler.rfile = io.BytesIO(body)
+            handler.reply = Mock()
+            with patch.object(app, "perform") as perform:
+                handler.do_POST()
+                perform.assert_not_called()
+            self.assertEqual(handler.reply.call_args.args[0], status)
+            if status == 200:
+                self.assertEqual([item["name"] for item in handler.reply.call_args.args[1]["selection"]["items"]], ["Two","One"])
+            else:
+                self.assertEqual(app.library_snapshot(), saved)
+
     def test_library_add_edit_remove_is_durable_and_does_not_change_options(self):
         original = app.options()
         for entries in ([{"name":"Neu", "kind":"Playlist"}],
