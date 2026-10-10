@@ -436,6 +436,30 @@ def reorder_library(body):
         return library_snapshot()
 
 
+def preserve_missing_track_metadata(previous, incoming):
+    """Merge optional fields only for the same title/artist occurrence in a playlist."""
+    buckets = {}
+    for track in previous:
+        buckets.setdefault((track["name"], track["artist"]), []).append(track)
+    merged = []
+    for track in incoming:
+        item = dict(track)
+        matches = buckets.get((item["name"], item["artist"]), [])
+        old = matches.pop(0) if matches else None
+        if old:
+            for field in ("album", "album_artist", "duration"):
+                if field not in item and field in old:
+                    item[field] = old[field]
+            # Never attach an old cover to a song whose album was explicitly changed.
+            album_changed = "album" in track and track["album"] != old.get("album", "")
+            if not album_changed and "cover" not in item and "cover" in old:
+                item["cover"] = old["cover"]
+                if "local_covers" in old:
+                    item["local_covers"] = old["local_covers"]
+        merged.append(item)
+    return merged
+
+
 def sync_playlist(body):
     """Update playlist tracks; optionally add a playlist, never issue commands."""
     name = body.get("name")
@@ -474,6 +498,7 @@ def sync_playlist(body):
             created = True
         if len(matches) != 1:
             raise ValueError("Playlist muss in HA Music mit eindeutigem Namen angelegt sein")
+        tracks = preserve_missing_track_metadata(matches[0].get("tracks", []), tracks)
         changed = created or matches[0].get("tracks") != tracks
         if changed:
             matches[0]["tracks"] = tracks
@@ -593,6 +618,7 @@ def sync_all_ipad_playlists(body):
         created = 0
         for name, tracks in incoming:
             if name in existing:
+                tracks = preserve_missing_track_metadata(existing[name].get("tracks", []), tracks)
                 if existing[name].get("tracks") != tracks:
                     existing[name]["tracks"] = tracks
                     changed = True
