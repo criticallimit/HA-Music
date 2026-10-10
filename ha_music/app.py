@@ -10,6 +10,7 @@ import io
 import plistlib
 from xml.parsers.expat import ExpatError
 import hashlib
+import hmac
 from copy import deepcopy
 import os
 import re
@@ -378,6 +379,25 @@ def save_library(body):
         with LOCK:
             write_durable_json(LIBRARY_FILE, entries)
         return library_snapshot()
+
+
+def sync_playlist(body):
+    """Update only tracks of one existing favorite; safe even during standby."""
+    name = body.get("name")
+    if not isinstance(name, str) or not name.strip() or len(name) > 200:
+        raise ValueError("Ungültiger Playlistname")
+    tracks = normalize_playlist_tracks(body.get("tracks"))
+    with LIBRARY_LOCK:
+        items = library_snapshot()["items"]
+        matches = [item for item in items if item["kind"] == "Playlist" and item["name"] == name]
+        if len(matches) != 1:
+            raise ValueError("Playlist muss in HA Music mit eindeutigem Namen angelegt sein")
+        changed = matches[0].get("tracks") != tracks
+        if changed:
+            matches[0]["tracks"] = tracks
+            with LOCK:
+                write_durable_json(LIBRARY_FILE, items)
+        return {"ok": True, "changed": changed, "tracks": len(tracks)}
 
 
 def artwork_url(value, host):
@@ -2095,6 +2115,27 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(content)
 
     def do_POST(self):
+        if self.path == "/api/playlist-sync":
+            # The optional host port exposes only this capability. Never accept
+            # a Supervisor/HA token or trust forwarded ingress headers here.
+            token = options().get("playlist_sync_token", "")
+            authorization = self.headers.get_all("Authorization", [])
+            if (not isinstance(token, str) or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", token)
+                    or len(authorization) != 1
+                    or not hmac.compare_digest(authorization[0].encode(), ("Bearer " + token).encode())
+                    or self.headers.get("Origin") or self.headers.get("Sec-Fetch-Site") == "cross-site"):
+                return self.reply(403, {"error": "Playlist sync authorization required"})
+            if self.headers.get_content_type() != "application/json":
+                return self.reply(415, {"error": "JSON required"})
+            try:
+                body = json.loads(self.read_request_body(2097152))
+                if not isinstance(body, dict):
+                    raise ValueError("Invalid body")
+                return self.reply(200, sync_playlist(body))
+            except (ValueError, TypeError) as exc:
+                return self.reply(400, {"error": str(exc)})
+            except OSError:
+                return self.reply(502, {"error": "Playlist konnte nicht gespeichert werden"})
         if not self.ingress_allowed():
             return self.reply(403, {"error": "Ingress only"})
         path = unquote(urlsplit(self.path).path)

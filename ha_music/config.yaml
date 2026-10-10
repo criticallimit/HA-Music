@@ -12,6 +12,10 @@ init: false
 ingress: true
 ingress_port: 8099
 ingress_stream: true
+ports:
+  8099/tcp: null
+ports_description:
+  8099/tcp: Optionaler Mac-Playlist-Sync (nur im Heimnetz freigeben)
 panel_icon: mdi:music-circle
 panel_title: HA Music
 homeassistant_api: true
@@ -35,6 +39,7 @@ options:
       name: Bad
       status: Aktiv
 schema:
+  playlist_sync_token: "password?"
   show_dashboard_setup: bool
   apple_music_target: "match(^media_player\\.[a-z0-9_]+$)?"
   apple_music_group: "str?"

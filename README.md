@@ -1,6 +1,6 @@
 # HA Music
 
-Home-Assistant-Add-on für Alexa-Multiroom-Radio und Apple-Music-Favoriten mit Ingress-Oberfläche und Lovelace-Karte. Entwicklungsstand auf `main`, Version **0.0.6**. Apple Music wird über das in Alexa verknüpfte Konto abgespielt; ein automatischer Mediathekabruf ist noch nicht implementiert.
+Home-Assistant-Add-on für Alexa-Multiroom-Radio und Apple-Music-Favoriten mit Ingress-Oberfläche und Lovelace-Karte. Entwicklungsstand auf `main`, Version **0.0.6**. Apple Music wird über das in Alexa verknüpfte Konto abgespielt. Titellisten ausgewählter Playlists können über den [Mac-Helfer](tools/MAC_PLAYLIST_SYNC.md) automatisch synchronisiert werden; ein direkter Apple-Music-API-Mediathekabruf ist nicht implementiert.
 
 ## Automatische Wiederanbindung nach Add-on-Neustart
 
@@ -293,3 +293,12 @@ type: custom:ha-music-card
 ```
 
 Breiten- und Höhenfelder sind aus dem Karteneditor entfernt. Alte `width`-/`height`-Angaben werden ignoriert und bei der nächsten Theme-Änderung im Editor entfernt. Playlists und Alben besitzen jeweils einen begrenzten, intern scrollbareren Bereich; zusätzliche Favoriten vergrößern die Karte nicht. Die direkte Add-on-Seite behält ihr normales responsives Layout. Bearbeitungs- und Titelauswahldialoge können weiterhin intern scrollen.
+## Automatische Playlist-Titellisten vom Mac
+
+Playlists können ohne Apple-Developer-Konto automatisch aus der Musik-App auf
+dem Mac synchronisiert werden. Der optionale, durch einen eigenen Schlüssel
+geschützte Endpunkt aktualisiert ausschließlich Titel vorhandener Playlists.
+Der Helfer läuft bei Anmeldung und alle 30 Minuten. Einrichtung und Abschalten:
+[Mac-Playlist-Synchronisierung](tools/MAC_PLAYLIST_SYNC.md).
+
+Rückkehrpunkt vor dieser Erweiterung: [backup/main-2026-10-10-mac-playlist-sync-867020a](https://github.com/criticallimit/HA-Music/tree/backup/main-2026-10-10-mac-playlist-sync-867020a), Commit `867020a2c29a79d9e64926bd0c7dcfdebb49107a`. Keine Versionsänderung und keine Installation durch das Aktualisieren von `main`.

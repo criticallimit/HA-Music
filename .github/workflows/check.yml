@@ -25,6 +25,8 @@ jobs:
           python tests/test_scaffold.py
           python tests/test_smoke.py
           python -m unittest discover -s tests -p 'test_runtime.py' -v
+          python -m unittest discover -s tests -p 'test_playlist_sync.py' -v
+          python -m py_compile tools/mac_playlist_sync.py
           python -m unittest discover -s tests -p 'test_discovery_template.py' -v
           python -m unittest discover -s tests -p 'test_logo_sources.py' -v
           python -m unittest discover -s tests -p 'test_apple_album_verification.py' -v

@@ -1,4 +1,7 @@
 configuration:
+  playlist_sync_token:
+    name: Schlüssel für Mac-Playlist-Synchronisierung (optional)
+    description: Vom Mac-Helfer erzeugter Schlüssel. Erlaubt nur die Aktualisierung vorhandener Playlist-Titellisten. Leer deaktiviert die Synchronisierung. Den optionalen Netzwerkport nur im Heimnetz freigeben.
   apple_music_target:
     name: Abweichendes Apple-Music-Steuergerät (optional)
     description: >-
