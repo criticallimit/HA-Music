@@ -1849,7 +1849,10 @@ def play_apple_album_track(favorite_id, track_id, generation, *, playlist=False)
         save_selected_source("unknown", "")  # A single track must not restore its entire playlist on restart.
         save_transport_intent(state="playing")
         save_selected_view("apple")
-        ACTIVE_APPLE = {**favorite, "target": selection["target"], "kind": "Track", "name": track["name"]}
+        ACTIVE_APPLE = {**favorite, "target": selection["target"], "kind": "Track", "name": track["name"],
+                        "now_artwork": {"image": track.get("image") or (data.get("image") if not playlist else ""),
+                                        "name": track.get("album") or data.get("name") or track["name"],
+                                        "artist": track.get("artist", "")}}
         APPLE_VERIFICATION_STARTED = None
         SOURCE_UNCONFIRMED = False
         SOURCE_RESTORE_ERROR = None

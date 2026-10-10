@@ -501,3 +501,19 @@ Die Symbole sind Bedienwünsche, kein Nachweis der tatsächlichen Geräteausfüh
 Sicherung davor:
 [backup/main-2026-10-10-immediate-transport-d87850d](https://github.com/criticallimit/HA-Music/tree/backup/main-2026-10-10-immediate-transport-d87850d),
 Commit `d87850db2944127cd0d13da4a0c60e77434b3254`.
+
+
+## Vorhandene Cover direkt in der Wiedergabeanzeige
+
+Gespeicherte Albumcover erscheinen nach Annahme des Wiedergabebefehls direkt,
+auch solange Alexa noch alte Radiometadaten liefert. Einzeltitel übermitteln ihr
+eigenes vorhandenes Cover mit dem Auswahlzustand an alle offenen Ansichten.
+Titelwechsel innerhalb derselben Playlist ersetzen ebenfalls die Anzeige.
+Alexa-Metadaten dienen weiterhin dem aktuellen Titel und der Albumprüfung;
+diese Prüfung verzögert das vorhandene Cover nicht. Albumcover füllen auch in
+Lovelace das Bildfeld ohne zusätzliche Innenränder. Senderlogos bleiben vollständig
+sichtbar und erhalten ebenfalls keine zusätzlichen Innenränder.
+
+Sicherung davor:
+[backup/main-2026-10-10-immediate-artwork-3ef0e0e](https://github.com/criticallimit/HA-Music/tree/backup/main-2026-10-10-immediate-artwork-3ef0e0e),
+Commit `3ef0e0e3d9e252658a97b4edc983bd84bddd3e6a`.

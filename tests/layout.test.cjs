@@ -94,3 +94,11 @@ test('Available height messages accept only the parent and matching origin',()=>
   message(h.parent,'http://ha.test',10001);h.flush();
   assert.equal(h.root.style.values['--ha-card-available-height'],'400px');
 });
+
+
+test('embedded album art fills its frame while radio logos remain uncropped without padding',()=>{
+ const css=fs.readFileSync(path.join(__dirname,'../ha_music/web/style.css'),'utf8');
+ const declarations=selector=>Array.from(css.matchAll(/([^{}]+)\{([^{}]+)\}/g)).filter(match=>match[1].trim()===selector).at(-1)?.[2];
+ assert.match(declarations('html.ha-dashboard-fit .now:not(.radio-selected) .art img:not([hidden])'),/object-fit:cover;padding:0/);
+ assert.match(declarations('.now.radio-selected .art img:not([hidden])'),/object-fit:contain;padding:0/);
+});

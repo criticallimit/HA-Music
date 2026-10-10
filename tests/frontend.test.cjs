@@ -1217,7 +1217,7 @@ test('accepted Apple click removes radio branding even when state polling is alr
   assert.equal(h.run('activeApple.id'),'one');
   assert.equal(h.get('current-cover').hidden,true);
   assert.equal(h.get('current-title').textContent,'Abendmusik');
-  assert.match(h.get('current-artist').textContent,/Rückmeldung ausstehend/);
+  assert.equal(h.get('current-artist').textContent,'Apple Music');
 });
 
 test('unconfirmed echo volumes do not claim audible playback', async () => {
@@ -1439,4 +1439,40 @@ test('saved covers take priority over old remote browser results', () => {
   h.run('radioReadyForViews=true;albumCoverResults.set("a:12",{album:{image:"https://is1.mzstatic.com/old.jpg"}});renderAppleSelection({items:[{id:"a",kind:"Album",album_id:12,name:"Album",artwork:{image:"api/album-art/12"}}],available:true})');
   assert.equal(h.run('appleButtons.get("a").coverImage.src'),'api/album-art/12');
   assert.equal(h.timers.some(timer=>timer.delay===4500),false);
+});
+
+
+test('accepted album uses saved artwork before any Alexa status and retains it through delayed radio metadata', async()=>{
+ const h=albumHarness();
+ h.context.reply=async()=>({ok:true});
+ h.run('api=reply;loadRadioState=async()=>{};updateSongOriginal=updateSong;updateSong=async()=>{};selectedStation="wdr2";updateStationLogo("wdr2")');
+ await h.run('startAppleFavorite("a")');
+ assert.equal(h.get('current-cover').src,'api/album-art/12');
+ assert.equal(h.get('current-cover').hidden,false);
+ assert.equal(h.get('.now').classList.contains('radio-selected'),false);
+ h.context.reply=async()=>({details:{image:'wdr2.svg',content_type:'radio'}});
+ h.run('updateSong=updateSongOriginal');await h.run('updateSong()');
+ assert.equal(h.get('current-cover').src,'api/album-art/12');
+ assert.equal(h.get('current-cover').hidden,false);
+ h.context.reply=async()=>({details:{image:'https://example.test/old.jpg'},apple_verification:{status:'pending',reason:'Waiting'}});
+ await h.run('updateSong()');assert.equal(h.get('current-cover').src,'api/album-art/12');
+});
+
+test('same playlist track change replaces its artwork and never inherits the previous album',async()=>{
+ const h=harness();let active={id:'p',kind:'Track',name:'First',now_artwork:{image:'api/playlist-art/'+'a'.repeat(64)}};
+ h.context.reply=async()=>({stations:[],power:'on',ready:'on',apple_music:{available:true,items:[],active}});
+ h.run('api=reply;radioReadyForViews=true;refreshPlayers=async()=>{};updateStationLogo("wdr2")');
+ await h.run('loadRadioState()');assert.equal(h.get('current-cover').src,active.now_artwork.image);
+ active={...active,name:'Second',now_artwork:{image:'api/album-art/42'}};
+ await h.run('loadRadioState()');assert.equal(h.get('current-title').textContent,'Second');assert.equal(h.get('current-cover').src,'api/album-art/42');
+ active={...active,name:'Missing',now_artwork:{image:''},artwork:{image:'api/album-art/9'}};
+ await h.run('loadRadioState()');assert.equal(h.get('current-cover').hidden,true);
+ assert.equal(h.get('.now').classList.contains('radio-selected'),false);
+});
+
+test('cached cover fallback preserves Alexa artwork for Amazon and unverified albums without covers',async()=>{
+ const h=harness();h.context.reply=async()=>({details:{title:'Song',image:'https://example.test/current.jpg'},apple_verification:{status:'pending'}});
+ h.run('api=reply;radioReadyForViews=true;activeApple={id:"a",kind:"Album",name:"Album"}');
+ await h.run('updateSong()');assert.equal(h.get('current-cover').src,'https://example.test/current.jpg');
+ h.run('activeApple=null;selectedStation="charts"');await h.run('updateSong()');assert.equal(h.get('current-cover').src,'https://example.test/current.jpg');
 });

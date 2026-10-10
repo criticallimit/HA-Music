@@ -1000,8 +1000,10 @@ class RuntimeTests(unittest.TestCase):
 
     def test_single_playlist_and_album_titles_send_exact_spoken_command_for_both_alexa_integrations(self):
         app.READY = True
-        track = {"id":91, "name":"Über den Wolken (Live)", "artist":"Reinhard Mey", "album":"Live Album"}
+        track = {"id":91, "name":"Über den Wolken (Live)", "artist":"Reinhard Mey", "album":"Live Album", "image":"api/album-art/42"}
         for kind in ("Playlist", "Album"):
+            if kind == "Album":
+                track.pop("image", None)  # Album title uses the already loaded album artwork.
             favorite = self.apple_favorite(kind)
             action = "apple_playlist_track" if kind == "Playlist" else "apple_album_track"
             lookup = "playlist_tracks" if kind == "Playlist" else "album_tracks"
@@ -1010,7 +1012,7 @@ class RuntimeTests(unittest.TestCase):
                     app.INVENTORY_CACHE = (time.monotonic(), {integration:["media_player.wohnzimmer"]})
                     device = "b"*32
                     replies = [json.dumps({"domain":"alexa_devices", "device_id":device}), {}] if integration == "alexa_devices" else [{}]
-                    with patch.object(app, lookup, return_value={"tracks":[track]}), patch.object(app, "ha_request", side_effect=replies) as request:
+                    with patch.object(app, lookup, return_value={"tracks":[track], "image":"api/album-art/42"}), patch.object(app, "ha_request", side_effect=replies) as request:
                         app.perform(action, {"favorite":favorite, "track_id":91})
                     command = "spiel Über den Wolken (Live) von Reinhard Mey aus dem Album Live Album"
                     if integration == "alexa_devices":
@@ -1022,6 +1024,7 @@ class RuntimeTests(unittest.TestCase):
                             "entity_id":"media_player.wohnzimmer", "media":{
                                 "media_content_type":"custom", "media_content_id":command, "metadata":{}}})
                     self.assertEqual(app.ACTIVE_APPLE["name"], track["name"])
+                    self.assertEqual(app.ACTIVE_APPLE["now_artwork"], {"image":"api/album-art/42", "name":"Live Album", "artist":"Reinhard Mey"})
                     app.start_single_track.assert_called_with(track, "media_player.wohnzimmer", 10)
                     self.assertIsNone(app.last_selected_source())
                     self.assertEqual(json.loads(app.SOURCE_FILE.read_text())["kind"], "unknown")

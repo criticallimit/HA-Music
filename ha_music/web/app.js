@@ -401,10 +401,11 @@ async function updateSong() {
     // Amazon presets use the artwork supplied by Alexa.
     if (!isRadio) {
       const cover = $("current-cover");
-      const image = details?.image;
-      if (typeof image === "string" && ((image.startsWith("/") && !image.startsWith("//")) || image.startsWith("https://"))) {
+      const known = activeAppleArtwork();
+      const image = known && info.apple_verification?.status !== "mismatch" ? known.image : details?.image || known?.image;
+      if (typeof image === "string" && (validAppleImage(image) || (image.startsWith("/") && !image.startsWith("//")) || image.startsWith("https://"))) {
         if (cover.getAttribute("src") !== image) cover.src = image;
-        cover.alt = details?.album || details?.title || (activeApple ? "Apple Music" : "Amazon Music");
+        cover.alt = known?.name || details?.album || details?.title || (activeApple ? "Apple Music" : "Amazon Music");
         cover.hidden = false;
       } else {
         cover.hidden = true;
@@ -504,6 +505,19 @@ function validAppleImage(value) {
 function coverKey(item) { return item.id + ":" + (item.album_id || "auto"); }
 function savedAlbumCover(item) {
   return /^api\/album-art\/[1-9][0-9]{0,15}$/.test(item?.artwork?.image || "") ? item.artwork : null;
+}
+function activeAppleArtwork() {
+  if (!activeApple) return null;
+  const artwork = activeApple.kind === "Track" ? activeApple.now_artwork :
+    savedAlbumCover(activeApple) || savedAlbumCover(appleSelection.items.find(item => item.id === activeApple.id)) || albumCoverResults.get(coverKey(activeApple))?.album;
+  return validAppleImage(artwork?.image) ? artwork : null;
+}
+function showAppleArtwork() {
+  document.querySelector(".now").classList.remove("radio-selected");
+  const cover = $("current-cover"), artwork = activeAppleArtwork();
+  cover.hidden = !artwork;
+  if (artwork) { cover.src = artwork.image; cover.alt = artwork.name || activeApple.name; }
+  else cover.removeAttribute("src");
 }
 function applyAlbumCover(button, album) {
   const imageUrl = validAppleImage(album?.image);
@@ -1059,12 +1073,12 @@ async function startAppleFavorite(id) {
     activeApple = favorite;
     selectedStation = "";
     stationEpoch++;
-    updateStationLogo("");
+    showAppleArtwork();
     setActiveStation("");
     $("now-ticker").hidden = true;
     $("now-ticker-text").textContent = "";
     $("current-title").textContent = activeApple.name;
-    $("current-artist").textContent = "Apple-Music-Befehl gesendet; Rückmeldung ausstehend";
+    $("current-artist").textContent = activeAppleArtwork()?.artist || "Apple Music";
     // Backend state is shared by all open clients; the next poll selects Apple
     // metadata and stops restoring the previous radio logo.
     groupTransport = null; trackTransport = null; transportEpoch++;
@@ -1169,11 +1183,11 @@ async function loadRadioState() {
       $("now-ticker-text").textContent = "";
     }
     const nextApple = data.apple_music?.active || null;
-    if (activeApple?.id !== nextApple?.id) {
+    if (JSON.stringify(activeApple) !== JSON.stringify(nextApple)) {
       activeApple = nextApple;
       selectedStation = "";
       stationEpoch++;
-      updateStationLogo("");
+      showAppleArtwork();
       setActiveStation("");
       $("now-ticker").hidden = true;
       $("now-ticker-text").textContent = "";

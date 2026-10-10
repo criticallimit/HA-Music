@@ -23,7 +23,7 @@ nav button.active{background:var(--surface);border-color:var(--accent);box-shado
 /* RADIO: image has the full available rectangle and scales down uniformly.
    Do not constrain it by natural SVG dimensions or by absolute pixel width. */
 .now.radio-selected .art{background:#fff}
-.now.radio-selected .art img:not([hidden]){object-fit:contain;padding:clamp(12px,3vw,28px)}
+.now.radio-selected .art img:not([hidden]){object-fit:contain;padding:0}
 /* AMAZON: square album art covers the full surface; this is intentional. */
 .now:not(.radio-selected) .art{background:#17191d}
 .now:not(.radio-selected) .art img:not([hidden]){object-fit:cover;padding:0}
@@ -123,7 +123,7 @@ html.ha-dashboard-fit .ha-library-compact .apple-playlist .apple-favorite-label{
 html.ha-dashboard-fit .ha-library-compact .apple-album-cover{width:32px;height:100%;object-fit:contain}
 html.ha-dashboard-fit .ha-library-compact .station-icon{left:16px;top:50%;width:24px;height:24px}
 html.ha-dashboard-fit .ha-library-compact .apple-empty{min-height:32px;padding:4px;font-size:11px}
-html.ha-dashboard-fit .now:not(.radio-selected) .art img:not([hidden]){object-fit:contain;padding:clamp(12px,3vw,28px)}
+html.ha-dashboard-fit .now:not(.radio-selected) .art img:not([hidden]){object-fit:cover;padding:0}
 @media(max-width:650px){html.ha-dashboard-fit .now{height:260px}html.ha-dashboard-fit .shell{padding:10px}html.ha-dashboard-fit .master-volume,html.ha-dashboard-fit .speaker-list .player-row{padding:8px 12px}}
 
 /* Classic IEC-style distinct I / O controls, matching the approved concept A. */
