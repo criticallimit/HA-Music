@@ -4,6 +4,44 @@ const fs = require('node:fs');
 const vm = require('node:vm');
 const path = require('node:path');
 
+function cardHarness(config, width, height) {
+  const card = {clientWidth:width,style:{}};
+  const context = vm.createContext({HTMLElement:class {},customElements:{get:()=>true},window:{customCards:[]}});
+  vm.runInContext(fs.readFileSync(path.join(__dirname,'../ha_music/lovelace/ha-music-card.js'),'utf8'),context);
+  const instance = vm.runInContext('Object.create(HAMusicCard.prototype)',context);
+  Object.assign(instance,{_config:config,_measuredHeight:height,style:{},shadowRoot:{querySelector:()=>card},
+    _iframe:{style:{},attributes:{},setAttribute(k,v){this.attributes[k]=v;},removeAttribute(k){delete this.attributes[k];}}});
+  return {instance,card,iframe:instance._iframe};
+}
+
+test('height alone fits all content into the Lovelace card without scrolling', () => {
+  for (const width of [390,1200]) {
+    const {instance,card,iframe} = cardHarness({height:400,width:null},width,1000);
+    instance._applyDimensions();
+    assert.equal(card.style.height,'400px');
+    assert.equal(iframe.style.width,width+'px');
+    assert.equal(iframe.style.height,'1000px');
+    assert.equal(iframe.style.transform,'scale(0.4)');
+    assert.equal(iframe.attributes.scrolling,'no');
+    instance._measuredHeight=1600;
+    instance._applyDimensions();
+    assert.equal(iframe.style.transform,'scale(0.25)');
+  }
+});
+
+test('configured width fits the actual host and automatic height clears scaling', () => {
+  const {instance,card,iframe} = cardHarness({height:400,width:1200},600,800);
+  instance._applyDimensions();
+  assert.equal(iframe.style.width,'600px');
+  assert.equal(iframe.style.transform,'scale(0.5)');
+  instance._config.height=null;
+  instance._applyDimensions();
+  assert.equal(card.style.height,'');
+  assert.equal(iframe.style.transform,'');
+  assert.equal(iframe.style.height,'800px');
+  assert.equal(iframe.attributes.scrolling,undefined);
+});
+
 function harness() {
   const elements = new Map();
   const timers = [];

@@ -62,7 +62,7 @@ class HAMusicCardEditor extends HTMLElement {
           <span class="hint">Uses the selected Home Assistant theme only for this HA Music card.</span>
         </label>
         <label><span>Breite (Pixel)</span><input id="width" type="number" min="200" max="4000" step="1" placeholder="Automatisch" value="${width}"><span class="hint">Leer lassen für volle verfügbare Spaltenbreite.</span></label>
-        <label><span>Höhe (Pixel)</span><input id="height" type="number" min="200" max="5000" step="1" placeholder="Automatisch" value="${height}"><span class="hint">Leer lassen für automatische Höhe; bei fester Höhe kann Inhalt scrollen.</span></label>
+        <label><span>Höhe (Pixel)</span><input id="height" type="number" min="200" max="5000" step="1" placeholder="Automatisch" value="${height}"><span class="hint">Leer lassen für automatische Höhe; bei fester Höhe wird die gesamte Karte passend skaliert.</span></label>
       </div>
     `;
     this.shadowRoot.getElementById("theme")?.addEventListener("change", (event) => {
@@ -247,12 +247,12 @@ class HAMusicCard extends HTMLElement {
     const iframe = this._iframe;
     if (!iframe) return;
     const card = this.shadowRoot?.querySelector("ha-card");
-    const fixed = Boolean(this._config.width && this._config.height);
+    const fixed = Boolean(this._config.height);
     if (fixed && card) {
-      // Render at a stable natural width, then fit both dimensions together.
-      // This avoids a tiny viewport triggering a different mobile layout.
-      const availableWidth = Math.max(1, card.clientWidth || this._config.width);
-      const viewportWidth = Math.max(960, availableWidth);
+      // Keep the responsive layout at the host width and fit its full height.
+      // Height alone is sufficient; Lovelace normally supplies the width.
+      const availableWidth = Math.max(1, card.clientWidth || this.clientWidth || this._config.width || 960);
+      const viewportWidth = availableWidth;
       const naturalHeight = Math.max(320, this._measuredHeight || 760);
       const ratio = Math.min(1, availableWidth / viewportWidth, this._config.height / naturalHeight);
       card.style.height = this._config.height + "px";
