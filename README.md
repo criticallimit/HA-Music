@@ -672,24 +672,12 @@ Commit `ed82495e18f81c9af470b429e2c106d18685a0bf`.
 
 ### iPad-Kurzbefehle: alle gelieferten Playlists synchronisieren
 
-Der geschützte Endpunkt `POST /api/ipad-playlists-sync` ist über den optionalen HA-Music-Port (standardmäßig 8099) auf dem Raspberry Pi erreichbar. Derselbe `playlist_sync_token` wie für Mac Sync wird als Header `Authorization: Bearer <Schlüssel>` benötigt; `Content-Type: application/json`.
+Die [Schritt-für-Schritt-Anleitung](tools/IPAD_PLAYLIST_SYNC.md) beschreibt den vollständigen
+Kurzbefehl mit Actions, allen Metadaten, separatem Cover-Upload wie auf dem Mac und einer
+gebündelten Coverprüfung. Beide Geräte nutzen `/api/playlist-sync` und `/api/playlist-artwork-sync`. Bestehende Mac-Endpunkte bleiben kompatibel. Vor dem nächsten
+Sync den im früheren Chat sichtbar gewordenen `playlist_sync_token` im Add-on und auf den
+Sync-Geräten ersetzen.
 
-Beispiel für den vollständigen Anfragetext:
-
-```json
-{
-  "playlists": [
-    {
-      "name": "Meine Musik",
-      "tracks": [
-        {"name": "Song A", "artist": "Artist A"},
-        {"name": "Song B", "artist": "Artist B"}
-      ]
-    }
-  ]
-}
-```
-
-Alternativ darf `tracks` als Text aus zeilenweise serialisierten JSON-Wörterbüchern geliefert werden. Das Add-on wandelt ihn auf dem Raspberry Pi um. Alle übertragenen Playlists werden automatisch angelegt oder aktualisiert, **ohne** bestehende Alexa-Befehle, Albumfavoriten oder andere Playlists zu löschen. Der Import ist atomar; ungültige oder leere Listen werden insgesamt abgewiesen. Es gelten weiterhin maximal **50 Favoriten insgesamt** und **1000 Titel pro Playlist**, zusätzlich zur HTTP-Anfragegröße von 2 MB. Der Schlüssel sollte nur im vertrauten Heimnetz über HTTP verwendet werden; keine Portweiterleitung ins Internet.
-
-**Wichtige iPad-Einschränkung:** Der neue Serverendpunkt kann jede vom Kurzbefehl übertragene Playlist importieren, aber er kann nicht selbst die persönliche Apple-Music-Bibliothek abfragen. Ob iPad Kurzbefehle sämtliche Playlistnamen ohne manuelle Auswahl aufzählen kann, muss am iPad geprüft werden. Für eine automatische Komplettsynchronisierung muss der Kurzbefehl entsprechend alle Playlistnamen mitsenden.
+Prüfung und Wiederherstellungspunkt: [Sync-Prüfbericht](tools/SYNC_AUDIT.md),
+[Backup vor der Sync-Korrektur](https://github.com/criticallimit/HA-Music/tree/backup/main-2026-10-11-ipad-sync-37eea4b)
+bei Commit `37eea4b03f80282e29ea2299f0034c6cb9e39876`.

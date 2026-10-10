@@ -465,16 +465,13 @@ def sync_playlist(body):
     name = body.get("name")
     if not isinstance(name, str) or not name.strip() or len(name) > 200:
         raise ValueError("Ungültiger Playlistname")
-    raw_tracks = body.get("tracks")
-    # iPad Shortcuts sometimes serializes repeated dictionaries as newline-delimited JSON objects.
-    # Parse on Raspberry Pi; retain the same strict validation as Mac sync.
-    if isinstance(raw_tracks, str):
-        if len(raw_tracks.encode("utf-8")) > 1048576:
-            raise ValueError("Titelliste zu groß")
-        try:
-            raw_tracks = [json.loads(line) for line in raw_tracks.splitlines() if line.strip()]
-        except json.JSONDecodeError as exc:
-            raise ValueError("Ungültiges Kurzbefehle-Titelformat") from exc
+    raw_tracks = parse_ipad_shortcuts_collection(body.get("tracks"), "tracks")
+    if "track_count" in body and (type(body["track_count"]) is not int or
+                                  body["track_count"] != len(raw_tracks)):
+        raise ValueError("Unvollständige Titelliste")
+    raw_tracks = [{**track, **({"duration": normalize_sync_duration(track["duration"])}
+                             if "duration" in track else {})}
+                  if isinstance(track, dict) else track for track in raw_tracks]
     tracks = normalize_playlist_tracks(raw_tracks)
     for identity in {track["cover"] for track in tracks if track.get("cover")}:
         if identity:
@@ -508,25 +505,39 @@ def sync_playlist(body):
 
 
 
-def parse_ipad_shortcuts_collection(value, kind):
+def parse_ipad_shortcuts_collection(value, kind, depth=0):
     """Unwrap Shortcuts repeated dictionaries and one-item text arrays, with bounds."""
+    if depth > 8:
+        raise ValueError("Kurzbefehle-JSON zu tief verschachtelt")
     if isinstance(value, str):
         if len(value.encode("utf-8")) > 1048576:
             raise ValueError("Kurzbefehle-Daten zu groß")
         try:
-            return [json.loads(line) for line in value.splitlines() if line.strip()]
+            if not value.strip():
+                return []
+            try:
+                decoded = json.loads(value)
+            except json.JSONDecodeError:
+                decoded = [json.loads(line) for line in value.splitlines() if line.strip()]
+            if isinstance(decoded, dict):
+                return [decoded]
+            return parse_ipad_shortcuts_collection(decoded, kind, depth + 1)
         except json.JSONDecodeError as exc:
             raise ValueError("Ungültiges Kurzbefehle-JSON: " + kind) from exc
     if not isinstance(value, list):
         raise ValueError("Ungültiges Kurzbefehle-Format: " + kind)
     # iPad shortcuts serializes Repeat Results as a single string inside an array.
-    if len(value) == 1 and isinstance(value[0], str):
-        return parse_ipad_shortcuts_collection(value[0], kind)
-    return value
+    result = []
+    for entry in value:
+        if isinstance(entry, str):
+            result.extend(parse_ipad_shortcuts_collection(entry, kind, depth + 1))
+        else:
+            result.append(entry)
+    return result
 
 
-def normalize_ipad_duration(raw):
-    """Only the iPad Shortcuts endpoint accepts displayed m:ss and h:mm:ss."""
+def normalize_sync_duration(raw):
+    """Both sync clients may send seconds or displayed m:ss and h:mm:ss."""
     if isinstance(raw, str):
         values = raw.strip().split(":")
         if len(values) in (2, 3) and all(value.isascii() and value.isdigit() for value in values):
@@ -572,6 +583,9 @@ def sync_all_ipad_playlists(body):
             raise ValueError("Doppelte Playlistnamen im Import: " + name)
         names.add(name)
         raw = parse_ipad_shortcuts_collection(entry.get("tracks"), "tracks")
+        if "track_count" in entry and (type(entry["track_count"]) is not int or
+                                       entry["track_count"] != len(raw)):
+            raise ValueError("Unvollständige Titelliste: " + name)
         # A playlist without readable tracks must not erase existing cached songs.
         if not raw or raw == [""]:
             skipped_empty += 1
@@ -588,22 +602,20 @@ def sync_all_ipad_playlists(body):
                     track["local_covers"] = True
                     inline_images[digest] = image
                 if "duration" in track:
-                    track["duration"] = normalize_ipad_duration(track["duration"])
+                    track["duration"] = normalize_sync_duration(track["duration"])
             prepared.append(track)
         tracks = normalize_playlist_tracks(prepared)
         incoming.append((name, tracks))
     # Resolve pre-existing cover references before committing any library changes.
-    for _, tracks in incoming:
-        for track in tracks:
-            digest = track.get("cover")
-            if digest and digest not in inline_images:
-                try:
-                    local_playlist_image(digest)
-                except (OSError, ValueError):
-                    raise ValueError("Cover fehlt auf dem Raspberry Pi: " + digest) from None
+    referenced = {track["cover"] for _, tracks in incoming for track in tracks if track.get("cover")}
+    for digest in referenced - inline_images.keys():
+        try:
+            local_playlist_image(digest)
+        except (OSError, ValueError):
+            raise ValueError("Cover fehlt auf dem Raspberry Pi: " + digest) from None
     # Persist validated image bytes before making their references visible.
     for digest, image in inline_images.items():
-        sync_playlist_artwork({"cover": digest, "data": base64.b64encode(image).decode("ascii")})
+        store_playlist_artwork(image, digest)
     with LIBRARY_LOCK:
         items = library_snapshot()["items"]
         existing = {}
@@ -741,8 +753,19 @@ def sync_playlist_artwork(body):
         data = base64.b64decode(encoded, validate=True)
     except ValueError:
         raise ValueError("Ungültiges Playlistcover") from None
-    if not 0 < len(data) <= 3 * 1024 * 1024 or hashlib.sha256(data).hexdigest() != identity:
+    if not 0 < len(data) <= 3 * 1024 * 1024:
         raise ValueError("Ungültiges Playlistcover")
+    return store_playlist_artwork(data, identity)
+
+
+def store_playlist_artwork(data, identity):
+    """Shared cover storage; retain uploaded bytes and publish atomically."""
+    if not 0 < len(data) <= 3 * 1024 * 1024:
+        raise ValueError("Albumcover überschreitet 3 MiB")
+    digest = hashlib.sha256(data).hexdigest()
+    if identity != digest:
+        raise ValueError("Cover-Hash und Bilddaten stimmen nicht überein")
+    identity = digest
     image_mime(data)
     with ARTWORK_LOCK:
         folder = ARTWORK_DIR / "playlists"

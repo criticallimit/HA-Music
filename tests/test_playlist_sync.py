@@ -156,6 +156,22 @@ class PlaylistSyncTests(unittest.TestCase):
         self.assertEqual(result["skipped_empty"], 1)
         self.assertEqual(app.library_snapshot()["items"][-1]["tracks"][0]["name"], "Across the Border")
 
+    def test_ipad_json_arrays_strings_and_pretty_dictionaries(self):
+        songs = [{**self.tracks[0], "duration": "4:03"}, self.tracks[1]]
+        forms = [json.dumps(songs, indent=2), [json.dumps(t) for t in songs],
+                 [json.dumps(json.dumps(songs))]]
+        for tracks in forms:
+            body = {"playlists": [json.dumps({"name": "Mix", "tracks": tracks}, indent=2)]}
+            status, result = self.request(path="/api/ipad-playlists-sync", body=body)
+            self.assertEqual(status, 200, result)
+            self.assertEqual(result["tracks"], 2)
+        previous = app.LIBRARY_FILE.read_bytes()
+        for bad in ('[1]', '"x"', json.dumps('"x"' * 10),
+                    [json.dumps(songs[0]), 'broken']):
+            self.assertEqual(self.request(path="/api/ipad-playlists-sync", body={
+                "playlists": [{"name": "Mix", "tracks": bad}]})[0], 400)
+            self.assertEqual(app.LIBRARY_FILE.read_bytes(), previous)
+
     def test_mac_and_ipad_sync_preserve_missing_cover_and_optional_metadata(self):
         picture = b"\x89PNG\r\n\x1a\ncover"
         digest = hashlib.sha256(picture).hexdigest()
@@ -178,6 +194,60 @@ class PlaylistSyncTests(unittest.TestCase):
         self.assertEqual(self.request(path="/api/ipad-playlists-sync", body={
             "playlists":[{"name":"Mix","tracks":changed_album}]})[0], 200)
         self.assertNotIn("cover", app.library_snapshot()["items"][0]["tracks"][0])
+
+    def test_ipad_uses_mac_endpoints_and_rejects_incomplete_tracks(self):
+        # Small JPEG fixture sent through the same JSON transport as the native Mac app.
+        picture = base64.b64decode('/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAP//////////////////////////////////////////////////////////////////////////////////////2wBDAf//////////////////////////////////////////////////////////////////////////////////////wAARCAABAAEDASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAX/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/8QAFQEBAQAAAAAAAAAAAAAAAAAAAAX/xAAUEQEAAAAAAAAAAAAAAAAAAAAA/9oADAMBAAIRAxEAPwCVAAP/2Q==')
+        digest = hashlib.sha256(picture).hexdigest()
+        payload = {"cover": digest, "data": base64.b64encode(picture).decode()}
+        self.assertEqual(self.request(path="/api/playlist-artwork-check", body={
+            "covers": [digest, digest]})[1]["missing"], [digest])
+        self.assertEqual(self.request(path="/api/playlist-artwork-sync", body=payload)[0], 200)
+        self.assertEqual(app.local_playlist_image(digest)[0], picture)
+        self.assertEqual(self.request(path="/api/playlist-artwork-check", body={
+            "covers": [digest]})[1]["missing"], [])
+        self.assertFalse(self.request(path="/api/playlist-artwork-sync", body=payload)[1]["changed"])
+        tracks = [{**self.tracks[0], "duration": "4:03", "cover": digest, "local_covers": True},
+                  self.tracks[1], self.tracks[1]]
+        body = {"name": "Mix", "tracks": [json.dumps(t) for t in tracks], "track_count": 3, "create": True}
+        self.assertEqual(self.request(body=body)[0], 200)
+        mac_tracks = [{**tracks[0], "duration": 243}, *tracks[1:]]
+        self.assertFalse(self.request(body={**body, "tracks": mac_tracks})[1]["changed"])
+        saved = app.LIBRARY_FILE.read_bytes()
+        for invalid in (True, 2, 4, "3"):
+            self.assertEqual(self.request(body={**body, "track_count": invalid})[0], 400)
+            self.assertEqual(app.LIBRARY_FILE.read_bytes(), saved)
+        self.assertEqual(self.request(body={**body, "tracks": tracks[:-1]})[0], 400)
+        self.assertEqual(app.LIBRARY_FILE.read_bytes(), saved)
+        self.assertEqual(app.library_snapshot()["items"][0]["command"], "spiel meine Playlist")
+
+    def test_ipad_shared_cover_reference_checked_once_and_deep_json_rejected(self):
+        picture = b"\x89PNG\r\n\x1a\nfixture"
+        digest = hashlib.sha256(picture).hexdigest()
+        app.store_playlist_artwork(picture, digest)
+        track = {**self.tracks[0], "cover": digest}
+        with patch.object(app, "local_playlist_image", wraps=app.local_playlist_image) as check:
+            self.assertEqual(self.request(path="/api/ipad-playlists-sync", body={
+                "playlists": [{"name": "Mix", "tracks": [track, track], "track_count": 2}]})[0], 200)
+            self.assertEqual(check.call_count, 1)
+        value = json.dumps([track])
+        for _ in range(10):
+            value = json.dumps(value)
+        saved = app.LIBRARY_FILE.read_bytes()
+        self.assertEqual(self.request(body={"name": "Mix", "tracks": value})[0], 400)
+        self.assertEqual(self.request(path="/api/ipad-playlists-sync", body={
+            "playlists": [{"name": "Mix", "tracks": [track], "track_count": 2}]})[0], 400)
+        self.assertEqual(app.LIBRARY_FILE.read_bytes(), saved)
+
+    def test_rotation_revokes_old_sync_key_without_modifying_library(self):
+        saved = app.LIBRARY_FILE.read_bytes()
+        replacement = "new_fixture_" + "z" * 32
+        with patch.object(app, "options", return_value={"playlist_sync_token": replacement}):
+            for route in ("/api/playlist-sync", "/api/playlist-artwork-sync",
+                          "/api/playlist-artwork-check", "/api/ipad-playlists-sync"):
+                self.assertEqual(self.request(path=route)[0], 403)
+            self.assertEqual(app.LIBRARY_FILE.read_bytes(), saved)
+            self.assertEqual(self.request(headers={"Authorization": "Bearer " + replacement})[0], 200)
 
     def test_original_resolution_cover_up_to_three_megabytes(self):
         # Uncompressed test bytes mimic large image uploads; the server stores bytes unchanged.
