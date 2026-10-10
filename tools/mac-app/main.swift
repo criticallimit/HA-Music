@@ -1,6 +1,15 @@
 import AppKit
 import Foundation
 
+final class WindowBackground: NSView {
+    override var wantsUpdateLayer: Bool { true }
+    override func updateLayer() { layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor }
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        needsDisplay = true
+    }
+}
+
 final class PlaylistApp: NSObject, NSApplicationDelegate, NSTableViewDataSource, NSTableViewDelegate, NSWindowDelegate, NSTextFieldDelegate {
     let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 860, height: 710),
         styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
@@ -48,6 +57,9 @@ final class PlaylistApp: NSObject, NSApplicationDelegate, NSTableViewDataSource,
         window.minSize = NSSize(width: 800, height: 650)
         window.delegate = self
         window.center()
+        let background = WindowBackground(frame: window.contentView!.frame)
+        background.wantsLayer = true
+        window.contentView = background
         let main = NSStackView()
         main.orientation = .vertical
         main.alignment = .leading
