@@ -124,6 +124,7 @@ let stateRequestRunning = false;
 let playersRequestRunning = false;
 let stationPending = false;
 let viewPending = false;
+let viewEpoch = 0;
 let powerPending = false;
 let volumeRequests = 0;
 let volumeRevision = 0;
@@ -269,7 +270,8 @@ function show(page) {
 async function selectView(page) {
   if (!radioReadyForViews || viewPending) return;
   viewPending = true;
-  const generation = ++uiGeneration;
+  viewEpoch++;
+  const generation = uiGeneration;
   try {
     await api("selected_view", {view:page});
     if (generation !== uiGeneration || !radioReadyForViews) return;
@@ -341,7 +343,7 @@ function setNowArtwork(image, alt, radio = false) {
       cover.onload = () => {
         if (cover.getAttribute("src") === image) { cover.loadedArtwork = image; cover.hidden = false; }
       };
-      cover.onerror = () => { cover.hidden = true; };
+      cover.onerror = () => { cover.loadedArtwork = ""; cover.hidden = true; };
       cover.removeAttribute("src");
       cover.src = image;
     } else cover.hidden = cover.loadedArtwork !== image;
@@ -1171,6 +1173,7 @@ for (const [id,name] of STATIONS) {
 }
 function displayRadioReadiness(isReady) {
   if (!isReady) {
+    if (albumDialogFavorite) closeAlbumTracks();
     if (transportPreview) transportIntent = transportPreview.previous;
     transportPreview = null;
     groupTransport = null; trackTransport = null;
@@ -1186,6 +1189,7 @@ async function loadRadioState() {
   const generation = uiGeneration;
   const requestedLibraryEpoch = libraryEpoch;
   const requestedStationEpoch = stationEpoch;
+  const requestedViewEpoch = viewEpoch;
   try {
     const data = await api("radio-state");
     if (generation !== uiGeneration) return;
@@ -1231,7 +1235,7 @@ async function loadRadioState() {
     if (requestedLibraryEpoch === libraryEpoch) renderAppleSelection(data.apple_music);
     if (radioReady) connectRadioEvents();
     if (becameReady || controlsBecameReady) refreshPlayers();
-    if (!viewPending) preferredView = data.selected_view === "apple" ? "apple" : "radio";
+    if (!viewPending && requestedViewEpoch === viewEpoch) preferredView = data.selected_view === "apple" ? "apple" : "radio";
     $("radio-tab").disabled = !radioReady;
     $("apple-tab").disabled = !radioReady;
     show(radioReady ? preferredView : "radio");

@@ -1541,3 +1541,46 @@ test('new cover stays hidden until loaded and delayed previous image cannot flas
  h.run('setNowArtwork("api/album-art/2","Second")');assert.equal(cover.hidden,true);
  cover.onload();assert.equal(cover.hidden,false);assert.equal(cover.src,'api/album-art/2');
 });
+
+
+test('changing views while an album starts does not discard the accepted source',async()=>{
+ const h=albumHarness();let accept;
+ h.context.reply=action=>action==='apple_music'?new Promise(r=>{accept=r;}):Promise.resolve({ok:true});
+ h.run('api=reply;loadRadioState=async()=>{};updateSong=async()=>{}');
+ const pending=h.run('startAppleFavorite("a")');await h.run('selectView("radio")');accept({ok:true});await pending;
+ assert.equal(h.run('activeApple.id'),'a');assert.equal(h.get('current-cover').src,'api/album-art/12');
+});
+
+test('changing views does not suppress a failed transport rollback',async()=>{
+ const h=harness();let reject;
+ h.context.reply=action=>action==='group_transport'?new Promise((_,r)=>{reject=r;}):Promise.resolve({ok:true});
+ h.run('api=reply;radioReadyForViews=true;groupTransport={state:"playing",can_pause:true};loadRadioState=async()=>{};updateSong=async()=>{}');
+ const pending=h.run('controlGroup("pause")');await h.run('selectView("apple")');reject(new Error('offline'));await pending;
+ assert.equal(h.run('transportIntent.state'),undefined);assert.match(h.get('playback-state').textContent,/offline/);
+});
+
+test('state requested before view change cannot move the view back afterward',async()=>{
+ const h=harness();let finish;
+ h.context.reply=action=>action==='radio-state'?new Promise(r=>{finish=r;}):Promise.resolve({ok:true});
+ h.run('api=reply;radioReadyForViews=true;refreshPlayers=async()=>{};updateSong=async()=>{}');
+ const state=h.run('loadRadioState()');await h.run('selectView("apple")');
+ finish({stations:[],power:'on',ready:'on',selected_view:'radio',apple_music:{items:[],available:true}});await state;
+ assert.equal(h.run('preferredView'),'apple');assert.equal(h.get('apple-page').hidden,false);
+});
+
+test('standby closes pending title dialog and late acceptance cannot change local play state',async()=>{
+ const h=albumHarness();let accept;
+ h.context.reply=action=>action==='album-tracks'?Promise.resolve({tracks:[{id:9,number:1,name:'Song'}]}):new Promise(r=>{accept=r;});
+ h.run('api=reply;loadRadioState=async()=>{};updateSong=async()=>{};transportIntent.state="paused"');await h.run('openAlbumTracks("a")');
+ const pending=h.get('album-tracks-list').children[0].listeners.click();
+ h.run('uiGeneration++;radioReadyForViews=false;strictStandby=true;displayRadioReadiness(false)');
+ accept({ok:true});await pending;
+ assert.equal(h.get('album-tracks-dialog').open,false);assert.equal(h.run('transportIntent.state'),'paused');
+});
+
+
+test('failed artwork stays a placeholder across repeated renders',()=>{
+ const h=harness(),cover=h.get('current-cover');
+ h.run('setNowArtwork("api/album-art/1","Album")');assert.equal(cover.hidden,false);
+ cover.onerror();h.run('setNowArtwork("api/album-art/1","Album")');assert.equal(cover.hidden,true);
+});

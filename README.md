@@ -536,3 +536,24 @@ Statusabfragen dürfen diese Vorschau nicht zurücksetzen. Nach Annahme des Befe
 bleibt das bekannte Auswahlcover maßgeblich, auch wenn Alexa noch das vorherige
 Album meldet; die separate Albumprüfung zeigt solche Abweichungen weiterhin an.
 Ein fehlgeschlagener Start stellt die vorige Bildanzeige wieder her.
+
+
+## Prüfung zusammenhängender Bedienabläufe
+
+Seitenwechsel besitzen einen eigenen Änderungszähler. Sie entwerten weder
+laufende Wiedergabebefehle noch Lautstärkeänderungen; ältere Ansichtsabfragen
+können die gewählte Seite trotzdem nicht zurücksetzen. Standby schließt den
+Titeldialog und verwirft dessen ausstehende Antworten. Fehlgeschlagene Bilder
+bleiben als Platzhalter sichtbar, auch nach weiteren Statusabfragen.
+
+Zusätzliche Regressionstests decken Seitenwechsel während eines Albumstarts,
+fehlgeschlagene Transportbefehle beim Seitenwechsel, verspätete Ansichtsabfragen
+und Titelbestätigungen nach Standby ab. Die übrigen Repository-Prüfungen umfassen
+getrennte gespeicherte Raumlautstärken, Stummschaltung, Transportzustände,
+Einzeltitel-Stopp, Cover-Cache, Playlist-Import und native Mac-Synchronisierung.
+Tests mit simulierten Home-Assistant-Antworten ersetzen keine Prüfung an den
+konkreten Echo-Geräten.
+
+Sicherung davor:
+[backup/main-2026-10-10-regression-audit-5506e4b](https://github.com/criticallimit/HA-Music/tree/backup/main-2026-10-10-regression-audit-5506e4b),
+Commit `5506e4bba5c9bf21b73ca0ee332e926e232171f9`.
