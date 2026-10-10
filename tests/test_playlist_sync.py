@@ -126,6 +126,17 @@ class PlaylistSyncTests(unittest.TestCase):
         self.assertEqual(self.request(path="/api/ipad-playlists-sync", body=body,
                          headers={"Authorization":"Bearer wrong"})[0], 403)
 
+    def test_real_ipad_nested_repeat_results(self):
+        song = json.dumps({"name": "Across the Border", "artist": "Electric Light Orchestra"})
+        playlists = [{"name": "Playlist", "tracks": [song]},
+                     {"name": "No Songs", "tracks": [""]}]
+        body = {"playlists": [json.dumps(playlists[0]) + "\n" + json.dumps(playlists[1])]}
+        status, result = self.request(path="/api/ipad-playlists-sync", body=body)
+        self.assertEqual(status, 200)
+        self.assertEqual(result["created"], 1)
+        self.assertEqual(result["skipped_empty"], 1)
+        self.assertEqual(app.library_snapshot()["items"][-1]["tracks"][0]["name"], "Across the Border")
+
     def test_authenticated_cover_upload_deduplicates_and_track_sync_keeps_local_image(self):
         picture = b"\x89PNG\r\n\x1a\nlocal fixture"
         identity = hashlib.sha256(picture).hexdigest()
