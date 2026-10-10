@@ -607,7 +607,7 @@ function renderAppleSelection(selection) {
         if (kind === "Playlist") label.style.setProperty("--playlist-font-size", (favorite.name.length > 60 ? 11 : favorite.name.length > 30 ? 13 : 17) + "px");
         button.title = favorite.name; button.setAttribute("aria-label", favorite.name);
         button.append(icon,label);
-        button.addEventListener("click", () => startAppleFavorite(favorite.id));
+        button.addEventListener("click", () => kind === "Album" ? openAlbumTracks(favorite.id) : startAppleFavorite(favorite.id));
         appleButtons.set(favorite.id,button);
         if (kind === "Album") {
           const entry = document.createElement("div"); entry.className = "apple-album-entry"; entry.title = favorite.name;
@@ -631,6 +631,63 @@ function renderAppleSelection(selection) {
     ? "Apple-Music-Steuergerät unter Add-on → Konfiguration auswählen und unter Alexa-Geräte auf Aktiv setzen."
     : "Playlists und Alben über das Plus neben der Überschrift verwalten. Dein Apple-Music-Konto muss in Alexa verknüpft sein.";
   queueAlbumCovers();
+}
+let albumDialogFavorite = null;
+let albumDialogGeneration = 0;
+function closeAlbumTracks() {
+  albumDialogGeneration++;
+  albumDialogFavorite = null;
+  $("album-tracks-dialog").close();
+}
+$("album-tracks-close").addEventListener("click", closeAlbumTracks);
+$("album-tracks-dialog").addEventListener("cancel", event => { event.preventDefault(); closeAlbumTracks(); });
+$("album-play-all").addEventListener("click", async () => {
+  const favorite = albumDialogFavorite;
+  if (!favorite) return;
+  closeAlbumTracks();
+  await startAppleFavorite(favorite.id);
+});
+async function openAlbumTracks(id) {
+  if (strictStandby || !radioReadyForViews || stationPending || transportPending || !appleSelection.available) return;
+  const favorite = appleSelection.items.find(item => item.id === id && item.kind === "Album");
+  if (!favorite) return;
+  albumDialogFavorite = favorite;
+  const generation = ++albumDialogGeneration;
+  $("album-tracks-title").textContent = favorite.name;
+  $("album-tracks-artist").textContent = "";
+  $("album-tracks-feedback").textContent = "Titelliste wird geladen …";
+  $("album-tracks-list").replaceChildren();
+  $("album-tracks-dialog").showModal();
+  try {
+    const result = await api("album-tracks", {favorite:id});
+    if (generation !== albumDialogGeneration || albumDialogFavorite?.id !== id) return;
+    $("album-tracks-artist").textContent = result.artist || "";
+    $("album-tracks-feedback").textContent = result.tracks?.length ? "" : "Keine Titel im Apple-Katalog gefunden";
+    for (const track of result.tracks || []) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "album-track-choice";
+      button.textContent = track.number + ". " + track.name;
+      button.title = "Titel auf Apple Music abspielen: " + track.name;
+      button.addEventListener("click", async () => {
+        if (button.disabled || !albumDialogFavorite || stationPending) return;
+        button.disabled = true;
+        $("album-tracks-feedback").textContent = "Titel wird gestartet …";
+        try {
+          await api("apple_album_track", {favorite:id,track_id:track.id});
+          closeAlbumTracks();
+          await loadRadioState();
+          updateSong();
+        } catch (error) {
+          $("album-tracks-feedback").textContent = "Wiedergabe fehlgeschlagen: " + error.message;
+          button.disabled = false;
+        }
+      });
+      $("album-tracks-list").appendChild(button);
+    }
+  } catch (error) {
+    if (generation === albumDialogGeneration) $("album-tracks-feedback").textContent = "Titelliste nicht verfügbar: " + error.message;
+  }
 }
 async function startAppleFavorite(id) {
   if (stationPending || transportPending || !radioReadyForViews || mediaPreparing || strictStandby || !appleSelection.available || !appleButtons.has(id)) return;
