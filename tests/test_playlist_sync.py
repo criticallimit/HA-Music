@@ -179,6 +179,25 @@ class PlaylistSyncTests(unittest.TestCase):
             "playlists":[{"name":"Mix","tracks":changed_album}]})[0], 200)
         self.assertNotIn("cover", app.library_snapshot()["items"][0]["tracks"][0])
 
+    def test_ipad_cover_cache_status_deduplicates_and_requires_token(self):
+        picture = bytes([137,80,78,71,13,10,26,10]) + b"original image"
+        digest = hashlib.sha256(picture).hexdigest()
+        absent = "a" * 64
+        body = {"covers": [digest, digest, absent]}
+        status, result = self.request(path="/api/playlist-cover-status", body=body)
+        self.assertEqual(status, 200)
+        self.assertEqual(result["missing"], [digest, absent])
+        self.assertEqual(self.request(path="/api/playlist-artwork-sync",
+            body={"cover": digest, "data": base64.b64encode(picture).decode()})[0], 200)
+        status, result = self.request(path="/api/playlist-cover-status", body=body)
+        self.assertEqual(status, 200)
+        self.assertEqual(result["missing"], [absent])
+        self.assertEqual(result["already_present"], 1)
+        self.assertEqual(self.request(path="/api/playlist-cover-status",
+            body=body, headers={"Authorization": "Bearer invalid"})[0], 403)
+        self.assertEqual(self.request(path="/api/playlist-cover-status",
+            body={"covers": ["not-hash"]})[0], 400)
+
     def test_original_resolution_cover_up_to_three_megabytes(self):
         # Uncompressed test bytes mimic large image uploads; the server stores bytes unchanged.
         picture = b"\x89PNG\r\n\x1a\n" + b"pixel" * 450000
