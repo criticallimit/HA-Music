@@ -513,6 +513,20 @@ def normalize_ipad_duration(raw):
     return raw
 
 
+def validate_inline_ipad_cover(value):
+    """Validate a Shortcuts cover without altering or resizing its original bytes."""
+    if not isinstance(value, str) or len(value) > 4 * 1024 * 1024 + 128:
+        raise ValueError("Ungültige eingebettete Coverdaten")
+    try:
+        data = base64.b64decode(value, validate=True)
+    except (ValueError, binascii.Error):
+        raise ValueError("Ungültige Base64-Coverdaten") from None
+    if not 0 < len(data) <= 3 * 1024 * 1024:
+        raise ValueError("Albumcover überschreitet 3 MiB")
+    image_mime(data)
+    return hashlib.sha256(data).hexdigest(), data
+
+
 def sync_all_ipad_playlists(body):
     """Atomically import every submitted playlist without changing Alexa commands or albums."""
     playlists = parse_ipad_shortcuts_collection(body.get("playlists"), "playlists")
@@ -521,6 +535,7 @@ def sync_all_ipad_playlists(body):
     incoming = []
     skipped_empty = 0
     names = set()
+    inline_images = {}
     for entry in playlists:
         if not isinstance(entry, dict):
             raise ValueError("Ungültiger Playlist-Eintrag")
@@ -536,8 +551,34 @@ def sync_all_ipad_playlists(body):
         if not raw or raw == [""]:
             skipped_empty += 1
             continue
-        tracks = normalize_playlist_tracks([{**track, "duration": normalize_ipad_duration(track["duration"])} if isinstance(track, dict) and "duration" in track else track for track in raw])
+        prepared = []
+        for track in raw:
+            if isinstance(track, dict):
+                track = dict(track)
+                if "cover_data" in track:
+                    digest, image = validate_inline_ipad_cover(track.pop("cover_data"))
+                    if track.get("cover") not in (None, digest):
+                        raise ValueError("Cover-Hash und Bilddaten stimmen nicht überein")
+                    track["cover"] = digest
+                    track["local_covers"] = True
+                    inline_images[digest] = image
+                if "duration" in track:
+                    track["duration"] = normalize_ipad_duration(track["duration"])
+            prepared.append(track)
+        tracks = normalize_playlist_tracks(prepared)
         incoming.append((name, tracks))
+    # Resolve pre-existing cover references before committing any library changes.
+    for _, tracks in incoming:
+        for track in tracks:
+            digest = track.get("cover")
+            if digest and digest not in inline_images:
+                try:
+                    local_playlist_image(digest)
+                except (OSError, ValueError):
+                    raise ValueError("Cover fehlt auf dem Raspberry Pi: " + digest) from None
+    # Persist validated image bytes before making their references visible.
+    for digest, image in inline_images.items():
+        sync_playlist_artwork({"cover": digest, "data": base64.b64encode(image).decode("ascii")})
     with LIBRARY_LOCK:
         items = library_snapshot()["items"]
         existing = {}
@@ -566,7 +607,7 @@ def sync_all_ipad_playlists(body):
                 write_durable_json(LIBRARY_FILE, items)
     return {"ok": True, "changed": changed, "created": created,
             "playlists": len(incoming), "skipped_empty": skipped_empty,
-            "tracks": sum(len(t) for _, t in incoming)}
+            "tracks": sum(len(t) for _, t in incoming), "covers": len(inline_images)}
 
 
 
@@ -2660,7 +2701,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self.reply(415, {"error": "JSON required"})
             try:
                 artwork = self.path == "/api/playlist-artwork-sync"
-                body = json.loads(self.read_request_body(4 * 1024 * 1024 + 4096 if artwork else 2097152))
+                body = json.loads(self.read_request_body(4 * 1024 * 1024 + 4096 if artwork else (32 * 1024 * 1024 if self.path == "/api/ipad-playlists-sync" else 2097152)))
                 if not isinstance(body, dict):
                     raise ValueError("Invalid body")
                 return self.reply(200, sync_playlist_artwork(body) if artwork else (sync_all_ipad_playlists(body) if self.path == "/api/ipad-playlists-sync" else sync_playlist(body)))
