@@ -483,12 +483,30 @@ def sync_playlist(body):
 
 
 
+def parse_ipad_shortcuts_collection(value, kind):
+    """Unwrap Shortcuts repeated dictionaries and one-item text arrays, with bounds."""
+    if isinstance(value, str):
+        if len(value.encode("utf-8")) > 1048576:
+            raise ValueError("Kurzbefehle-Daten zu groß")
+        try:
+            return [json.loads(line) for line in value.splitlines() if line.strip()]
+        except json.JSONDecodeError as exc:
+            raise ValueError("Ungültiges Kurzbefehle-JSON: " + kind) from exc
+    if not isinstance(value, list):
+        raise ValueError("Ungültiges Kurzbefehle-Format: " + kind)
+    # iPad shortcuts serializes Repeat Results as a single string inside an array.
+    if len(value) == 1 and isinstance(value[0], str):
+        return parse_ipad_shortcuts_collection(value[0], kind)
+    return value
+
+
 def sync_all_ipad_playlists(body):
     """Atomically import every submitted playlist without changing Alexa commands or albums."""
-    playlists = body.get("playlists")
-    if not isinstance(playlists, list) or not playlists or len(playlists) > 50:
+    playlists = parse_ipad_shortcuts_collection(body.get("playlists"), "playlists")
+    if not playlists or len(playlists) > 50:
         raise ValueError("Bitte 1 bis 50 Playlists übertragen")
     incoming = []
+    skipped_empty = 0
     names = set()
     for entry in playlists:
         if not isinstance(entry, dict):
@@ -500,17 +518,12 @@ def sync_all_ipad_playlists(body):
         if name in names:
             raise ValueError("Doppelte Playlistnamen im Import: " + name)
         names.add(name)
-        raw = entry.get("tracks")
-        if isinstance(raw, str):
-            if len(raw.encode("utf-8")) > 1048576:
-                raise ValueError("Titelliste zu groß: " + name)
-            try:
-                raw = [json.loads(line) for line in raw.splitlines() if line.strip()]
-            except json.JSONDecodeError as exc:
-                raise ValueError("Ungültige Titelliste: " + name) from exc
+        raw = parse_ipad_shortcuts_collection(entry.get("tracks"), "tracks")
+        # A playlist without readable tracks must not erase existing cached songs.
+        if not raw or raw == [""]:
+            skipped_empty += 1
+            continue
         tracks = normalize_playlist_tracks(raw)
-        if not tracks:
-            raise ValueError("Leere Playlists nicht übertragen: " + name)
         incoming.append((name, tracks))
     with LIBRARY_LOCK:
         items = library_snapshot()["items"]
@@ -539,7 +552,8 @@ def sync_all_ipad_playlists(body):
             with LOCK:
                 write_durable_json(LIBRARY_FILE, items)
     return {"ok": True, "changed": changed, "created": created,
-            "playlists": len(incoming), "tracks": sum(len(t) for _, t in incoming)}
+            "playlists": len(incoming), "skipped_empty": skipped_empty,
+            "tracks": sum(len(t) for _, t in incoming)}
 
 
 
