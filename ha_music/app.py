@@ -258,15 +258,6 @@ def normalize_playlist_tracks(tracks):
             extra["local_covers"] = track["local_covers"]
         if track.get("duration") is not None:
             duration = track["duration"]
-            if isinstance(duration, str):
-                # iPad Shortcuts formats Music duration as m:ss or h:mm:ss.
-                parts = duration.strip().split(":")
-                if len(parts) in (2, 3) and all(part.isascii() and part.isdigit() for part in parts):
-                    values = [int(part) for part in parts]
-                    if all(value < 60 for value in values[1:]):
-                        duration = sum(value * 60 ** i for i, value in enumerate(reversed(values)))
-                elif re.fullmatch(r"[0-9]+(?:\.[0-9]+)?", duration.strip()):
-                    duration = float(duration.strip())
             if type(duration) not in (int, float) or not 0 < duration <= 86400:
                 raise ValueError(f"Titel {number}: Ungültige Titellänge")
             extra["duration"] = float(duration)
@@ -509,6 +500,19 @@ def parse_ipad_shortcuts_collection(value, kind):
     return value
 
 
+def normalize_ipad_duration(raw):
+    """Only the iPad Shortcuts endpoint accepts displayed m:ss and h:mm:ss."""
+    if isinstance(raw, str):
+        values = raw.strip().split(":")
+        if len(values) in (2, 3) and all(value.isascii() and value.isdigit() for value in values):
+            numbers = [int(value) for value in values]
+            if all(value < 60 for value in numbers[1:]):
+                return sum(value * 60 ** i for i, value in enumerate(reversed(numbers)))
+        elif re.fullmatch(r"[0-9]+(?:\\.[0-9]+)?", raw.strip()):
+            return float(raw.strip())
+    return raw
+
+
 def sync_all_ipad_playlists(body):
     """Atomically import every submitted playlist without changing Alexa commands or albums."""
     playlists = parse_ipad_shortcuts_collection(body.get("playlists"), "playlists")
@@ -532,7 +536,7 @@ def sync_all_ipad_playlists(body):
         if not raw or raw == [""]:
             skipped_empty += 1
             continue
-        tracks = normalize_playlist_tracks(raw)
+        tracks = normalize_playlist_tracks([{**track, "duration": normalize_ipad_duration(track["duration"])} if isinstance(track, dict) and "duration" in track else track for track in raw])
         incoming.append((name, tracks))
     with LIBRARY_LOCK:
         items = library_snapshot()["items"]
