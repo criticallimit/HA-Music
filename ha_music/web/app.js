@@ -578,7 +578,7 @@ $("music-assistant-sync").addEventListener("click", async () => {
     const result = await api("music-assistant-sync", {});
     $("music-assistant-sync-status").textContent = result.imported + " Einträge übernommen";
     libraryEpoch++;
-    const state = await api("state");
+    const state = await api("radio-state");
     if (state?.apple_music) renderAppleSelection(state.apple_music);
   } catch (e) {
     $("music-assistant-sync-status").textContent = "Import fehlgeschlagen: " + e.message;
