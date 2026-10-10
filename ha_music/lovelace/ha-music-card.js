@@ -156,6 +156,7 @@ class HAMusicCard extends HTMLElement {
       "--card-background-color",
       "--ha-card-background",
       "--primary-text-color",
+      "--text-primary-color",
       "--secondary-text-color",
       "--divider-color",
       "--primary-color",

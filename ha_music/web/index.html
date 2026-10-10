@@ -28,9 +28,12 @@
 </section>
 <section id="apple-page" class="dashboard" hidden aria-label="Apple Music"></section>
 <dialog id="album-tracks-dialog" class="dashboard-settings album-tracks-dialog" aria-labelledby="album-tracks-title">
-  <div class="settings-heading"><h2 id="album-tracks-title">Album</h2><button id="album-tracks-close" type="button" aria-label="Schließen">×</button></div>
-  <p id="album-tracks-artist"></p>
-  <button id="album-play-all" type="button">Ganzes Album abspielen</button>
+  <div class="album-dialog-header">
+    <div class="album-dialog-art"><img id="album-tracks-cover" alt="" hidden><span id="album-tracks-cover-placeholder" aria-hidden="true">♫</span></div>
+    <div class="album-dialog-info"><h2 id="album-tracks-title">Album</h2><p id="album-tracks-artist"></p></div>
+    <button id="album-tracks-close" type="button" aria-label="Schließen">×</button>
+    <button id="album-play-all" type="button"><span aria-hidden="true">▶</span> Ganzes Album abspielen</button>
+  </div>
   <div id="album-tracks-list" class="album-tracks-list" aria-label="Titelliste"></div>
   <p id="album-tracks-feedback" role="status" aria-live="polite"></p>
 </dialog>

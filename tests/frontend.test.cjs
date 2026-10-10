@@ -27,6 +27,62 @@ function harness() {
   return {context, get, timers, run: code => vm.runInContext(code,context)};
 }
 
+function albumHarness() {
+  const h = harness();
+  h.run('radioReadyForViews=true; renderAppleSelection({items:[{id:"a",kind:"Album",name:"Album",album_id:12,artwork:{image:"api/album-art/12"}}],available:true})');
+  return h;
+}
+
+test('album dialog uses saved cover immediately and renders numbered accessible play rows', async () => {
+  const h = albumHarness();
+  h.context.reply = async () => ({artist:'Singer',image:'api/album-art/12',tracks:[{id:9,number:1,name:'Song <safe>'}]});
+  h.run('api=reply');
+  const opened = h.run('openAlbumTracks("a")');
+  assert.equal(h.get('album-tracks-cover').src,'api/album-art/12');
+  await opened;
+  assert.equal(h.get('album-tracks-artist').textContent,'Singer');
+  const row = h.get('album-tracks-list').children[0];
+  assert.deepEqual(row.children.map(x=>x.textContent),['1.','Song <safe>','▶']);
+  assert.match(row.attributes['aria-label'],/Song <safe> abspielen/);
+  assert.equal(row.children[2].attributes['aria-hidden'],'true');
+  h.get('album-tracks-cover').onerror();
+  assert.equal(h.get('album-tracks-cover').hidden,true);
+  assert.equal(h.get('album-tracks-cover-placeholder').hidden,false);
+});
+
+test('album dialog preserves album and individual track playback payloads', async () => {
+  const h = albumHarness(), calls=[];
+  h.context.reply = async (action,payload) => {calls.push([action,payload]);return {tracks:[{id:9,number:1,name:'Song'}]};};
+  h.run('api=reply; loadRadioState=async()=>{};updateSong=()=>{}');
+  await h.run('openAlbumTracks("a")');
+  await h.get('album-tracks-list').children[0].listeners.click();
+  assert.equal(calls[1][0],'apple_album_track');
+  assert.equal(calls[1][1].favorite,'a');
+  assert.equal(calls[1][1].track_id,9);
+  assert.equal(h.get('album-tracks-dialog').open,false);
+  h.context.start = async id => calls.push(['whole',id]);
+  h.run('startAppleFavorite=start');
+  await h.run('openAlbumTracks("a")');
+  await h.get('album-play-all').listeners.click();
+  assert.deepEqual(calls.at(-1),['whole','a']);
+});
+
+test('closed album dialog ignores late metadata and standby prevents opening', async () => {
+  const h = albumHarness();
+  let resolve;
+  h.context.reply = () => new Promise(r=>{resolve=r;});
+  h.run('api=reply');
+  const pending = h.run('openAlbumTracks("a")');
+  h.run('closeAlbumTracks()');
+  resolve({artist:'Stale',image:'api/album-art/99',tracks:[{id:9,number:1,name:'Old'}]});
+  await pending;
+  assert.equal(h.get('album-tracks-list').children.length,0);
+  assert.equal(h.get('album-tracks-cover').src,'api/album-art/12');
+  h.run('strictStandby=true');
+  await h.run('openAlbumTracks("a")');
+  assert.equal(h.get('album-tracks-dialog').open,false);
+});
+
 test('countdown expiry remains starting, never claims ready', () => {
   const h = harness();
   h.run('countdownEndsAt = Date.now()-1; renderCountdown()');

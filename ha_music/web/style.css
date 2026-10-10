@@ -217,9 +217,25 @@ html.ha-dashboard-card .station.active,html.ha-dashboard-card nav button.active{
 @media(max-width:550px){.library-editor-row{grid-template-columns:1fr}.library-editor-row button{justify-self:end}.library-editor{padding:16px}}
 
 
-.album-tracks-dialog{box-sizing:border-box;width:min(570px,calc(100vw - 24px));max-height:85vh;overflow:auto}
-.album-tracks-list{display:flex;flex-direction:column;gap:5px;margin-top:12px;max-height:48vh;overflow-y:auto}
-.album-track-choice{width:100%;padding:12px;text-align:left;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);cursor:pointer}
-.album-track-choice:hover,.album-track-choice:focus-visible{border-color:var(--accent)}
-#album-play-all{padding:10px 14px;background:var(--accent);color:var(--text);border-radius:8px}
-#album-tracks-feedback{min-height:1.5em}
+.album-tracks-dialog{box-sizing:border-box;width:min(640px,calc(100vw - 24px));max-height:calc(100dvh - 24px);overflow:hidden;padding:22px}
+.album-tracks-dialog[open]{display:flex;flex-direction:column;gap:16px}
+.album-dialog-header{display:grid;grid-template-columns:104px minmax(0,1fr) 44px;gap:10px 16px;align-items:start;flex-shrink:0}
+.album-dialog-art{grid-row:1/3;width:104px;aspect-ratio:1;overflow:hidden;border-radius:12px;background:var(--bg);display:grid;place-items:center;color:var(--muted);font-size:36px}
+.album-dialog-art img{width:100%;height:100%;object-fit:cover}
+.album-dialog-art [hidden]{display:none}
+.album-dialog-info{min-width:0;align-self:center}
+.album-dialog-info h2{margin:0;font-size:21px;line-height:1.25;overflow-wrap:anywhere}
+.album-dialog-info p{margin:6px 0 0;overflow-wrap:anywhere}
+.album-tracks-dialog #album-tracks-close{padding:0;width:44px;height:44px;background:transparent;color:var(--muted);border-color:var(--border);font-size:26px}
+.album-tracks-dialog #album-play-all{grid-column:2/4;justify-self:start;min-height:44px;padding:10px 16px;background:var(--accent);color:var(--text-primary-color,#fff);border:0;font-weight:600}
+.album-tracks-list{display:flex;flex-direction:column;gap:0;min-height:0;overflow-y:auto;overscroll-behavior:contain;scrollbar-gutter:stable;border-top:1px solid var(--border)}
+.album-tracks-dialog .album-track-choice{display:grid;grid-template-columns:30px minmax(0,1fr) 28px;gap:10px;align-items:center;flex-shrink:0;width:100%;min-height:44px;padding:10px 8px;text-align:left;border:0;border-bottom:1px solid var(--border);border-radius:0;background:transparent;color:var(--text);line-height:1.35}
+.album-track-number{color:var(--muted);text-align:right;font-variant-numeric:tabular-nums}
+.album-track-name{overflow-wrap:anywhere}
+.album-track-play{color:var(--accent);text-align:center;font-size:14px}
+.album-tracks-dialog .album-track-choice:hover{background:var(--bg)}
+.album-tracks-dialog button:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+.album-tracks-dialog #album-tracks-feedback{margin:0;flex-shrink:0;font-size:13px}
+#album-tracks-feedback:empty{display:none}
+@media(max-width:420px){.album-tracks-dialog{padding:14px}.album-dialog-header{grid-template-columns:76px minmax(0,1fr) 44px;gap:10px}.album-dialog-art{width:76px;grid-row:1}.album-dialog-info h2{font-size:18px}.album-tracks-dialog #album-play-all{grid-column:1/4;justify-self:stretch}}
+@media(max-height:400px){.album-dialog-art{width:64px;grid-row:1}.album-dialog-header{grid-template-columns:64px minmax(0,1fr) 44px}.album-tracks-dialog #album-play-all{grid-column:1/4}.album-tracks-dialog[open]{gap:8px}.album-tracks-dialog{padding:12px}}

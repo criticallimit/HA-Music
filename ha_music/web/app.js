@@ -634,6 +634,19 @@ function renderAppleSelection(selection) {
 }
 let albumDialogFavorite = null;
 let albumDialogGeneration = 0;
+function setAlbumDialogCover(album) {
+  const image = $("album-tracks-cover");
+  const url = validAppleImage(album?.image);
+  image.hidden = !url;
+  $("album-tracks-cover-placeholder").hidden = !!url;
+  image.removeAttribute("src");
+  image.onerror = () => {
+    image.hidden = true;
+    $("album-tracks-cover-placeholder").hidden = false;
+  };
+  image.referrerPolicy = "no-referrer";
+  if (url) image.src = url;
+}
 function closeAlbumTracks() {
   albumDialogGeneration++;
   albumDialogFavorite = null;
@@ -655,6 +668,7 @@ async function openAlbumTracks(id) {
   const generation = ++albumDialogGeneration;
   $("album-tracks-title").textContent = favorite.name;
   $("album-tracks-artist").textContent = "";
+  setAlbumDialogCover(savedAlbumCover(favorite) || albumCoverResults.get(coverKey(favorite))?.album);
   $("album-tracks-feedback").textContent = "Titelliste wird geladen …";
   $("album-tracks-list").replaceChildren();
   $("album-tracks-dialog").showModal();
@@ -662,12 +676,17 @@ async function openAlbumTracks(id) {
     const result = await api("album-tracks", {favorite:id});
     if (generation !== albumDialogGeneration || albumDialogFavorite?.id !== id) return;
     $("album-tracks-artist").textContent = result.artist || "";
+    if (result.image) setAlbumDialogCover(result);
     $("album-tracks-feedback").textContent = result.tracks?.length ? "" : "Keine Titel im Apple-Katalog gefunden";
     for (const track of result.tracks || []) {
       const button = document.createElement("button");
       button.type = "button";
       button.className = "album-track-choice";
-      button.textContent = track.number + ". " + track.name;
+      const number = document.createElement("span"); number.className = "album-track-number"; number.textContent = track.number + ".";
+      const name = document.createElement("span"); name.className = "album-track-name"; name.textContent = track.name;
+      const play = document.createElement("span"); play.className = "album-track-play"; play.textContent = "▶"; play.setAttribute("aria-hidden", "true");
+      button.append(number, name, play);
+      button.setAttribute("aria-label", "Titel " + track.number + ": " + track.name + " abspielen");
       button.title = "Titel auf Apple Music abspielen: " + track.name;
       button.addEventListener("click", async () => {
         if (button.disabled || !albumDialogFavorite || stationPending) return;

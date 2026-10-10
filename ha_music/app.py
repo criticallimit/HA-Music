@@ -1326,7 +1326,10 @@ def album_tracks(favorite_id):
         tracks.append({"id": item.get("trackId"), "name": title, "artist": artist,
                        "number": item.get("trackNumber") if type(item.get("trackNumber")) is int else len(tracks) + 1})
     tracks.sort(key=lambda item: item["number"])
-    return {"album": favorite["name"], "artist": album.get("artistName", ""), "tracks": tracks[:200]}
+    saved = stored_album(album_id)
+    image = saved["image"] if saved else artwork_url(album.get("artworkUrl100"), "mzstatic.com")
+    return {"album": favorite["name"], "artist": album.get("artistName", ""),
+            "image": image, "tracks": tracks[:200]}
 
 
 def play_apple_album_track(favorite_id, track_id, generation):
