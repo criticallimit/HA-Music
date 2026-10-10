@@ -549,23 +549,23 @@ test('protocol-relative artwork is rejected', async () => {
   assert.equal(h.get('current-cover').hidden,true);
 });
 
-test('room slider and percentage show only the current HA volume', async () => {
+test('room slider and percentage show the saved choice despite different HA volume', async () => {
   const h = harness();
   h.context.reply=async()=>({players:[{entity_id:'media_player.wohnzimmer',volume:.5,state:'idle'}],groups:[],remembered:{},saved_levels:{'media_player.wohnzimmer':.2}});
   h.run('api=reply; radioReadyForViews=true');
   await h.run('refreshPlayers()');
   const row = h.get('players').children[0];
-  assert.equal(row.children[1].value,50);
-  assert.equal(row.children[2].textContent,'50%');
+  assert.equal(row.children[1].value,20);
+  assert.equal(row.children[2].textContent,'20%');
   assert.equal(row.children[2].title,undefined);
 });
 
-test('saved mute does not replace the HA room volume', async () => {
+test('saved mute remains authoritative despite external HA room volume', async () => {
   const h = harness();
   h.context.reply=async()=>({players:[{entity_id:'media_player.wohnzimmer',volume:.4,state:'playing'}],groups:[],remembered:{},saved_levels:{'media_player.wohnung':0,'media_player.wohnzimmer':0}});
   h.run('api=reply; radioReadyForViews=true');
   await h.run('refreshPlayers()');
-  assert.equal(h.get('players').children[0].children[2].textContent,'40%');
+  assert.equal(h.get('players').children[0].children[2].textContent,'0%');
 });
 
 test('individual volume remains independent of master zero after startup', async () => {
@@ -598,13 +598,52 @@ async function masterHarness() {
     {entity_id:'media_player.wohnzimmer',name:'Wohnzimmer',volume:.3,state:'playing'},
     {entity_id:'media_player.kueche',name:'Küche',volume:0,state:'playing'}],
     groups:[{entity_id:'media_player.wohnung',volume:.3}],remembered:{},
-    saved_levels:{'media_player.wohnung':.3},
+    saved_levels:{'media_player.wohnung':.3,'media_player.wohnzimmer':.3,'media_player.kueche':0},
     master_room_levels:{'media_player.wohnzimmer':.3,'media_player.kueche':0}};
   h.context.reply=async()=>data;
   h.run('api=(action,body)=>reply(action,body); radioReadyForViews=true');
   await h.run('refreshPlayers()');
   return {...h,data};
 }
+
+test('changing Bad only persists its slider and icon while other rooms ignore shared Alexa reports', async () => {
+  const h = await masterHarness();
+  h.data.players.push({entity_id:'media_player.bad',name:'Bad',volume:.5,state:'playing'});
+  h.data.saved_levels['media_player.bad']=.5;
+  h.data.saved_levels['media_player.kueche']=.25;
+  h.data.master_room_levels['media_player.bad']=.5;
+  h.data.master_room_levels['media_player.kueche']=.25;
+  await h.run('refreshPlayers()');
+  const calls=[];
+  h.context.reply=async(action,body)=>{
+    if(action==='volume') {
+      calls.push(body);
+      h.data.saved_levels[body.entity_id]=body.volume;
+      h.data.master_room_levels[body.entity_id]=body.volume;
+    }
+    return h.data;
+  };
+  const slider=h.get('players').children[2].children[1];
+  slider.value=10;await slider.listeners.change();
+  assert.equal(calls.length,1);
+  assert.equal(calls[0].entity_id,'media_player.bad');
+  assert.equal(calls[0].volume,.1);
+  for(const external of [.1,.5,0,.8]) {
+    h.data.players.forEach(player=>player.volume=external);
+    h.run('for (const request of requestedRoomVolumes.values()) request.expires=0');
+    await h.run('refreshPlayers()');
+    assert.deepEqual(h.get('players').children.map(row=>row.children[1].value),[30,25,10]);
+    assert.deepEqual(h.get('players').children.map(row=>row.children[3].attributes['aria-pressed']),['true','true','true']);
+    assert.equal(h.get('master-volume').children[0].children[1].value,30);
+  }
+  h.run('uiGeneration++');await h.run('refreshPlayers()');
+  assert.equal(h.get('players').children[2].children[1].value,10);
+});
+
+test('Apple library explanatory footer remains hidden', () => {
+  const html=fs.readFileSync(path.join(__dirname,'../ha_music/web/index.html'),'utf8');
+  assert.match(html, /<p id="apple-library-note" hidden><\/p>/);
+});
 
 test('room slider and icon retain the chosen value through delayed and briefly regressing HA replies', async () => {
   const h=await masterHarness();
@@ -625,11 +664,12 @@ test('room slider and icon retain the chosen value through delayed and briefly r
   assert.equal(h.get('players').children[0].children[1].value,72);
   assert.equal(h.get('players').children[0].children[3].attributes['aria-pressed'],'true');
   h.data.players[0].volume=.72;
+  h.data.saved_levels['media_player.wohnzimmer']=.72;
   h.run('requestedRoomVolumes.get("media_player.wohnzimmer").settleUntil=0');
   await h.run('refreshPlayers()');
   h.data.players[0].volume=.55;
   await h.run('refreshPlayers()');
-  assert.equal(h.get('players').children[0].children[1].value,55);
+  assert.equal(h.get('players').children[0].children[1].value,72);
 });
 
 test('room mute and unmute react before the request and keep the exact level despite stale HA state', async () => {
@@ -709,7 +749,7 @@ test('master drag updates active room slider percentage and icon before any requ
   assert.deepEqual(calls,[]);
 });
 
-test('master preview survives delayed HA values then follows confirmed and external values', async () => {
+test('master preview settles on saved values and ignores later external volume', async () => {
   const h=await masterHarness();
   let resolve;
   h.context.reply=(action)=> action==='volume' ? new Promise(r=>{resolve=r;}) : Promise.resolve(h.data);
@@ -723,12 +763,13 @@ test('master preview survives delayed HA values then follows confirmed and exter
   assert.equal(h.get('players').children[0].children[1].value,60);
   h.data.players[0].volume=.6;
   h.data.saved_levels['media_player.wohnung']=.6;
+  h.data.saved_levels['media_player.wohnzimmer']=.6;
   h.run('for (const request of requestedRoomVolumes.values()) request.settleUntil=0');
   await h.run('refreshPlayers()');
   assert.equal(h.run('requestedRoomVolumes.size'),0);
   h.data.players[0].volume=.45;
   await h.run('refreshPlayers()');
-  assert.equal(h.get('players').children[0].children[1].value,45);
+  assert.equal(h.get('players').children[0].children[1].value,60);
 });
 
 test('master mute preview keeps room intent and never unmutes an individually muted room', async () => {
@@ -778,7 +819,7 @@ test('player reply started before master drag cannot replace the new preview', a
   }
 });
 
-test('failed master request rolls room preview back to observed values', async () => {
+test('failed master request rolls room preview back to saved values', async () => {
   const h=await masterHarness();
   h.context.reply=async(action)=>{if(action==='volume')throw new Error('offline');return h.data;};
   const slider=h.get('master-volume').children[0].children[1];

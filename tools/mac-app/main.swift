@@ -359,15 +359,23 @@ if CommandLine.arguments.contains("--self-test") {
             do { _ = try SyncCore.endpoint(address); fatalError("Invalid endpoint accepted") }
             catch is SyncFailure { }
         }
-        let tracks = [MusicTrack(name: "Grüße 🎵", artist: "Björk", album: "Debut", albumArtist: "Björk"), MusicTrack(name: "Again", artist: "Band"), MusicTrack(name: "Again", artist: "Band")]
+        let tracks = [MusicTrack(name: "Grüße 🎵", artist: "Björk", album: "Debut", albumArtist: "Björk", duration: 243.5), MusicTrack(name: "Again", artist: "Band"), MusicTrack(name: "Again", artist: "Band")]
         let data = try SyncCore.payload(name: "Mix", tracks: tracks, create: true)
         let object = try JSONSerialization.jsonObject(with: data) as! [String: Any]
         assert((object["tracks"] as! [[String: Any]]).count == 3)
         let first = (object["tracks"] as! [[String: Any]])[0]
         assert(first["album"] as! String == "Debut")
         assert(first["album_artist"] as! String == "Björk")
+        assert(first["duration"] as! Double == 243.5)
         let decoded = try JSONDecoder().decode([MusicTrack].self, from: JSONEncoder().encode(tracks))
         assert(decoded[0].album == "Debut" && decoded[0].albumArtist == "Björk")
+        assert(decoded[0].duration == 243.5 && decoded[1].duration == nil)
+        for invalidDuration in [-1.0, 0.0, 86401.0, Double.nan, Double.infinity] {
+            do {
+                _ = try SyncCore.payload(name: "Mix", tracks: [MusicTrack(name: "Song", artist: "Band", duration: invalidDuration)], create: false)
+                fatalError("Invalid duration accepted")
+            } catch is SyncFailure { }
+        }
         assert(object["create"] as! Bool)
         let fixture = Data(base64Encoded: "iVBORw0KGgoAAAANSUhEUgAAAEAAAAAgCAIAAAAt/+nTAAAATElEQVR4nNXOQREAMAjAsK7+PTMRPLhGQR4MZRIncRIncRIncRIncRIncRIncRIncRIncRIncRIncRIncRIncRIncRIncRIncRIncV4Htj4imAE/t2tu2AAAAABJRU5ErkJggg==")!
         let thumbnail = SyncCore.thumbnail(fixture)!

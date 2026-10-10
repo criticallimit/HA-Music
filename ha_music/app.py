@@ -18,6 +18,7 @@ import re
 import threading
 import time
 import unicodedata
+from datetime import datetime
 from metadata_feed import MONITOR
 from metadata import close_stream
 
@@ -69,6 +70,7 @@ SOURCE_UNCONFIRMED = False
 SOURCE_RESTORE_ERROR = None
 RECOVERY_MESSAGE = None
 VOLUME_CONFIRMATION = {}
+SINGLE_TRACK = None
 LOCK = threading.Lock()
 CACHE_LOCK = threading.RLock()
 STATE_CACHE = (0.0, None)
@@ -253,6 +255,11 @@ def normalize_playlist_tracks(tracks):
             if type(track["local_covers"]) is not bool:
                 raise ValueError(f"Titel {number}: Ungültige Coverquelle")
             extra["local_covers"] = track["local_covers"]
+        if track.get("duration") is not None:
+            duration = track["duration"]
+            if type(duration) not in (int, float) or not 0 < duration <= 86400:
+                raise ValueError(f"Titel {number}: Ungültige Titellänge")
+            extra["duration"] = float(duration)
         identity_fields = [number, name, artist] + ([extra] if extra else [])
         identity = int(hashlib.sha256(json.dumps(identity_fields, sort_keys=True).encode()).hexdigest()[:12], 16) + 1
         result.append({"id":identity, "number":number, "name":name, "artist":artist, **extra})
@@ -289,7 +296,8 @@ def import_playlist(body):
             if not isinstance(track, dict):
                 raise ValueError("Der XML-Export enthält eine unvollständige Titelliste")
             tracks.append({"name":track.get("Name"), "artist":track.get("Artist"),
-                           "album":track.get("Album", ""), "album_artist":track.get("Album Artist", "")})
+                           "album":track.get("Album", ""), "album_artist":track.get("Album Artist", ""),
+                           **({"duration":track["Total Time"]/1000} if type(track.get("Total Time")) is int and track["Total Time"] > 0 else {})})
     else:
         try:
             sample = content[:8192]
@@ -790,7 +798,7 @@ def remembered():
     try:
         obj = json.loads(VOLUME_FILE.read_text())
         saved = {entity: float(value) for entity, value in obj.items()
-                 if entity == "media_player.wohnung" and type(value) in (int, float)
+                 if isinstance(entity, str) and ENTITY_RE.fullmatch(entity) and type(value) in (int, float)
                  and 0 <= value <= 1} if isinstance(obj, dict) else {}
     except (OSError, ValueError):
         saved = {}
@@ -814,18 +822,21 @@ def write_durable_json(path, data):
 
 def save_remembered(entity, level):
     with LOCK:
-        if entity != "media_player.wohnung":
-            ROOM_REMEMBERED[entity] = level
-            return
-        obj = {key:value for key,value in remembered().items() if key == "media_player.wohnung"}
+        obj = remembered()
         obj[entity] = level
         write_durable_json(VOLUME_FILE, obj)
+        ROOM_REMEMBERED[entity] = level
 def speaker_levels():
     try:
         data = json.loads(SPEAKER_FILE.read_text())
-        return {key: float(value) for key, value in data.items()
+        levels = {key: float(value) for key, value in data.items()
                 if isinstance(key, str) and ENTITY_RE.fullmatch(key)
                 and type(value) in (int, float) and 0 <= value <= 1}
+        if data.get("_version") != 2:
+            # Older room commands saved 1.0 as an active marker, not 100%.
+            levels = {key:(levels.get("media_player.wohnung", 0.3) if key != "media_player.wohnung" and value == 1 else value)
+                      for key,value in levels.items()}
+        return levels
     except (OSError, ValueError, TypeError, AttributeError):
         return {}
 
@@ -834,16 +845,17 @@ def save_speaker_levels(levels):
     with LOCK:
         state = speaker_levels()
         state.update(levels)
-        write_durable_json(SPEAKER_FILE, state)
+        write_durable_json(SPEAKER_FILE, {"_version":2, **state})
 
 
 def displayed_speaker_levels():
     with STATE_LOCK:
         saved = speaker_levels()
-        # A reattached session uses observed room levels, not old desired levels.
-        if RECOVERED_SESSION:
-            saved = {k: v for k, v in saved.items() if k == "media_player.wohnung"}
-        return {**saved, **ROOM_TARGETS}
+        master = saved.get("media_player.wohnung", 0.3)
+        displayed = {**dict.fromkeys(enabled_device_ids(), master), **saved}
+        if master == 0:
+            displayed.update(dict.fromkeys(enabled_device_ids(), 0.0))
+        return {**displayed, **ROOM_TARGETS}
 
 
 class StartupCancelled(RuntimeError):
@@ -920,7 +932,7 @@ def reapply_startup_volumes_after_playback(generation, expected):
                 # One delayed application per room, then the bounded verifier.
                 pending.discard(entity)
     if applied:
-        print("[HA Music] Startup master reapplied after playback: " + json.dumps(applied, sort_keys=True), flush=True)
+        print("[HA Music] Saved room levels reapplied after playback: " + json.dumps(applied, sort_keys=True), flush=True)
     for entity in sorted(pending):
         print(f"[HA Music] WARNING: {entity} playback did not settle; deferred startup volume skipped", flush=True)
         expected.pop(entity, None)  # Never retry positive volumes in idle/paused rooms.
@@ -994,7 +1006,7 @@ def restore_speakers(generation):
         if entity not in available:
             continue
         # A muted virtual master must remain silent across power cycles.
-        level = 0.0 if levels[entity] == 0 else (master or 0.0)
+        level = 0.0 if master == 0 else levels[entity]
         try:
             startup_request(generation, "/services/media_player/volume_set",
                             {"entity_id": entity, "volume_level": level})
@@ -1035,21 +1047,12 @@ def wait_for_start(generation, seconds):
 
 def prepare_speaker_levels(generation):
     saved = speaker_levels()
-    try:
-        states = state_snapshot()
-    except NETWORK_ERRORS as exc:
-        print(f"[HA Music] Startup state read failed; using saved levels: {exc}", flush=True)
-        states = {}
     permitted = enabled_device_ids()
     if "media_player.wohnung" not in saved:
-        master = (states.get("media_player.wohnung", {}).get("attributes") or {}).get("volume_level")
-        saved["media_player.wohnung"] = float(master) if type(master) in (int, float) and 0 <= master <= 1 else remembered().get("media_player.wohnung", 0.0)
+        saved["media_player.wohnung"] = remembered().get("media_player.wohnung", 0.3)
     for entity in permitted:
         if entity not in saved:
-            value = (states.get(entity, {}).get("attributes") or {}).get("volume_level")
-            saved[entity] = 0.0 if value == 0 else (saved["media_player.wohnung"] or 1.0)
-        if entity != "media_player.wohnung" and saved[entity] > 0:
-            saved[entity] = 1.0  # Active marker, never a room volume to restore.
+            saved[entity] = saved["media_player.wohnung"]
     with STATE_LOCK:
         check_generation(generation)
         save_speaker_levels(saved)
@@ -1068,7 +1071,7 @@ def prepare_speaker_levels(generation):
             raise
         except NETWORK_ERRORS as exc:
             print(f"[HA Music] Startup mute failed for {entity}: {exc}", flush=True)
-    targets = {entity: 0.0 if saved[entity] == 0 else saved["media_player.wohnung"]
+    targets = {entity: 0.0 if saved["media_player.wohnung"] == 0 else saved[entity]
                for entity in permitted if entity != "media_player.wohnung"}
     print(f"[HA Music] Startup room levels prepared: {json.dumps(targets, sort_keys=True)}; master: {saved['media_player.wohnung']}; pre-muted: {json.dumps(muted, sort_keys=True)}", flush=True)
     return saved
@@ -1329,6 +1332,7 @@ def transition_power(on):
         PREPARING = on
         STARTUP_ERROR = None
         ACTIVE_APPLE = None
+        cancel_single_track()
         RECOVERING = False
         RECOVERED_SESSION = False
         source = last_selected_source()
@@ -1546,6 +1550,7 @@ def album_tracks(favorite_id):
         if not all(isinstance(v, str) and 0 < len(v.strip()) <= 200 and not any(ord(c) < 32 for c in v) for v in (title, artist)):
             continue
         tracks.append({"id": item.get("trackId"), "name": title, "artist": artist,
+                       **({"duration":item["trackTimeMillis"]/1000} if type(item.get("trackTimeMillis")) is int and 0 < item["trackTimeMillis"] <= 86400000 else {}),
                        **({"album":album_name.strip()} if album_name else {}),
                        "number": item.get("trackNumber") if type(item.get("trackNumber")) is int else len(tracks) + 1})
     tracks.sort(key=lambda item: item["number"])
@@ -1679,6 +1684,123 @@ def playlist_track_cover(favorite_id, track_id):
     return {"image":cover["image"] if cover else ""}
 
 
+def cancel_single_track():
+    global SINGLE_TRACK
+    with STATE_LOCK:
+        if SINGLE_TRACK:
+            SINGLE_TRACK["cancel"].set()
+        SINGLE_TRACK = None
+
+
+def single_track_step(session, states, now):
+    def normalized(value):
+        return re.sub(r"[^\w]+", "", unicodedata.normalize("NFKC", value).casefold()) if isinstance(value,str) else ""
+    candidates = (session["stop_target"],) if session.get("confirmed") else ("media_player.wohnung", session["target"])
+    entries = [(entity, states.get(entity, {})) for entity in dict.fromkeys(candidates)
+               if entity in enabled_device_ids()]
+    matches = [(entity,state) for entity,state in entries if state.get("state") in ("playing","paused")
+               and normalized((state.get("attributes") or {}).get("media_title")) == normalized(session["track"]["name"])
+               and (not (state.get("attributes") or {}).get("media_artist") or
+                    normalized((state.get("attributes") or {}).get("media_artist")) == normalized(session["track"]["artist"]))]
+    if not matches:
+        if session.get("confirmed") and any(state.get("state") in ("idle", "off") or
+                state.get("state") == "playing" and (state.get("attributes") or {}).get("media_title") for _,state in entries):
+            return True  # The selected song ended; never let an automatic follow-up continue.
+        if session.get("confirmed"):
+            return now-session.get("last_seen",now) >= 60
+        return not session.get("confirmed") and now-session["started"] >= 60
+    entity, state = matches[0]
+    attrs = state.get("attributes") or {}
+    session["confirmed"] = True
+    session["last_seen"] = now
+    session["stop_target"] = entity
+    features = attrs.get("supported_features", 0)
+    session["native_pause"] = type(features) is int and bool(features & 1)
+    duration = attrs.get("media_duration")
+    if type(duration) not in (int,float) or not 0 < duration <= 86400:
+        duration = session["track"].get("duration")
+    if type(duration) not in (int,float) or not 0 < duration <= 86400:
+        return False  # Watch title changes when Alexa supplies no duration.
+    position = attrs.get("media_position")
+    position = float(position) if type(position) in (int,float) and 0 <= position <= duration else None
+    stamp = attrs.get("media_position_updated_at")
+    changed = session.get("position") != position or session.get("stamp") != stamp
+    if state["state"] == "paused":
+        if not session.get("paused"):
+            session["progress"] = (position if changed and position is not None else
+                                   duration - max(0, session["deadline"]-now) if session.get("deadline") is not None else
+                                   position or session.get("progress",0))
+        session.update(paused=True, deadline=None, position=position, stamp=stamp)
+        return False
+    resumed = session.pop("paused",False)
+    if session.get("deadline") is None or changed:
+        progress = position if position is not None and (changed or not resumed) else session.get("progress",0)
+        if isinstance(stamp,str) and not resumed:
+            try:
+                updated = datetime.fromisoformat(stamp.replace("Z","+00:00"))
+                if updated.tzinfo is not None:
+                    progress += max(0,time.time()-updated.timestamp())
+            except ValueError:
+                pass
+        deadline = now+max(0,duration-progress)
+        if session.get("deadline") is not None and session.get("position") == position:
+            deadline = min(deadline, session["deadline"])
+        session["deadline"] = deadline
+        session["position"], session["stamp"] = position,stamp
+        session["progress"] = progress
+    return now >= session["deadline"]
+
+
+def single_track_worker(session):
+    global SINGLE_TRACK, SOURCE_RESTORE_ERROR
+    failures = 0
+    while not session["cancel"].is_set():
+        with STATE_LOCK:
+            if SINGLE_TRACK is not session or session["generation"] != RESTORE_GENERATION or STANDBY.is_set() or not READY:
+                return
+        try:
+            should_pause = single_track_step(session,state_snapshot(),time.monotonic())
+            if should_pause:
+                with COMMAND_LOCK:
+                    with STATE_LOCK:
+                        if SINGLE_TRACK is not session or session["cancel"].is_set():
+                            return
+                        check_generation(session["generation"])
+                    if session.get("native_pause"):
+                        startup_request(session["generation"], "/services/media_player/media_pause", {"entity_id":session["stop_target"]})
+                    else:
+                        play_on_target(session["generation"],session["target"],"custom","pause")
+                    with STATE_LOCK:
+                        if SINGLE_TRACK is session:
+                            SINGLE_TRACK = None
+                            if not session.get("confirmed"):
+                                SOURCE_RESTORE_ERROR = "Einzeltitel nicht bestätigt; Wiedergabe vorsorglich pausiert."
+                    return
+            failures = 0
+        except StartupCancelled:
+            return
+        except NETWORK_ERRORS as exc:
+            failures += 1
+            print(f"[HA Music] Single-track end check failed: {exc}",flush=True)
+            if failures >= 3:
+                with STATE_LOCK:
+                    if SINGLE_TRACK is session:
+                        SOURCE_RESTORE_ERROR = "Einzeltitel-Ende konnte nicht überwacht oder pausiert werden."
+                        SINGLE_TRACK = None
+                return
+        remaining = max(0.05,session.get("deadline",time.monotonic()+1)-time.monotonic()) if session.get("deadline") is not None else 1
+        session["cancel"].wait(min(1,remaining))
+
+
+def start_single_track(track, target, generation):
+    global SINGLE_TRACK
+    with STATE_LOCK:
+        cancel_single_track()
+        SINGLE_TRACK = {"track":dict(track),"target":target,"generation":generation,"started":time.monotonic(),"cancel":threading.Event()}
+        session = SINGLE_TRACK
+    threading.Thread(target=single_track_worker,args=(session,),daemon=True).start()
+
+
 def play_apple_album_track(favorite_id, track_id, generation, *, playlist=False):
     global ACTIVE_APPLE, APPLE_VERIFICATION_STARTED, SOURCE_UNCONFIRMED, SOURCE_RESTORE_ERROR
     if type(track_id) is not int or not 0 < track_id < 10**16:
@@ -1701,13 +1823,14 @@ def play_apple_album_track(favorite_id, track_id, generation, *, playlist=False)
     favorite = next(item for item in selection["items"] if item["id"] == favorite_id)
     with STATE_LOCK:
         check_generation(generation)
-        save_selected_source("apple", favorite_id)
+        save_selected_source("unknown", "")  # A single track must not restore its entire playlist on restart.
         save_selected_view("apple")
         ACTIVE_APPLE = {**favorite, "target": selection["target"], "kind": "Track", "name": track["name"]}
         APPLE_VERIFICATION_STARTED = None
         SOURCE_UNCONFIRMED = False
         SOURCE_RESTORE_ERROR = None
         MONITOR.select("")
+        start_single_track(track,selection["target"],generation)
     return result
 
 
@@ -1730,6 +1853,7 @@ def play_apple_music(favorite_id, generation, *, startup=False):
     result = play_on_target(generation, selection["target"], media_type, phrase)
     with STATE_LOCK:
         check_generation(generation)
+        cancel_single_track()
         save_selected_source("apple", favorite_id)
         save_selected_view("apple")
         ACTIVE_APPLE = {**favorite, "target": selection["target"]}
@@ -1976,6 +2100,7 @@ def play_station(key, generation):
     result = play_on_target(generation, target, preset["media_content_type"], preset["media_content_id"])
     with STATE_LOCK:
         check_generation(generation)
+        cancel_single_track()
         save_selected_station(key)
         save_selected_view("radio")
         ACTIVE_APPLE = None
@@ -2045,11 +2170,9 @@ def master_room_levels(room_players):
     stored = speaker_levels()
     if stored.get("media_player.wohnung") == 0:
         saved = stored  # Preserve which rooms were active before master mute.
-    elif RECOVERED_SESSION:
-        saved = displayed_speaker_levels()
     else:
         saved = {**stored, **ROOM_TARGETS}
-    intent = {p["entity_id"]: saved.get(p["entity_id"], p.get("volume")) for p in room_players}
+    intent = {p["entity_id"]: saved.get(p["entity_id"], stored.get("media_player.wohnung",0.3)) for p in room_players}
     return {entity: float(value) for entity, value in intent.items()
             if type(value) in (int, float) and 0 <= value <= 1}
 
@@ -2072,6 +2195,8 @@ def perform_control(action, body, generation):
             payload["shuffle"] = body["shuffle"]
         service = {"previous":"media_previous_track", "next":"media_next_track", "shuffle":"shuffle_set"}[command]
         result = startup_request(generation, "/services/media_player/" + service, payload)
+        if command in ("previous", "next"):
+            cancel_single_track()
         if command in ("previous", "next"):
             try:
                 startup_request(generation, "/services/homeassistant/update_entity", {"entity_id":entity})
@@ -2100,9 +2225,7 @@ def perform_control(action, body, generation):
         player = next((p for p in classify_devices()["players"] if p["entity_id"] == entity), None)
         if player is None:
             raise ValueError("Raumgerät ist nicht freigegeben oder nicht verfügbar")
-        # Match the observed volume displayed by the room control. A saved
-        # target may belong to an earlier session or an external Alexa change.
-        level = player.get("volume")
+        level = displayed_speaker_levels().get(entity)
         known_level = type(level) in (int, float) and 0 <= level <= 1
         if on and known_level and level > 0:
             return {"ok": True, "volume": level}
@@ -2128,9 +2251,7 @@ def perform_control(action, body, generation):
         if entity == "media_player.wohnung":
             # Independent virtual master: apply its absolute percentage to unmuted rooms.
             room_players = classified["players"]
-            # After a reattachment, use observed rooms until master mute has
-            # captured their active/muted intent. Zero targets alone cannot
-            # distinguish a master mute from an individually muted room.
+            # Use saved intent even when Alexa reports a shared group volume.
             room_intent = master_room_levels(room_players)
             active = [p for p in room_players
                       if room_intent.get(p["entity_id"], 0) > 0]
@@ -2162,15 +2283,18 @@ def perform_control(action, body, generation):
                 print("[HA Music] Master partial failure: " + "; ".join(failed), flush=True)
                 raise RuntimeError("Master: " + "; ".join(failed))
             return {"ok": True, "updated": len(changed)}
+        previous = displayed_speaker_levels().get(entity)
         result = startup_request(generation, "/services/media_player/volume_set", {"entity_id": entity, "volume_level": level})
         with STATE_LOCK:
             check_generation(generation)
-            # Persist only the muted/active choice; positive room levels are session-local.
-            save_speaker_levels({entity: 0.0 if level == 0 else 1.0})
+            save_speaker_levels({entity: float(level)})
             ROOM_TARGETS[entity] = float(level)
             VOLUME_CONFIRMATION.pop(entity, None)
-        print(f"[HA Music] Session speaker {entity}: {round(level * 100)}%", flush=True)
-        if level > 0: save_remembered(entity, level)
+        print(f"[HA Music] Saved speaker {entity}: {round(level * 100)}%", flush=True)
+        if level > 0:
+            save_remembered(entity, level)
+        elif type(previous) in (int, float) and previous > 0:
+            save_remembered(entity, previous)
         return result
     raise ValueError("Unbekannte Aktion")
 

@@ -22,6 +22,7 @@ import metadata
 import metadata_feed
 VERIFY = app.verify_restored_volumes
 SYNCHRONIZE = app.synchronize_device_configuration
+START_SINGLE_TRACK = app.start_single_track
 
 
 class RuntimeTests(unittest.TestCase):
@@ -34,6 +35,8 @@ class RuntimeTests(unittest.TestCase):
         self.stack.enter_context(patch.object(app, "SUPERVISOR_OPTIONS", None))
         self.stack.enter_context(patch.object(app, "ARTWORK_LAST_REQUEST", 0))
         self.stack.enter_context(patch.object(app, "ACTIVE_APPLE", None))
+        app.cancel_single_track()
+        self.stack.enter_context(patch.object(app, "start_single_track"))
         self.stack.enter_context(patch.object(app, "RECOVERING", False))
         self.stack.enter_context(patch.object(app, "RECOVERED_SESSION", False))
         self.stack.enter_context(patch.object(app, "SOURCE_UNCONFIRMED", False))
@@ -224,7 +227,7 @@ class RuntimeTests(unittest.TestCase):
         self.assertTrue(app.RECOVERED_SESSION)
         self.assertEqual(app.session_intent(), "on")
         self.assertEqual(app.speaker_levels()["media_player.wohnzimmer"], 0.8)
-        self.assertNotIn("media_player.wohnzimmer", app.displayed_speaker_levels())
+        self.assertEqual(app.displayed_speaker_levels()["media_player.wohnzimmer"], 0.8)
         self.monitor.assert_not_called()
         self.assertEqual(self.monitor.method_calls, [("resume", (), {})])
         with patch.object(app, "state_snapshot", return_value=self.states):
@@ -433,13 +436,13 @@ class RuntimeTests(unittest.TestCase):
         self.assertEqual(info["track_transport"]["entity_id"], "media_player.bad")
         self.assertEqual(info["details"]["entity_id"], "media_player.bad")
 
-    def test_master_after_recovery_does_not_unmute_room_from_stale_saved_level(self):
+    def test_master_after_recovery_preserves_saved_mute_despite_external_positive_volume(self):
         self.states["media_player.wohnzimmer"]["state"] = "playing"
-        app.save_speaker_levels({"media_player.kueche": 0.8, "media_player.wohnung": 0.4})
+        app.save_speaker_levels({"media_player.kueche": 0, "media_player.wohnung": 0.4})
         self.recovery()
         found = {"groups": [{"entity_id":"media_player.wohnung", "volume":0.4}], "players": [
             {"entity_id":"media_player.wohnzimmer", "volume":0.4},
-            {"entity_id":"media_player.kueche", "volume":0}], "excluded": []}
+            {"entity_id":"media_player.kueche", "volume":0.8}], "excluded": []}
         with patch.object(app, "classify_devices", return_value=found), patch.object(app, "ha_request", return_value={}) as request:
             app.perform("volume", {"entity_id":"media_player.wohnung", "volume":0.3})
         request.assert_called_once_with("/services/media_player/volume_set", {
@@ -650,6 +653,7 @@ class RuntimeTests(unittest.TestCase):
 
     def test_rejected_apple_restart_is_not_retried_or_replaced_by_radio(self):
         app.save_selected_station("wdr2")
+        app.save_speaker_levels({"media_player.wohnzimmer": 0.4})
         favorite = self.apple_favorite()
         app.save_selected_source("apple", favorite)
         def request(path, body=None):
@@ -1018,6 +1022,9 @@ class RuntimeTests(unittest.TestCase):
                             "entity_id":"media_player.wohnzimmer", "media":{
                                 "media_content_type":"custom", "media_content_id":command, "metadata":{}}})
                     self.assertEqual(app.ACTIVE_APPLE["name"], track["name"])
+                    app.start_single_track.assert_called_with(track, "media_player.wohnzimmer", 10)
+                    self.assertIsNone(app.last_selected_source())
+                    self.assertEqual(json.loads(app.SOURCE_FILE.read_text())["kind"], "unknown")
     def test_playlist_album_metadata_survives_sync_and_text_xml_imports(self):
         tracks = [{"name":"Song", "artist":"Singer", "album":"The Album", "album_artist":"Album Singer"}]*2
         imported = app.import_playlist({"content":"Name\tArtist\tAlbum\tAlbum Artist\nSong\tSinger\tThe Album\tAlbum Singer\n"})["tracks"]
@@ -1507,7 +1514,7 @@ class RuntimeTests(unittest.TestCase):
         app.VOLUME_FILE.write_text(json.dumps({"media_player.kueche": 0.2, "media_player.bad": True,
                                               "media_player.buero": 2, "bad key": 0.3,
                                               "media_player.wohnzimmer": "0.4"}))
-        self.assertEqual(app.remembered(), {})
+        self.assertEqual(app.remembered(), {"media_player.kueche": 0.2})
 
     def test_timed_ready_is_independent_of_device_and_helper_availability(self):
         app.READY = True
@@ -1529,7 +1536,7 @@ class RuntimeTests(unittest.TestCase):
         self.assertEqual([c.args[1]["entity_id"] for c in calls.call_args_list], ["media_player.buero", "media_player.wohnzimmer"])
         self.assertEqual(app.speaker_levels()["media_player.buero"], 0.6)
         self.assertEqual(app.speaker_levels()["media_player.wohnzimmer"], 0.4)
-        self.assertEqual([c.args[1]["volume_level"] for c in calls.call_args_list], [.25, .25])
+        self.assertEqual([c.args[1]["volume_level"] for c in calls.call_args_list], [.6, .4])
 
     def test_cancelled_empty_master_command_cannot_save_new_volume(self):
         app.READY = True
@@ -1558,7 +1565,7 @@ class RuntimeTests(unittest.TestCase):
         self.assertEqual(next(c for c in restores if c["entity_id"].endswith("wohnzimmer"))["volume_level"], 0.4)
         self.assertEqual([c["volume_level"] for c in volumes if c["entity_id"].endswith("wohnzimmer")], [0.4])
         self.assertTrue(all(c["volume_level"] == 0 for c in volumes if c["entity_id"].endswith("kueche")))
-        self.assertEqual(app.speaker_levels()["media_player.wohnzimmer"], 1.0)
+        self.assertEqual(app.speaker_levels()["media_player.wohnzimmer"], 0.4)
 
     def test_delayed_alexa_volume_execution_cannot_undo_startup_room_levels(self):
         for source_kind in ("radio", "apple"):
@@ -1588,7 +1595,7 @@ class RuntimeTests(unittest.TestCase):
                         actual.update(dict.fromkeys(actual, body["volume_level"]))
                     else:
                         actual[body["entity_id"]] = body["volume_level"]
-                self.assertEqual(actual, {entity:0 if value == 0 else .25 for entity,value in wanted.items()})
+                self.assertEqual(actual, wanted)
                 self.assertEqual(len(media), 1)
                 self.assertEqual(app.speaker_levels()["media_player.wohnung"], 0.25)
 
@@ -1599,7 +1606,7 @@ class RuntimeTests(unittest.TestCase):
             app.prepare_speaker_levels(10)
         self.assertEqual([call.args[1] for call in request.call_args_list],
                          [{"entity_id":"media_player.kueche", "volume_level":0.0}])
-        self.assertEqual(app.speaker_levels()["media_player.wohnzimmer"], 1.0)
+        self.assertEqual(app.speaker_levels()["media_player.wohnzimmer"], 0.6)
         self.assertEqual(app.speaker_levels()["media_player.wohnung"], 0.25)
 
     def test_reload_once_after_power_wait_and_before_volume_preparation(self):
@@ -1692,7 +1699,7 @@ class RuntimeTests(unittest.TestCase):
         self.assertFalse(app.PREPARING)
         self.assertIsNone(app.STARTUP_ERROR)
         self.assertTrue(any("Station timed out" in str(c) for c in log.call_args_list))
-        self.assertTrue(any(c.args[0].endswith("volume_set") and c.args[1] == {"entity_id": "media_player.wohnzimmer", "volume_level": 0.25} for c in calls))
+        self.assertTrue(any(c.args[0].endswith("volume_set") and c.args[1] == {"entity_id": "media_player.wohnzimmer", "volume_level": 0.6} for c in calls))
         app.synchronize_device_configuration.assert_called_once_with(10)
 
     def test_unavailable_target_is_restored_and_sender_is_requested(self):
@@ -1756,6 +1763,7 @@ class RuntimeTests(unittest.TestCase):
         self.assertEqual([c.args[0] for c in calls.call_args_list], ["/services/input_boolean/turn_off", "/services/homeassistant/reload_config_entry"])
 
     def test_restore_failure_is_logged_without_hiding_interface(self):
+        app.save_speaker_levels({"media_player.wohnzimmer": 0.4})
         def request(path, body=None):
             if path.endswith("volume_set") and body["volume_level"] == 0.4:
                 raise OSError("offline")
@@ -1767,6 +1775,7 @@ class RuntimeTests(unittest.TestCase):
 
     def test_pre_mute_failure_is_logged_but_sender_and_restore_are_attempted(self):
         app.save_selected_station("wdr2")
+        app.save_speaker_levels({"media_player.wohnzimmer": 0.4, "media_player.kueche": 0})
         def request(path, body=None):
             if path.endswith("volume_set") and body["volume_level"] == 0:
                 raise TimeoutError("Pre-mute failed")
@@ -1828,19 +1837,19 @@ class RuntimeTests(unittest.TestCase):
         app.save_speaker_levels({"media_player.wohnung": 0, "media_player.wohnzimmer": 0.4})
         calls = self.startup().call_args_list
         self.assertTrue(all(c.args[1]["volume_level"] == 0 for c in calls if c.args[0].endswith("volume_set")))
-        self.assertEqual(app.speaker_levels()["media_player.wohnzimmer"], 1.0)
+        self.assertEqual(app.speaker_levels()["media_player.wohnzimmer"], 0.4)
         self.assertEqual(app.displayed_speaker_levels()["media_player.wohnzimmer"], 0)
 
-    def test_start_uses_master_for_positive_room_levels_and_preserves_mutes(self):
+    def test_start_restores_exact_saved_room_levels_and_preserves_mutes(self):
         self.states["media_player.bad"] = {"state": "idle", "attributes": {"volume_level": 0.7}}
         self.states["media_player.buero"] = {"state": "idle", "attributes": {"volume_level": 0.6}}
         app.save_speaker_levels({"media_player.wohnung": 0.25, "media_player.wohnzimmer": 0.15,
                                  "media_player.bad": 0.7, "media_player.kueche": 0})
         calls = self.startup().call_args_list
-        for entity, level in (("media_player.wohnzimmer", .15), ("media_player.bad", .7), ("media_player.buero", .6)):
+        for entity, level in (("media_player.wohnzimmer", .15), ("media_player.bad", .7), ("media_player.buero", .25)):
             commands = [c.args[1]["volume_level"] for c in calls if c.args[0].endswith("volume_set") and c.args[1]["entity_id"] == entity]
-            self.assertEqual(commands, [.25])
-            self.assertEqual(app.displayed_speaker_levels()[entity], .25)
+            self.assertEqual(commands, [level])
+            self.assertEqual(app.displayed_speaker_levels()[entity], level)
         self.assertEqual(app.speaker_levels()["media_player.kueche"], 0)
 
     def test_individual_changes_after_start_do_not_follow_master(self):
@@ -1852,12 +1861,12 @@ class RuntimeTests(unittest.TestCase):
         self.assertEqual(request.call_count, 1)
         self.assertEqual(app.speaker_levels()["media_player.wohnung"], 0.25)
         self.assertEqual(app.displayed_speaker_levels()["media_player.wohnzimmer"], 0.55)
-        self.assertEqual(app.speaker_levels()["media_player.wohnzimmer"], 1.0)
+        self.assertEqual(app.speaker_levels()["media_player.wohnzimmer"], 0.55)
         app.transition_power(False)
         app.transition_power(True)
         calls = self.startup().call_args_list
         commands = [c.args[1]["volume_level"] for c in calls if c.args[0].endswith("volume_set") and c.args[1]["entity_id"] == "media_player.wohnzimmer"]
-        self.assertEqual(commands, [0.25])
+        self.assertEqual(commands, [0.55])
 
     def test_individual_room_can_be_raised_after_start_with_master_zero(self):
         app.save_speaker_levels({"media_player.wohnung": 0, "media_player.wohnzimmer": 0.4})
@@ -1868,40 +1877,41 @@ class RuntimeTests(unittest.TestCase):
         self.assertEqual(app.displayed_speaker_levels()["media_player.wohnzimmer"], 0.3)
         self.assertEqual(app.speaker_levels()["media_player.wohnung"], 0)
 
-    def test_missing_master_defaults_to_silence_without_one_percent_rule(self):
+    def test_missing_master_uses_saved_or_default_value_without_reading_players(self):
         self.states.pop("media_player.wohnung")
         calls = self.startup().call_args_list
         self.assertTrue(app.READY)
         self.assertFalse(app.PREPARING)
         self.assertIsNone(app.STARTUP_ERROR)
-        self.assertTrue(all(c.args[1]["volume_level"] == 0 for c in calls if c.args[0].endswith("volume_set")))
+        self.assertTrue(all(c.args[1]["volume_level"] == 0.3 for c in calls if c.args[0].endswith("volume_set")))
 
-        self.assertEqual(app.speaker_levels()["media_player.wohnung"], 0.0)
+        self.assertEqual(app.speaker_levels()["media_player.wohnung"], 0.3)
 
-    def test_saved_one_percent_rooms_start_at_master_except_zero_rooms(self):
+    def test_saved_one_percent_rooms_are_restored_at_one_percent(self):
         app.save_speaker_levels({"media_player.wohnung":.23, "media_player.bad":.01,
                                  "media_player.wohnzimmer":.01, "media_player.kueche":0})
         calls = self.startup().call_args_list
         volumes = [call.args[1] for call in calls if call.args[0].endswith("volume_set")]
-        self.assertFalse(any(body["volume_level"] == .01 for body in volumes))
+        self.assertTrue(any(body["volume_level"] == .01 for body in volumes))
         for entity in ("media_player.bad", "media_player.wohnzimmer"):
-            self.assertEqual([body["volume_level"] for body in volumes if body["entity_id"] == entity], [.23])
+            self.assertEqual([body["volume_level"] for body in volumes if body["entity_id"] == entity], [.01])
         self.assertTrue(all(body["volume_level"] == 0 for body in volumes if body["entity_id"] == "media_player.kueche"))
 
-    def test_room_positive_level_is_session_only_but_zero_persists(self):
+    def test_positive_and_zero_room_levels_and_unmute_values_are_durable(self):
         app.READY = True
         app.save_speaker_levels({"media_player.wohnung":.23})
         device = {"entity_id":"media_player.wohnzimmer", "volume":.23}
         with patch.object(app, "classify_devices", return_value={"players":[device],"groups":[]}), patch.object(app, "ha_request", return_value={}):
             app.perform("volume", {"entity_id":device["entity_id"], "volume":.55})
             self.assertEqual(app.ROOM_TARGETS[device["entity_id"]], .55)
-            self.assertEqual(app.speaker_levels()[device["entity_id"]], 1.0)
-            self.assertFalse(app.VOLUME_FILE.exists())
+            self.assertEqual(app.speaker_levels()[device["entity_id"]], .55)
+            self.assertEqual(json.loads(app.VOLUME_FILE.read_text())[device["entity_id"]], .55)
             app.perform("volume", {"entity_id":device["entity_id"], "volume":0})
         app.transition_power(False)
         app.transition_power(True)
         self.assertEqual(app.speaker_levels()[device["entity_id"]], 0)
         self.assertEqual(app.ROOM_REMEMBERED, {})
+        self.assertEqual(app.remembered()[device["entity_id"]], .55)
 
     def test_wait_is_interruptible(self):
         app.CANCEL.set()
@@ -1939,13 +1949,13 @@ class RuntimeTests(unittest.TestCase):
             VERIFY(10, {"media_player.wohnzimmer": 0.4})
         states.assert_not_called()
 
-    def test_startup_reapplies_master_after_optimistic_volume_and_late_playback(self):
+    def test_startup_reapplies_saved_room_level_after_optimistic_volume_and_late_playback(self):
         for source in ("radio", "apple"):
             with self.subTest(source=source):
                 app.ROOM_TARGETS.clear()
                 app.VOLUME_CONFIRMATION.clear()
                 app.ACTIVE_APPLE = {"target":"media_player.wohnzimmer"} if source == "apple" else None
-                app.save_speaker_levels({"media_player.wohnung":.23, "media_player.wohnzimmer":1, "media_player.kueche":0})
+                app.save_speaker_levels({"media_player.wohnung":.23, "media_player.wohnzimmer":.23, "media_player.kueche":0})
                 polls, audible = 0, {"media_player.wohnzimmer":0, "media_player.kueche":0}
                 def snapshot(**kwargs):
                     nonlocal polls
@@ -2145,13 +2155,13 @@ class RuntimeTests(unittest.TestCase):
         self.assertEqual(state["ready"], "on")
         request.assert_not_called()
 
-    def test_reattached_master_mute_and_restore_preserve_observed_room_intent(self):
+    def test_reattached_master_mute_and_restore_preserve_saved_room_intent(self):
         app.READY = True
         app.RECOVERED_SESSION = True
         app.save_speaker_levels({"media_player.wohnung":.4,
-                                 "media_player.wohnzimmer":.8, "media_player.kueche":.8})
+                                 "media_player.wohnzimmer":.8, "media_player.kueche":0})
         devices = {"players":[{"entity_id":"media_player.wohnzimmer", "volume":.35},
-                              {"entity_id":"media_player.kueche", "volume":0}],
+                              {"entity_id":"media_player.kueche", "volume":.8}],
                    "groups":[{"entity_id":"media_player.wohnung", "volume":.4}]}
         with patch.object(app, "classify_devices", return_value=devices), patch.object(app, "ha_request", return_value={}) as request:
             app.perform("volume", {"entity_id":"media_player.wohnung", "volume":0})
@@ -2236,8 +2246,10 @@ class RoomAndGroupControlTests(unittest.TestCase):
         self.request = self.stack.enter_context(patch.object(app, "ha_request", return_value={}))
 
     def test_room_mute_restore_persists_without_playback_commands(self):
+        app.save_speaker_levels({"media_player.wohnzimmer": 0.45})
         app.perform("room_audio", {"entity_id": "media_player.wohnzimmer", "on": False})
         self.assertEqual(app.remembered()["media_player.wohnzimmer"], 0.45)
+        app.ROOM_REMEMBERED.clear()
         app.ROOM_TARGETS.clear()  # Simulate a restart with the observed mute.
         self.devices["players"][0]["volume"] = 0
         result = app.perform("room_audio", {"entity_id": "media_player.wohnzimmer", "on": True})
@@ -2245,35 +2257,37 @@ class RoomAndGroupControlTests(unittest.TestCase):
         self.assertEqual([call.args[1]["volume_level"] for call in self.request.call_args_list], [0, 0.45])
         self.assertTrue(all(call.args[0].endswith("volume_set") for call in self.request.call_args_list))
 
-    def test_room_switch_uses_observed_volume_and_repeated_off_stays_muted(self):
+    def test_room_switch_uses_saved_volume_and_repeated_off_stays_muted(self):
         app.ROOM_TARGETS["media_player.wohnzimmer"] = 0.25
         app.perform("room_audio", {"entity_id": "media_player.wohnzimmer", "on": True})
         self.request.assert_not_called()
         app.perform("room_audio", {"entity_id": "media_player.wohnzimmer", "on": False})
         app.perform("room_audio", {"entity_id": "media_player.wohnzimmer", "on": False})
         self.assertEqual(self.request.call_count, 2)
-        self.assertEqual(app.remembered()["media_player.wohnzimmer"], 0.45)
+        self.assertEqual(app.remembered()["media_player.wohnzimmer"], 0.25)
         self.assertTrue(all(c.args[1]["volume_level"] == 0 for c in self.request.call_args_list))
 
-    def test_external_volume_changes_override_saved_room_mute(self):
+    def test_external_volume_changes_never_override_saved_room_mute(self):
         app.save_speaker_levels({"media_player.wohnzimmer":0})
         app.ROOM_TARGETS["media_player.wohnzimmer"] = 0
         app.perform("room_audio", {"entity_id":"media_player.wohnzimmer", "on":False})
         self.request.assert_called_once_with("/services/media_player/volume_set", {
             "entity_id":"media_player.wohnzimmer", "volume_level":0})
-        self.assertEqual(app.remembered()["media_player.wohnzimmer"], .45)
+        self.assertNotIn("media_player.wohnzimmer", app.remembered())
+        self.assertEqual(app.displayed_speaker_levels()["media_player.wohnzimmer"], 0)
 
-    def test_external_mute_can_be_restored_despite_saved_positive_target(self):
+    def test_external_mute_never_changes_saved_positive_target(self):
         self.devices["players"][0]["volume"] = 0
         app.save_speaker_levels({"media_player.wohnzimmer":.65})
         app.save_remembered("media_player.wohnzimmer", .65)
         app.ROOM_TARGETS["media_player.wohnzimmer"] = .65
         app.perform("room_audio", {"entity_id":"media_player.wohnzimmer", "on":True})
-        self.request.assert_called_once_with("/services/media_player/volume_set", {
-            "entity_id":"media_player.wohnzimmer", "volume_level":.65})
+        self.request.assert_not_called()
+        self.assertEqual(app.displayed_speaker_levels()["media_player.wohnzimmer"], .65)
 
     def test_unknown_volume_off_is_not_guessed_and_does_not_erase_restore(self):
         self.devices["players"][0]["volume"] = None
+        app.save_speaker_levels({"media_player.wohnzimmer": .65})
         app.save_remembered("media_player.wohnzimmer", .65)
         app.perform("room_audio", {"entity_id":"media_player.wohnzimmer", "on":False})
         self.assertEqual(self.request.call_args.args[1]["volume_level"], 0)

@@ -38,7 +38,7 @@ class PlaylistSyncTests(unittest.TestCase):
                       {"name": "Album", "search": "Album", "kind": "Album", "album_id": 123},
                       {"name": "Other", "search": "Other", "kind": "Playlist"}]
         app.LIBRARY_FILE.write_text(json.dumps(app.normalize_library(self.items)))
-        self.tracks = [{"name": "Grüße 🎵", "artist": "Björk", "album":"Debut", "album_artist":"Björk"}, {"name": "Again", "artist": "Band"}, {"name": "Again", "artist": "Band"}]
+        self.tracks = [{"name": "Grüße 🎵", "artist": "Björk", "album":"Debut", "album_artist":"Björk", "duration": 243.5}, {"name": "Again", "artist": "Band"}, {"name": "Again", "artist": "Band"}]
         class QuietHandler(app.Handler):
             def log_message(self, *args):
                 pass

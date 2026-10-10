@@ -17,6 +17,8 @@ Neue Playlists werden nur angelegt, wenn die entsprechende Auswahl aktiv ist.
 Bereits gespeicherte Alexa-Befehle und Alben bleiben erhalten. Die App startet
 keine Wiedergabe. Maximal 50 Favoriten und 1000 Titel pro Playlist.
 Leere oder unvollständige Listen werden nicht übertragen.
+Die App überträgt auch die Titellängen für den Einzeltitel-Stopp in HA Music.
+Nach dem Aktualisieren der App die gewünschten Playlists einmal synchronisieren.
 
 Adresse und Auswahl bleiben gespeichert, der Schlüssel liegt im macOS-Schlüsselbund.
 Beim nächsten Öffnen wird mit gespeicherter Einrichtung automatisch synchronisiert,

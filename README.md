@@ -6,7 +6,7 @@ Home-Assistant-Add-on für Alexa-Multiroom-Radio und Apple-Music-Favoriten mit I
 
 Ein Add-on-Update oder Prozessneustart startet keine Musik und setzt keine Lautstärken. HA Music prüft automatisch die bereits in Home Assistant vorliegenden Zustände von `switch.alexa_alle` und den aktiv konfigurierten Media Playern. Meldet der Schalter „on“ und dasselbe aktive Gerät in zwei aufeinanderfolgenden Abfragen „playing“ oder „paused“, werden die gespeicherte Radio-/Apple-Ansicht und ihre Bedienelemente freigegeben. Auch ohne laufenden Titel wird die eingeschaltete Sitzung übernommen, wenn in zwei aufeinanderfolgenden Abfragen zusätzlich `input_boolean.alexa_hochgefahren` „on“ meldet und dasselbe konfigurierte Gerät verfügbar ist (`on`, `idle`, `playing` oder `paused`). Der Einschalt-Schalter allein löst niemals die Startsequenz aus. Einschalt-Anfragen während der Wiederanbindungsprüfung werden auch im Backend abgewiesen. Pausierte Musik bleibt pausiert. Es gibt keinen zusätzlichen Button.
 
-Die Wiederanbindung ruft weder Alexa-Reload noch `update_entity`, Wiedergabe-, Lautstärke-, Power- oder Ready-Helfer-Dienste auf. Raumregler verwenden dabei beobachtete Lautstärken; der virtuelle Master behält seinen gespeicherten Sollwert. Alte Sender-/Favoritenauswahl wird nicht als Beweis für die aktuelle Musik verwendet: Titel und Cover kommen aus den laufenden bzw. pausierten Geräten, bis der Nutzer selbst wieder einen Sender oder Apple-Favoriten auswählt.
+Die Wiederanbindung ruft weder Alexa-Reload noch `update_entity`, Wiedergabe-, Lautstärke-, Power- oder Ready-Helfer-Dienste auf. Master- und Raumregler verwenden dabei ausschließlich ihre gespeicherten Sollwerte. Gerätemeldungen verändern diese Einstellungen nicht. Alte Sender-/Favoritenauswahl wird nicht als Beweis für die aktuelle Musik verwendet: Titel und Cover kommen aus den laufenden bzw. pausierten Geräten, bis der Nutzer selbst wieder einen Sender oder Apple-Favoriten auswählt.
 
 Die lokale Betriebsabsicht liegt atomar unter `/data/session.json`. Nach bewusstem Ausschalten bleiben auch Neustarts ohne HA-Zustandsabfragen im Netzwerk-Standby. Beim ersten Update ohne diese Datei erfolgt automatisch eine begrenzte, ausschließlich lesende Prüfung gegen Home Assistant. Ein gemeldetes „off“ hat Vorrang vor alten Playback-Meldungen. Unklare Zustände/HA-Ausfälle werden bis zu zwölfmal mit fünf Sekunden Abstand erneut geprüft; danach bleibt die Oberfläche gesperrt und zeigt die fehlende Bestätigung an. Die Erkennung ist auf die in HA verfügbaren Zustände angewiesen und löst keine Geräteaktualisierung aus.
 
@@ -14,19 +14,19 @@ Ein ausdrücklich gewünschtes normales Einschalten verwendet die Startsequenz m
 
 ## Einstellungen sofort speichern und letzte Quelle wiederherstellen
 
-**Aktuelle Startregel:** Bei normalem Aus-/Einschalten bestimmt ausschließlich der gespeicherte Master die Lautstärke aller aktiven, nicht stumm gespeicherten Räume. Beispiel: Master 23%, alte Raumwerte 1%, 45% und 0% → Startwerte 23%, 23% und 0%. Ein Raum mit 0% bleibt stumm; ein Master mit 0% startet alle Räume stumm. Positive Einzelraumänderungen gelten nur für die laufende Sitzung. Nur die Raum-Auswahl stumm/aktiv bleibt gespeichert. Die 1%-Startprobe und der 1%-Rückfallwert sind entfernt. Bei einem reinen Add-on-Neustart mit laufender Musik gilt weiterhin die ausschließlich lesende Wiederanbindung ohne Lautstärkeänderung.
+**Aktuelle Startregel:** Jeder Raum behält seinen eigenen dauerhaft gespeicherten Prozentwert. Beispiel: Master 23%, Raumwerte 10%, 45% und 0% → Startwerte 10%, 45% und 0%. Ein Raum mit 0% bleibt stumm; ein Master mit 0% startet alle Räume stumm und erhält ihre vorherige Aktiv-/Stummabsicht. Einzelraumänderungen verschieben weder andere Räume noch den Master. Nur eine ausdrückliche Masteränderung setzt die aktiven Räume gemeinsam. Ein reiner Add-on-Neustart bindet laufende Musik ausschließlich lesend wieder an, ohne Lautstärkebefehle. Fehlende eigene Werte verwenden den gespeicherten Master, anfangs 30%; sie werden niemals aus Gerätemeldungen übernommen.
 
 Sicherung vor dieser Startregel: [backup/main-2026-10-09-before-master-start-af97242](https://github.com/criticallimit/HA-Music/tree/backup/main-2026-10-09-before-master-start-af97242), Commit `af9724248a98930f9a945534f2f68df80ab5e076`.
 
 Jeder von Home Assistant angenommene Sender- oder Apple-Favoritenbefehl speichert unmittelbar die zuletzt gewählte Wiedergabequelle unter `/data/last_source.json`. Playlist und Album werden über die ID des konfigurierten Favoriten gespeichert. Ausschalten löscht diese Auswahl nicht. Beim späteren ausdrücklichen Einschalten wird diese Quelle einmal angefordert: War zuletzt Apple Music ausgewählt, startet kein alter Radiosender. Fehlt die neue Datei beim Umstieg, wird der bisher gespeicherte Radiosender übernommen. Eine beschädigte Quelldatei, ein gelöschter Favorit oder ein fehlgeschlagener Apple-Befehl führen niemals zu einem ersatzweisen Radio-Start; Fehler bei der Wiederherstellung erscheinen in der Wiedergabeanzeige. Abgelehnte oder durch Ausschalten abgebrochene Auswahlbefehle überschreiben die letzte erfolgreich gespeicherte Quelle nicht.
 
-Master, Raum-Stummschaltungen, Ansicht, Wiedergabequelle und Ein-/Aus-Absicht werden unmittelbar gespeichert. Positive Einzelraumlautstärken und Entstumm-Werte sind nur für die laufende Sitzung vorhanden. Die Dateien werden vor dem atomaren Ersetzen auf den Datenträger geschrieben (`fsync`); unter Linux wird auch das Verzeichnis synchronisiert. Die Speicherung wartet nicht auf das Ausschalten oder Prozessende. Bei normalem Einschalten erhalten alle nicht stumm gespeicherten Räume den gespeicherten Masterwert. Ein gespeicherter Raumwert von 0 bleibt 0; alte positive Raumwerte werden nicht als Startlautstärke verwendet. Stumme Räume und ein stummer Master bleiben stumm. Die Geräte- und Favoritenkonfiguration bleibt in den Supervisor-Optionen.
+Master, sämtliche Raumlautstärken einschließlich Stumm und letzter Entstumm-Werte, Ansicht, Wiedergabequelle und Ein-/Aus-Absicht werden unmittelbar gespeichert. Die Dateien werden vor dem atomaren Ersetzen auf den Datenträger geschrieben (`fsync`); unter Linux wird auch das Verzeichnis synchronisiert. Die Speicherung wartet nicht auf Ausschalten oder Prozessende. Räume verwenden beim nächsten Einschalten ihren eigenen Wert. Die Geräte- und Favoritenkonfiguration bleibt in den Supervisor-Optionen.
 
 Ein Add-on-Neustart bindet bereits laufende oder pausierte Wiedergabe weiterhin ausschließlich lesend wieder an. Nur ein ausdrücklich gewünschtes Einschalten nach Ausschalten fordert die gespeicherte Quelle erneut an. Dies speichert die zuletzt gewählte Playlist bzw. das Album, nicht die Alexa-Warteschlange, den exakten Titel, die Abspielposition oder einen Shuffle-Modus. Von Alexa außerhalb der Oberfläche gewechselte Quellen werden nicht als konfigurierter Favorit erraten. Bei einem Verbindungsabbruch ohne Befehlsbestätigung ist nicht sicher erkennbar, ob Alexa den Befehl trotzdem ausgeführt hat; er wird nicht automatisch wiederholt. Die Dateien benötigen dauerhaft erhaltenes `/data`; die Code-Sicherung ersetzt kein Home-Assistant-Datenbackup.
 
 Bei einer aus einer älteren Version wieder angebundenen Sitzung ohne gespeicherte Quellen-ID bleibt die tatsächliche Auswahl unbekannt. Beim Ausschalten wird das gespeichert, damit beim späteren Einschalten kein alter Radiosender versehentlich startet. Ein danach in der Oberfläche gewählter Sender oder Favorit ersetzt diesen unbekannten Zustand dauerhaft.
 
-Beim normalen Einschalten werden keine vorübergehenden 1%-Befehle mehr gesendet. Der Master ist ein virtueller Regler; seine gespeicherte Zahl wird nicht zusätzlich als echter Alexa-Gruppenlautstärkebefehl gesendet. Nach dem einmaligen Medienbefehl erhalten die aktiv konfigurierten Räume den gespeicherten Masterwert, sofern der Raum nicht mit 0 gespeichert ist. Räume mit gespeichertem 0-Wert und alle Räume bei stummem Master werden bereits vor dem Medienstart auf 0 gesetzt und anschließend weiter stumm gehalten. Fehlende Raumwerte werden zuvor aus HA bzw. dem gespeicherten Master ergänzt. Die bestehende begrenzte Bestätigungsprüfung darf nur denselben gewünschten Raumwert erneut senden; spätere manuelle Änderungen und Ausschalten haben Vorrang.
+Beim normalen Einschalten werden keine vorübergehenden 1%-Befehle mehr gesendet. Der Master ist ein virtueller Regler; seine gespeicherte Zahl wird nicht zusätzlich als echter Alexa-Gruppenlautstärkebefehl gesendet. Nach dem einmaligen Medienbefehl erhalten die aktiv konfigurierten Räume ihre eigenen gespeicherten Prozentwerte. Räume mit gespeichertem 0-Wert und alle Räume bei stummem Master werden bereits vor dem Medienstart auf 0 gesetzt und anschließend weiter stumm gehalten. Fehlende Raumwerte werden zuvor aus dem gespeicherten Master ergänzt, ohne HA-Lautstärken zu übernehmen. Die bestehende begrenzte Bestätigungsprüfung darf nur denselben gewünschten Raumwert erneut senden; spätere manuelle Änderungen und Ausschalten haben Vorrang.
 
 Hintergrund: [Alexa Media Player](https://github.com/alandtse/alexa_media_player/blob/dev/custom_components/alexa_media/media_player.py) startet die eigentliche Lautstärkeanfrage als Hintergrundauftrag und übernimmt den angeforderten Wert bereits in seine Anzeige. Eine erfolgreiche HA-Anfrage und ein passender Prozentwert beweisen daher weder die Ausführungsreihenfolge noch hörbaren Ton. Im lokalen Test mit umgekehrter Ausführungsreihenfolge konnten die bisherigen 1%- und Gruppenbefehle die einzelnen Restore-Werte überschreiben; mit der vereinfachten Folge bleiben die gewünschten Raumwerte erhalten. Das belegt die Korrektur dieses Konflikts, nicht die Ursache jedes möglichen Tonausfalls auf echten Echos.
 
@@ -44,7 +44,7 @@ Titel, Künstler, Album und Cover der Apple-Auswahl werden unverändert aus eine
 
 Sicherung vor der Apple-Metadatenkorrektur: [backup/main-2026-10-09-before-apple-metadata-95e8948](https://github.com/criticallimit/HA-Music/tree/backup/main-2026-10-09-before-apple-metadata-95e8948), Commit `95e89482b2d28d570da9465c9d7956c7c65164bb`.
 
-Bei regulärem Einschalten werden nicht bestätigte Raumlautstärken anhand frischer HA-Zustände geprüft und höchstens zweimal mit exakt dem bereits angeforderten Wert erneut gesendet. Kein zusätzlicher Sender-/Playlist-Start und keine Änderung des gespeicherten Sollwerts. Ausschalten, deaktivierte Geräte und spätere manuelle Lautstärkeänderungen brechen alte Wiederholungen ab. Fehlende Bestätigungen werden im Wiedergabestatus sichtbar. Raumregler und Prozentzahl zeigen ausschließlich den aktuell gemeldeten HA-Wert, ohne gespeicherten Sollwert oder zusätzliche „HA:“-Zahl. Fehlt der HA-Wert, erscheint „–“. Der virtuelle Master behält seine unabhängige Einstellung. „Alexa meldet Wiedergabe“ ist kein Nachweis hörbaren Tons. Die ausschließlich lesende Wiederanbindung nach Add-on-Neustart sendet auch weiterhin keine Lautstärkebefehle.
+Bei regulärem Einschalten werden nicht bestätigte Raumlautstärken anhand frischer HA-Zustände geprüft und höchstens zweimal mit exakt dem bereits angeforderten Wert erneut gesendet. Kein zusätzlicher Sender-/Playlist-Start und keine Änderung des gespeicherten Sollwerts. Ausschalten, deaktivierte Geräte und spätere manuelle Lautstärkeänderungen brechen alte Wiederholungen ab. Fehlende Bestätigungen werden im Wiedergabestatus sichtbar. Raumregler und Prozentzahl zeigen ausschließlich den eigenen gespeicherten Sollwert. Gerätemeldungen dienen der begrenzten Startprüfung, ändern aber niemals die Reglerwerte. Der virtuelle Master behält seine unabhängige Einstellung. „Alexa meldet Wiedergabe“ ist kein Nachweis hörbaren Tons. Die ausschließlich lesende Wiederanbindung nach Add-on-Neustart sendet auch weiterhin keine Lautstärkebefehle.
 
 Sicherung vor der vereinfachten Raumlautstärke-Anzeige: [backup/main-2026-10-09-before-single-volume-4030c64](https://github.com/criticallimit/HA-Music/tree/backup/main-2026-10-09-before-single-volume-4030c64), Commit `4030c647d266327ec87a5d1ca87d30e769d976f6`.
 
@@ -240,9 +240,9 @@ Radio und Apple Music stehen als getrennte Buttons mit etwas Abstand. Der aktive
 
 Sicherung davor: [backup/main-2026-10-09-before-compact-header-8d07aa1](https://github.com/criticallimit/HA-Music/tree/backup/main-2026-10-09-before-compact-header-8d07aa1), Commit `8d07aa1f4162b10726f00ed4a016bfc3f9c2faf3`.
 
-### Master nach angelaufener Wiedergabe anwenden
+### Gespeicherte Raumwerte nach angelaufener Wiedergabe anwenden
 
-Beim normalen Einschalten reicht ein gemeldeter Lautstärkewert nicht mehr als Abschluss der Wiederherstellung: Alexa Media Player kann ihn bereits vor der Geräteausführung setzen. Zusätzlich zum ersten Restore erhält jeder aktive Raum seinen gleichen Start-Master einmal erneut, nachdem er dreimal im Abstand von zwei Sekunden `playing` gemeldet hat. Anschließend gilt die begrenzte Lautstärkeprüfung. Es werden höchstens 15 Abfragen zur Einschwingphase durchgeführt; Räume ohne stabile Wiedergabemeldung erhalten keinen zusätzlichen positiven Befehl. Stumme Räume/Master bei 0, deaktivierte Räume, Ausschalten und neuere manuelle Lautstärken bleiben geschützt. Ein späteres Pausieren verhindert weitere positive Retry-Befehle. Sender oder Playlist werden hierbei nicht neu gestartet. Die ausschließlich lesende Wiederanbindung nach Add-on-Neustart/Update startet diese Funktion nicht.
+Beim normalen Einschalten reicht ein gemeldeter Lautstärkewert nicht mehr als Abschluss der Wiederherstellung: Alexa Media Player kann ihn bereits vor der Geräteausführung setzen. Zusätzlich zum ersten Restore erhält jeder aktive Raum seinen gleichen gespeicherten Raumwert einmal erneut, nachdem er dreimal im Abstand von zwei Sekunden `playing` gemeldet hat. Anschließend gilt die begrenzte Lautstärkeprüfung. Es werden höchstens 15 Abfragen zur Einschwingphase durchgeführt; Räume ohne stabile Wiedergabemeldung erhalten keinen zusätzlichen positiven Befehl. Stumme Räume/Master bei 0, deaktivierte Räume, Ausschalten und neuere manuelle Lautstärken bleiben geschützt. Ein späteres Pausieren verhindert weitere positive Retry-Befehle. Sender oder Playlist werden hierbei nicht neu gestartet. Die ausschließlich lesende Wiederanbindung nach Add-on-Neustart/Update startet diese Funktion nicht.
 
 Im Protokoll bestätigt `Startup master reapplied after playback` den zusätzlichen Befehl; die Annahme und HA-Werte sind weiterhin kein Nachweis hörbarer Geräteausgabe.
 
@@ -334,10 +334,9 @@ und keine Add-on-Versionsänderung. Sicherung davor:
 Master- und Raumregler zeigen Eingaben sofort an. Während des Ziehens werden die
 Regler nicht durch Statusabfragen ersetzt. Raum-Stummschalter reagieren sofort und
 senden den konkret angezeigten Zielwert; beim Einschalten wird der zuletzt gewählte
-positive Wert wiederhergestellt. Verzögerte Alexa-Werte überschreiben diese Anzeige
-bis zur Bestätigung nicht (höchstens 60 Sekunden nach der Befehlsantwort, mit einer
-dreisekündigen Einschwingfrist). Danach gelten wieder gemeldete Werte und externe
-Änderungen. Fehlgeschlagene Befehle werden angezeigt und die Vorschau zurückgenommen.
+positive Wert wiederhergestellt. Verzögerte Alexa-Werte und externe Lautstärkeänderungen überschreiben diese Anzeige
+nicht. Nach der kurzen Vorschaufrist verwenden Regler und Stummsymbole weiterhin
+die dauerhaft gespeicherten eigenen Werte pro Raum. Fehlgeschlagene Befehle werden angezeigt und die Vorschau zurückgenommen.
 Radio und Apple Music verwenden dieselben Regler; Standby und Wiedergabe bleiben
 unverändert. Die Browserprüfungen simulieren verzögerte Rückmeldungen; tatsächliche
 Geräteausführung muss im Heimnetz geprüft werden.
@@ -424,3 +423,39 @@ des Quellstands `9c5b3faabcd51388a004ff796a7a3a28d6850cdf` (Intel und Apple Sili
 native Bildverkleinerung, AppleScript-Kompilierung, Transport und Oberfläche geprüft).
 Sicherung vor dem ZIP-Austausch:
 [backup/main-2026-10-10-local-cover-zip-9c5b3fa](https://github.com/criticallimit/HA-Music/tree/backup/main-2026-10-10-local-cover-zip-9c5b3fa), Commit `9c5b3faabcd51388a004ff796a7a3a28d6850cdf`.
+
+
+## Gespeicherte Raumwerte und Ende einzelner Titel
+
+Die Lautstärkeanzeige bleibt auch nach Neustart und Wiederanbindung bei den eigenen
+gespeicherten Werten. Geteilte oder verzögerte Alexa-Gruppenmeldungen verschieben
+weder einen anderen Raum noch den Master. Stummschalten speichert zusätzlich den
+letzten positiven Wert für späteres Entstummen. Die alte Speicherung hatte bei
+manuellen positiven Raumänderungen nur eine Aktiv-Markierung `1.0` gespeichert;
+der tatsächliche frühere Prozentwert lässt sich daraus nicht rekonstruieren.
+Diese alte Markierung wird einmal zum damaligen Masterwert migriert. Bitte nach
+dem Update die gewünschten Raumwerte einmal einstellen. Neue 100%-Einstellungen
+sind durch das Dateiformat `_version: 2` eindeutig und bleiben echte 100%.
+
+Der Play-Button eines einzelnen Playlist- oder Albumtitels startet eine begrenzte
+Endüberwachung. Nach Bestätigung von Titel und Interpret wird anhand gemeldeter
+Titellänge, Position und Zeitstempel pausiert. Fehlt eine gemeldete Länge, wird die
+vom Mac oder Albumkatalog übermittelte Titellänge verwendet. Die aktuelle Mac-App
+überträgt diese Information; bestehende Playlists dazu einmal neu synchronisieren.
+Pause und Fortsetzen halten die verbleibende Zeit an; Positionsänderungen passen
+sie an. Ohne Länge wird spätestens beim gemeldeten Folgetitel pausiert. Ein nicht
+innerhalb von 60 Sekunden bestätigter Titel wird vorsorglich pausiert. Neue
+Playlist-, Album-, Radio- oder Vor-/Zurück-Befehle und Standby beenden den alten
+Wächter, damit dieser keine spätere Auswahl pausiert. Ein Einzeltitel speichert
+keine ganze Playlist als Wiederanlaufquelle. Die untere Bibliotheks-Textzeile ist
+ausgeblendet; die separate barrierefreie Sortier-Rückmeldung bleibt erhalten.
+
+Alexa stellt keinen verlässlich bestätigten Ein-Titel-Warteschlangenmodus bereit.
+Bei verspäteten Metadaten oder Befehlsausführung kann ein Folgetitel kurz hörbar
+werden. Netzwerkfehler werden angezeigt; ein Add-on-Neustart beendet den laufenden
+Wächter. Vollständige Playlist-/Albumwiedergabe und Radio erhalten keinen Endtimer.
+Diese Änderungen sind automatisiert geprüft, nicht mit den Echos im Heimnetz.
+
+Sicherung davor:
+[backup/main-2026-10-10-persistent-volume-single-track-30b0300](https://github.com/criticallimit/HA-Music/tree/backup/main-2026-10-10-persistent-volume-single-track-30b0300),
+Commit `30b030029ae5950c6ff19fe5cfd4d015b7a73306`.

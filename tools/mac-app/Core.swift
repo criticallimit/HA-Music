@@ -20,16 +20,18 @@ struct MusicTrack: Codable {
     let album: String?
     let albumArtist: String?
     let musicID: String?
+    let duration: Double?
     var cover: String? = nil
     var localCovers: Bool? = nil
     var artworkData: Data? = nil
     enum CodingKeys: String, CodingKey {
-        case name, artist, album, cover
+        case name, artist, album, cover, duration
         case albumArtist = "album_artist", musicID = "music_id", localCovers = "local_covers"
     }
-    init(name: String, artist: String, album: String? = nil, albumArtist: String? = nil, musicID: String? = nil) {
+    init(name: String, artist: String, album: String? = nil, albumArtist: String? = nil, musicID: String? = nil, duration: Double? = nil) {
         self.name = name; self.artist = artist; self.album = album; self.albumArtist = albumArtist
         self.musicID = musicID
+        self.duration = duration
     }
 }
 
@@ -100,7 +102,7 @@ enum SyncCore {
                   } && [track.album, track.albumArtist].allSatisfy { text in
                       guard let text = text else { return true }
                       return text.count <= 200 && !text.unicodeScalars.contains(where: { $0.value < 32 })
-                  }
+                  } && (track.duration.map { $0.isFinite && $0 > 0 && $0 <= 86400 } ?? true)
               }) else { throw SyncFailure(message: "Playlistname oder Titelinformationen sind unvollständig. Höchstens 1000 Titel pro Playlist sind erlaubt.") }
         guard !tracks.isEmpty else {
             throw SyncFailure(message: "Die Playlist ist leer. Sie wird vorsorglich nicht übertragen. Bitte die Mediathek-Synchronisierung in Musik prüfen.")
@@ -160,7 +162,7 @@ enum SyncCore {
         const tracks = matches[0].tracks();
         if (tracks.length > 1000) throw new Error('Too many tracks');
         function optional(read) { try { return read() || ''; } catch (_) { return ''; } }
-        JSON.stringify(tracks.map(t => ({name: t.name(), artist: t.artist(), album: optional(() => t.album()), album_artist: optional(() => t.albumArtist()), music_id: optional(() => t.persistentID())})));
+        JSON.stringify(tracks.map(t => { const duration = optional(() => t.duration()); return {name: t.name(), artist: t.artist(), album: optional(() => t.album()), album_artist: optional(() => t.albumArtist()), music_id: optional(() => t.persistentID()), duration: Number.isFinite(duration) && duration > 0 && duration <= 86400 ? duration : null}; }));
         """
         return try JSONDecoder().decode([MusicTrack].self, from: runMusic(script))
     }

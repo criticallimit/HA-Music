@@ -46,7 +46,7 @@ def music_tracks(name):
     const tracks = matches[0].tracks();
     if (tracks.length > 1000) throw new Error('Mehr als 1000 Titel');
     function optional(read) { try { return read() || ''; } catch (_) { return ''; } }
-    JSON.stringify(tracks.map(t => ({name: t.name(), artist: t.artist(), album: optional(() => t.album()), album_artist: optional(() => t.albumArtist())})));
+    JSON.stringify(tracks.map(t => { const duration = optional(() => t.duration()); return {name: t.name(), artist: t.artist(), album: optional(() => t.album()), album_artist: optional(() => t.albumArtist()), duration: Number.isFinite(duration) && duration > 0 && duration <= 86400 ? duration : null}; }));
     '''.replace("NAME", json.dumps(name))
     result = subprocess.run(["/usr/bin/osascript", "-l", "JavaScript", "-"],
                             input=script, text=True, encoding="utf-8", capture_output=True,
@@ -59,6 +59,8 @@ def music_tracks(name):
     if any(any(not isinstance(t.get(k, ""), str) or len(t.get(k, "")) > 200 or
                    any(ord(c) < 32 for c in t.get(k, "")) for k in ("album", "album_artist")) for t in tracks):
         raise ValueError("Playlist enthält ungültige Albuminformationen")
+    if any(t.get("duration") is not None and (type(t["duration"]) not in (int, float) or not 0 < t["duration"] <= 86400) for t in tracks):
+        raise ValueError("Playlist enthält ungültige Titellängen")
     return tracks
 
 

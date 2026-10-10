@@ -1222,7 +1222,7 @@ function masterView(groups, saved) {
   const group = groups.find(p => p.entity_id === "media_player.wohnung");
   if (!group) return null;
   // The master setting is independent; individual room changes must not move it.
-  const volume = saved?.["media_player.wohnung"] ?? group.volume ?? 0;
+  const volume = saved?.["media_player.wohnung"] ?? 0.3;
   return {...group, volume:requestedRoomLevel({...group, volume})};
 }
 function previewVolume(entity, level, revision, masterPreview = false) {
@@ -1390,7 +1390,7 @@ async function refreshPlayers() {
   try {
     const {players,groups,remembered,saved_levels,master_room_levels} = await api("players");
     if (generation !== uiGeneration || revision !== volumeRevision || !radioReadyForViews || volumeRequests || volumeEditing.size) return;
-    masterRoomLevels = master_room_levels || Object.fromEntries(players.map(p=>[p.entity_id,saved_levels?.[p.entity_id] ?? p.volume]));
+    masterRoomLevels = master_room_levels || Object.fromEntries(players.map(p=>[p.entity_id,saved_levels?.[p.entity_id] ?? 0.3]));
     for (const [entity, request] of requestedRoomVolumes) {
       if (!request.masterPreview && entity !== "media_player.wohnung" &&
           request.generation === uiGeneration && Date.now() < request.expires) {
@@ -1406,7 +1406,7 @@ async function refreshPlayers() {
     $("groups").textContent = groups.length ? "Gruppe: " + groups.map(p => p.name).join(", ") + " · Alexa-Multiroom" : "Master-Gruppe Wohnung ist nicht aktiviert oder nicht verfügbar.";
     const wrap = $("players"); wrap.replaceChildren();
     if (!players.length) wrap.textContent = "Keine Raumgeräte aktiviert. Bitte Geräte in der Add-on-Konfiguration auswählen.";
-    for (const p of players) wrap.appendChild(volumeRow(p, remembered, false));
+    for (const p of players) wrap.appendChild(volumeRow({...p,volume:saved_levels?.[p.entity_id] ?? 0.3}, remembered, false));
   } catch (e) {
     if (generation === uiGeneration && revision === volumeRevision) {
       $("players").textContent = "Lautsprecher derzeit nicht verfügbar.";
