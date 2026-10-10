@@ -21,6 +21,8 @@ map:
     read_only: false
 options:
   show_dashboard_setup: false
+  music_assistant_url: ""
+  music_assistant_token: ""
   devices:
     - entity_id: media_player.wohnung
       name: Wohnung
@@ -36,6 +38,8 @@ options:
       status: Aktiv
 schema:
   show_dashboard_setup: bool
+  music_assistant_url: "str?"
+  music_assistant_token: "password?"
   apple_music_target: "match(^media_player\\.[a-z0-9_]+$)?"
   apple_music_group: "str?"
   devices:
