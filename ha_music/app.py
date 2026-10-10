@@ -732,6 +732,22 @@ def check_ipad_cover_presence(body):
     return {"ok": True, "missing": missing, "checked": len(set(hashes))}
 
 
+def ipad_playlist_cover_status(body):
+    """Check only local hash-addressed covers, without downloading or mutating files."""
+    hashes = body.get("covers")
+    if not isinstance(hashes, list) or len(hashes) > 1000 or any(
+        not isinstance(value, str) or not re.fullmatch(r"[a-f0-9]{64}", value) for value in hashes
+    ):
+        raise ValueError("Ungültige Cover-Hashliste")
+    missing = []
+    for digest in dict.fromkeys(hashes):
+        try:
+            local_playlist_image(digest)
+        except (OSError, ValueError):
+            missing.append(digest)
+    return {"ok": True, "missing": missing, "already_present": len(set(hashes)) - len(missing)}
+
+
 def sync_playlist_artwork(body):
     """Authenticated local upload; content addressed, deduplicated, no network or HA."""
     identity, encoded = body.get("cover"), body.get("data")
@@ -2746,7 +2762,7 @@ class Handler(BaseHTTPRequestHandler):
                 body = json.loads(self.read_request_body(4 * 1024 * 1024 + 4096 if artwork else (32 * 1024 * 1024 if self.path == "/api/ipad-playlists-sync" else 2097152)))
                 if not isinstance(body, dict):
                     raise ValueError("Invalid body")
-                return self.reply(200, check_ipad_cover_presence(body) if self.path == "/api/playlist-artwork-check" else (sync_playlist_artwork(body) if artwork else (sync_all_ipad_playlists(body) if self.path == "/api/ipad-playlists-sync" else sync_playlist(body))))
+                return self.reply(200, check_ipad_cover_presence(body) if self.path == "/api/playlist-artwork-check" else (sync_playlist_artwork(body) if artwork else (sync_all_ipad_playlists(body) if self.path == "/api/ipad-playlists-sync" else (ipad_playlist_cover_status(body) if self.path == "/api/playlist-cover-status" else sync_playlist(body)))))
             except (ValueError, TypeError) as exc:
                 return self.reply(400, {"error": str(exc)})
             except OSError:
