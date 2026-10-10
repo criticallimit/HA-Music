@@ -59,7 +59,7 @@ function harness() {
   const window = {location:{origin:'http://localhost',search:''}, addEventListener(){}};
   window.parent = window;
   const context = vm.createContext({window, document:{getElementById:get,querySelector:get,
-    createElement:element, hidden:false}, URLSearchParams, URL, AbortSignal, console,
+    createElement:element, hidden:false}, URLSearchParams, URL, AbortSignal, TextDecoder, console,
     setTimeout(callback, delay){timers.push({callback,delay});}, setInterval(){}, fetch:()=>new Promise(()=>{})});
   vm.runInContext(fs.readFileSync(path.join(__dirname,'../ha_music/web/app.js'),'utf8'),context);
   return {context, get, timers, run: code => vm.runInContext(code,context)};
@@ -119,6 +119,83 @@ test('closed album dialog ignores late metadata and standby prevents opening', a
   h.run('strictStandby=true');
   await h.run('openAlbumTracks("a")');
   assert.equal(h.get('album-tracks-dialog').open,false);
+});
+
+test('playlist tile opens title selection with artist and preserves playback payload', async () => {
+  const h=harness(), calls=[];
+  h.context.reply=async(action,body)=>{calls.push({action,body});return {artist:'Importierte Playlist',tracks:[{id:91,number:1,name:'Song',artist:'Singer'}]};};
+  h.run('api=reply; radioReadyForViews=true; loadRadioState=async()=>{};updateSong=()=>{};renderAppleSelection({available:true,items:[{id:"p",kind:"Playlist",name:"My list"}]})');
+  await h.get('apple-playlist-list').children[0].listeners.click();
+  assert.equal(calls.length,1);
+  assert.equal(calls[0].action,'playlist-tracks');
+  assert.match(h.get('album-play-all').textContent,/Ganze Playlist/);
+  const row=h.get('album-tracks-list').children[0];
+  assert.equal(row.children[1].children[0].textContent,'Singer');
+  assert.equal(h.get('playlist-import-open').hidden,false);
+  await row.listeners.click();
+  assert.equal(calls[1].action,'apple_playlist_track');
+  assert.equal(calls[1].body.favorite,'p');
+  assert.equal(calls[1].body.track_id,91);
+});
+
+test('playlist without export keeps whole-playlist playback and offers import', async () => {
+  const h=harness();let started;
+  h.context.reply=async()=>{throw Error('Bitte eine Titelliste importieren');};
+  h.context.start=async id=>{started=id;};
+  h.run('api=reply;startAppleFavorite=start;radioReadyForViews=true;renderAppleSelection({available:true,items:[{id:"p",kind:"Playlist",name:"My list"}]})');
+  await h.run('openAlbumTracks("p")');
+  assert.match(h.get('album-tracks-feedback').textContent,/importieren/);
+  assert.equal(h.get('album-play-all').disabled,false);
+  await h.get('album-play-all').listeners.click();
+  assert.equal(started,'p');
+});
+
+test('playlist imports Unicode text into an editable draft and preserves it on failure', async () => {
+  const h=harness(), calls=[];
+  const imported=[{id:17,number:1,name:'Jóga',artist:'Björk'}];
+  h.context.reply=async(action,body)=>{
+    calls.push({action,body});
+    if(action==='playlist-import')return {tracks:imported};
+    if(body)return {selection:{items:[],available:false}};
+    return {revision:'r',items:[{kind:'Playlist',name:'My list',command:'spiel playlist My list',tracks:[{name:'Old',artist:'Singer'}]}]};
+  };
+  h.run('api=reply');await h.run('openLibraryEditor("Playlist")');
+  const row=h.run('libraryEditorRows[0]');
+  const text='\ufeffName\tArtist\nJóga\tBjörk\n';
+  const buffer=Buffer.from(text,'utf16le');
+  row.importFile.files=[{size:buffer.length,arrayBuffer:async()=>buffer.buffer.slice(buffer.byteOffset,buffer.byteOffset+buffer.length)}];
+  await row.importFile.listeners.change();
+  assert.equal(calls[1].action,'playlist-import');
+  assert.match(calls[1].body.content,/Jóga\tBjörk/);
+  assert.equal(row.tracks,imported);
+  assert.equal(h.get('library-editor').open,true);
+  h.context.reply=async()=>{throw Error('Bad file');};
+  h.run('api=reply');
+  await row.importFile.listeners.change();
+  assert.equal(row.tracks,imported);
+  assert.match(row.importStatus.textContent,/bisherige Titelliste bleibt/);
+  h.context.reply=async(action,body)=>{calls.push({action,body});return {selection:{items:[],available:false}};};
+  h.run('api=reply');
+  await h.run('submitLibraryEditor({preventDefault(){}})');
+  assert.equal(calls.at(-1).body.items[0].tracks,imported);
+  assert.equal(calls.at(-1).body.items[0].command,'spiel playlist My list');
+});
+
+test('track selections coalesce and a late failure cannot overwrite another dialog', async () => {
+  const h=albumHarness();let reject,count=0;
+  h.context.reply=async(action)=>{
+    if(action==='album-tracks')return {tracks:[{id:1,number:1,name:'One'},{id:2,number:2,name:'Two'}]};
+    count++;return new Promise((resolve,r)=>{reject=r;});
+  };
+  h.run('api=reply');await h.run('openAlbumTracks("a")');
+  const first=h.get('album-tracks-list').children[0].listeners.click();
+  await h.get('album-tracks-list').children[1].listeners.click();
+  assert.equal(count,1);
+  assert.equal(h.get('album-play-all').disabled,true);
+  h.run('closeAlbumTracks()');await h.run('openAlbumTracks("a")');
+  reject(Error('Old request'));await first;
+  assert.equal(h.get('album-tracks-feedback').textContent,'');
+  assert.equal(h.get('album-play-all').disabled,false);
 });
 
 test('countdown expiry remains starting, never claims ready', () => {
@@ -678,8 +755,11 @@ test('Apple playback sends configured favorite id and suppresses old radio logo 
   };
   h.run('radioReadyForViews=true; selectedStation="wdr2"; api=reply; refreshPlayers=async()=>{}; updateSong=async()=>{}; renderAppleSelection({available:true,items:[{id:"one",name:"Abendmusik",kind:"Playlist"}]})');
   await h.get('apple-playlist-list').children[0].listeners.click();
-  assert.equal(calls[0].action,'apple_music');
-  assert.equal(calls[0].body.favorite,'one');
+  assert.equal(calls[0].action,'playlist-tracks');
+  assert.equal(h.get('album-tracks-dialog').open,true);
+  await h.get('album-play-all').listeners.click();
+  assert.equal(calls[1].action,'apple_music');
+  assert.equal(calls[1].body.favorite,'one');
   assert.equal(h.run('activeApple.id'),'one');
   assert.equal(h.run('selectedStation'),'');
   assert.equal(h.get('current-title').textContent,'Abendmusik');

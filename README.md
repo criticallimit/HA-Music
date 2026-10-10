@@ -177,7 +177,17 @@ Alte Gerätewerte `enabled: true/false` bleiben beim Umstieg gültig. Beim näch
 Die Konfiguration lässt sich bei ausgeschaltetem Radio bearbeiten. Zur Übernahme älterer Werte muss nur das Add-on gestartet werden, nicht das Radio. Die Optionsmigration liest/speichert ausschließlich die eigenen Supervisor-Optionen; die separate Wiederanbindung liest gegebenenfalls HA-Zustände wie oben beschrieben. Alexa und der Radioschalter erhalten dabei keine Befehle. Nach Änderungen speichern und das Add-on neu starten.
 
 
-### Quadratische Apple-Music-Kacheln
+### Titelauswahl für importierte Playlists
+
+Playlistkacheln öffnen wie Albumkacheln eine nummerierte Titelliste. „Ganze Playlist abspielen“ sendet weiterhin den gespeicherten Alexa-Text. Einzelne Titel werden über denselben Apple-Music-Wiedergabeweg wie Albumtitel als Titel und Interpret an Alexa gesendet. Importiert wird nur die Titelliste; Audiodateien und Apple-Anmeldedaten werden nicht benötigt. Alexa muss den gewählten Song auf Apple Music finden können; reine lokale Dateien sind dadurch nicht als Audio verfügbar.
+
+Unter **Apple Music → Plus neben Playlists → Titelliste importieren** beim gewünschten Eintrag eine Datei auswählen und anschließend **Übernehmen** drücken. Unterstützt werden der XML-Export einer einzelnen Apple-Music-/iTunes-Playlist sowie tabulatorgetrennter Text und CSV mit den Spalten `Name`/`Artist` oder `Titel`/`Interpret`. CSV darf Komma oder Semikolon verwenden; Unicode-Text in UTF-8 oder UTF-16 wird unterstützt. Maximal 1 MB und 1000 Titel je Export. Reihenfolge und doppelte Titel bleiben erhalten. Fehlgeschlagene Importe und Abbrechen ändern die gespeicherte Titelliste nicht. Import und Speichern sind auch im Standby rein lokal möglich.
+
+Auf dem Mac: Playlist auswählen, **Ablage → Mediathek → Playlist exportieren**, Format XML oder Text wählen ([Apple-Anleitung](https://support.apple.com/de-de/guide/music/mus27cd5060f/mac)). Alternativ eine CSV mit Titel und Interpret importieren. Ein erneuter Import ersetzt nach Übernehmen die vorherige Titelliste; Änderungen in Apple Music werden nicht automatisch synchronisiert. Playlists ohne Import können im Dialog weiterhin vollständig abgespielt werden.
+
+Die bestehende Albumauswahl, Radio-/Standby-Steuerung und Skalierung auf die konfigurierte Kartenhöhe bleiben erhalten. Die tatsächliche Alexa-Erkennung eines importierten Songs muss auf den Geräten geprüft werden. Kein Developer-Zugang, keine MusicKit-Anmeldung, kein Release oder Versionswechsel.
+
+### Quadratische Kacheln und Albumcover
 
 Playlist- und Albumkacheln haben ein Seitenverhältnis von 1:1 ohne Innenabstand oder sichtbaren Rahmen. Der Name liegt unten innerhalb der Kachel, die aktive Auswahl bleibt markiert. Albumcover werden über die öffentliche Apple-Katalogsuche ergänzt; persönliche Playlistcover werden weiterhin nicht abgerufen. Alexa liefert das Bild der laufenden Wiedergabe; dieses ist keine verlässliche Identifikation eines Playlistcovers. Vorababruf persönlicher Playlists benötigt Apple Music API/MusicKit mit Developer- und Music-User-Token; öffentliche Albumcover können über die iTunes-Suche ermittelt werden, müssen bei mehrdeutigen Treffern bestätigt werden. Alternativ ist eine eigene Coverdatei pro Favorit möglich.
 

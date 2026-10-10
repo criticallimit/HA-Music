@@ -211,6 +211,10 @@ html.ha-dashboard-card .station.active,html.ha-dashboard-card nav button.active{
 .library-editor-row label{margin:0;font-size:12px}
 .library-editor-row input{display:block;box-sizing:border-box;width:100%;min-width:0;margin-top:6px;padding:9px;border:1px solid var(--border);border-radius:7px;background:var(--bg);color:var(--text);font:inherit}
 .library-editor-row button{font-size:12px}
+.library-editor-row .playlist-import{grid-column:1/-1;margin:0;font-weight:400}
+.playlist-import-status{display:block;margin-top:8px;font-size:12px;line-height:1.4;color:var(--muted);overflow-wrap:anywhere}
+.playlist-track-artist{display:block;margin-top:3px;font-size:12px;color:var(--muted)}
+.album-tracks-dialog #playlist-import-open{flex-shrink:0;align-self:flex-start;background:transparent;color:var(--muted);border-color:var(--border);font-size:12px}
 .library-editor-actions{display:flex;flex-wrap:wrap;gap:8px;justify-content:flex-end;margin-top:18px}
 #library-editor-save{background:var(--accent);color:var(--text)}
 #library-editor-feedback{min-height:20px}

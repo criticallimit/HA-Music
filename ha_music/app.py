@@ -5,6 +5,10 @@ from urllib.parse import unquote, urlsplit, urlencode
 from urllib.request import Request, urlopen
 from http.client import HTTPException
 import json
+import csv
+import io
+import plistlib
+from xml.parsers.expat import ExpatError
 import hashlib
 from copy import deepcopy
 import os
@@ -223,6 +227,72 @@ def synchronize_device_configuration(generation, *, migrate_only=False, bootstra
         if migrate_only:
             print("[HA Music] Configuration migration completed", flush=True)
         print(f"[HA Music] Device configuration: {len(merged.get('devices', []))} entries", flush=True)
+def normalize_playlist_tracks(tracks):
+    if not isinstance(tracks, list) or len(tracks) > 1000:
+        raise ValueError("Bitte höchstens 1000 Titel pro Playlist importieren")
+    result = []
+    for number, track in enumerate(tracks, 1):
+        if not isinstance(track, dict) or not all(isinstance(track.get(key), str) and 0 < len(track[key].strip()) <= 200
+                and not any(ord(c) < 32 for c in track[key]) for key in ("name", "artist")):
+            raise ValueError(f"Titel {number}: Titel und Interpret müssen 1 bis 200 Zeichen enthalten")
+        name, artist = track["name"].strip(), track["artist"].strip()
+        identity = int(hashlib.sha256(json.dumps([number, name, artist]).encode()).hexdigest()[:12], 16) + 1
+        result.append({"id":identity, "number":number, "name":name, "artist":artist})
+    return result
+
+
+def import_playlist(body):
+    """Parse an individual Apple Music export locally; never contact Apple or HA."""
+    content = body.get("content")
+    if not isinstance(content, str) or len(content.encode("utf-8")) > 1048576:
+        raise ValueError("Bitte eine Playlistdatei bis 1 MB importieren")
+    content = content.lstrip("\ufeff")
+    if not content.strip():
+        raise ValueError("Die Playlistdatei ist leer")
+    if content.lstrip().startswith("<"):
+        # plistlib permits Apple's standard DOCTYPE but no entity definitions.
+        if "<!ENTITY" in content.upper():
+            raise ValueError("Ungültiger XML-Export")
+        try:
+            content = re.sub(r'(<\?xml[^>]*encoding=[\"\'])[^\"\']+', r'\1UTF-8', content, count=1)
+            data = plistlib.loads(content.encode("utf-8"))
+        except (ValueError, TypeError, plistlib.InvalidFileException, ExpatError):
+            # Expat/InvalidFile errors must not echo imported contents.
+            raise ValueError("Bitte einen gültigen Apple-Music-Playlist-XML-Export verwenden") from None
+        if not isinstance(data, dict) or not isinstance(data.get("Tracks"), dict) or not isinstance(data.get("Playlists"), list) or len(data["Playlists"]) != 1:
+            raise ValueError("Bitte eine einzelne Playlist exportieren, nicht die gesamte Mediathek")
+        playlist = data["Playlists"][0]
+        entries = playlist.get("Playlist Items", []) if isinstance(playlist, dict) else None
+        if not isinstance(entries, list) or len(entries) > 1000:
+            raise ValueError("Bitte höchstens 1000 Titel pro Playlist importieren")
+        tracks = []
+        for entry in entries:
+            track = data["Tracks"].get(str(entry.get("Track ID"))) if isinstance(entry, dict) else None
+            if not isinstance(track, dict):
+                raise ValueError("Der XML-Export enthält eine unvollständige Titelliste")
+            tracks.append({"name":track.get("Name"), "artist":track.get("Artist")})
+    else:
+        try:
+            sample = content[:8192]
+            delimiter = "\t" if "\t" in sample.splitlines()[0] else csv.Sniffer().sniff(sample, delimiters=",;").delimiter
+            rows = csv.reader(io.StringIO(content), delimiter=delimiter)
+            headers = [x.strip().casefold() for x in next(rows)]
+            title = next(i for i, x in enumerate(headers) if x in ("name", "titel", "title", "track name"))
+            artist = next(i for i, x in enumerate(headers) if x in ("artist", "interpret", "künstler", "artist name"))
+            tracks = []
+            for row in rows:
+                if not row or not any(x.strip() for x in row):
+                    continue
+                if max(title, artist) >= len(row):
+                    raise ValueError("Unvollständige Titelzeile im Export")
+                tracks.append({"name":row[title], "artist":row[artist]})
+                if len(tracks) > 1000:
+                    raise ValueError("Bitte höchstens 1000 Titel pro Playlist importieren")
+        except (csv.Error, StopIteration):
+            raise ValueError("Text-/CSV-Export benötigt Spalten für Titel (Name) und Interpret (Artist)") from None
+    return {"tracks":normalize_playlist_tracks(tracks)}
+
+
 def normalize_library(entries, *, legacy=False):
     if not isinstance(entries, list) or (not legacy and len(entries) > 50):
         raise ValueError("Bitte höchstens 50 Playlists und Alben eintragen")
@@ -251,12 +321,18 @@ def normalize_library(entries, *, legacy=False):
             if kind != "Album" or type(entry["album_id"]) is not int or not 0 < entry["album_id"] < 10**16:
                 raise ValueError("Ungültige Albumzuordnung")
             item["album_id"] = entry["album_id"]
+        if "tracks" in entry:
+            if kind != "Playlist":
+                raise ValueError("Importierte Titel sind nur für Playlists vorgesehen")
+            item["tracks"] = normalize_playlist_tracks(entry["tracks"])
         existing = next((saved for saved in result if all(saved[key] == item[key] for key in ("name", "kind", "search"))), None)
         if existing is not None:
             if existing.get("command") != item.get("command"):
                 raise ValueError("Doppelte Einträge mit verschiedenen Alexa-Texten: unterschiedliche Anzeigenamen verwenden")
             if existing.get("album_id") != item.get("album_id"):
                 raise ValueError("Doppelter Albumeintrag: für verschiedene Versionen unterschiedliche Namen verwenden")
+            if existing.get("tracks") != item.get("tracks"):
+                raise ValueError("Doppelte Playlist mit unterschiedlicher Titelliste")
         else:
             result.append(item)
     return result
@@ -1332,17 +1408,29 @@ def album_tracks(favorite_id):
             "image": image, "tracks": tracks[:200]}
 
 
-def play_apple_album_track(favorite_id, track_id, generation):
+def playlist_tracks(favorite_id):
+    favorite = next((x for x in apple_music_selection()["items"] if x["id"] == favorite_id and x["kind"] == "Playlist"), None)
+    if favorite is None:
+        raise ValueError("Playlist nicht gefunden")
+    if STANDBY.is_set() or not READY or PREPARING:
+        raise ValueError("HA Music ist ausgeschaltet")
+    tracks = favorite.get("tracks")
+    if tracks is None:
+        raise ValueError("Bitte unter Playlists verwalten eine Titelliste importieren")
+    return {"album":favorite["name"], "artist":"Importierte Playlist", "tracks":tracks}
+
+
+def play_apple_album_track(favorite_id, track_id, generation, *, playlist=False):
     global ACTIVE_APPLE, APPLE_VERIFICATION_STARTED, SOURCE_UNCONFIRMED, SOURCE_RESTORE_ERROR
     if type(track_id) is not int or not 0 < track_id < 10**16:
         raise ValueError("Ungültige Titel-ID")
     selection = apple_music_selection()
     if not selection["available"]:
         raise ValueError("Apple-Music-Steuergerät nicht bereit")
-    data = album_tracks(favorite_id)
+    data = playlist_tracks(favorite_id) if playlist else album_tracks(favorite_id)
     track = next((x for x in data["tracks"] if x["id"] == track_id), None)
     if track is None:
-        raise ValueError("Titel gehört nicht zum gespeicherten Album")
+        raise ValueError("Titel gehört nicht zur gespeicherten Playlist" if playlist else "Titel gehört nicht zum gespeicherten Album")
     check_generation(generation)
     command = "spiel " + track["name"] + " von " + track["artist"] + " auf Apple Music"
     result = play_on_target(generation, selection["target"], "APPLE_MUSIC", command)
@@ -1683,6 +1771,8 @@ def perform(action, body):
             return play_apple_music(body.get("favorite"), generation)
         if action == "apple_album_track":
             return play_apple_album_track(body.get("favorite"), body.get("track_id"), generation)
+        if action == "apple_playlist_track":
+            return play_apple_album_track(body.get("favorite"), body.get("track_id"), generation, playlist=True)
         return perform_control(action, body, generation)
 
 
@@ -1930,7 +2020,7 @@ class Handler(BaseHTTPRequestHandler):
         if name == "status" and "/api/" in path:
             return self.reply(200, {"radio": "direct_presets",
                                     "apple_music": "alexa_favorites", "backend": "connected" if TOKEN else "unavailable"})
-        if name == "album-tracks" and "/api/" in path:
+        if name in ("album-tracks", "playlist-tracks", "playlist-import") and "/api/" in path:
             return self.reply(405, {"error":"POST required"})
         if name == "apple-library" and "/api/" in path:
             try:
@@ -2009,18 +2099,22 @@ class Handler(BaseHTTPRequestHandler):
             return self.reply(403, {"error": "Ingress only"})
         path = unquote(urlsplit(self.path).path)
         action = path.rsplit("/", 1)[-1]
-        if "/api/" not in path or action not in ("volume", "room_audio", "group_transport", "track_transport", "radio_direct", "apple_music", "radio_power", "selected_view", "dashboard_card_installed", "apple-library", "album-covers", "album-tracks", "apple_album_track"):
+        if "/api/" not in path or action not in ("volume", "room_audio", "group_transport", "track_transport", "radio_direct", "apple_music", "radio_power", "selected_view", "dashboard_card_installed", "apple-library", "album-covers", "album-tracks", "apple_album_track", "playlist-tracks", "playlist-import", "apple_playlist_track"):
             return self.reply(404, {"error": "Not found"})
         if self.headers.get("Sec-Fetch-Site") == "cross-site":
             return self.reply(403, {"error": "Cross-site request rejected"})
         if self.headers.get_content_type() != "application/json":
             return self.reply(415, {"error": "JSON required"})
         try:
-            body = json.loads(self.read_request_body(65536) if action == "apple-library" else self.read_request_body())
+            body = json.loads(self.read_request_body(2097152) if action in ("apple-library", "playlist-import") else self.read_request_body())
             if not isinstance(body, dict):
                 raise ValueError("Invalid body")
             if action == "album-tracks":
                 return self.reply(200, album_tracks(body.get("favorite")))
+            if action == "playlist-tracks":
+                return self.reply(200, playlist_tracks(body.get("favorite")))
+            if action == "playlist-import":
+                return self.reply(200, import_playlist(body))
             if action == "album-covers":
                 return self.reply(200, album_cover_search(body))
             if action == "apple-library":

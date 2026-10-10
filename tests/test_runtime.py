@@ -3,6 +3,7 @@ from contextlib import ExitStack
 from copy import deepcopy
 import io
 import json
+import plistlib
 from http.client import HTTPResponse
 from email.message import Message
 import socket
@@ -914,6 +915,109 @@ class RuntimeTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "verschiedenen Alexa-Texten"):
             app.normalize_library([{"name":"Dirk", "kind":"Playlist", "command":command}
                                    for command in ("spiel playlist Dirk", "spiel playlist Mo")])
+
+    def test_playlist_import_text_csv_and_xml_keep_order_and_duplicates(self):
+        exports = ["Name\tArtist\tAlbum\nSecond\tSinger B\tAlbum\nFirst\tSinger A\tAlbum\nSecond\tSinger B\tAlbum\n",
+                   'Titel;Interpret\nSecond;Singer B\nFirst;Singer A\nSecond;Singer B\n',
+                   plistlib.dumps({"Tracks":{"1":{"Name":"First","Artist":"Singer A"},"2":{"Name":"Second","Artist":"Singer B"}},
+                                   "Playlists":[{"Playlist Items":[{"Track ID":2},{"Track ID":1},{"Track ID":2}]}]}).decode()]
+        expected = None
+        for content in exports:
+            result = app.import_playlist({"content":content})["tracks"]
+            self.assertEqual([x["name"] for x in result], ["Second","First","Second"])
+            self.assertEqual([x["number"] for x in result], [1,2,3])
+            self.assertEqual(len(set(x["id"] for x in result)), 3)
+            if expected is None:
+                expected = result
+            self.assertEqual(result, expected)
+        quoted = app.import_playlist({"content":'Name,Artist\n"Song, Part 2",Björk\n'})
+        self.assertEqual(quoted["tracks"][0]["name"], "Song, Part 2")
+        self.assertEqual(quoted["tracks"][0]["artist"], "Björk")
+
+    def test_playlist_import_rejects_bad_or_oversized_exports(self):
+        exports = ["", "Name\tAlbum\nTitle\tAlbum", "Name\tArtist\nTitle\t",
+                   "Name\tArtist\nTitle", "<plist><dict>", "<!DOCTYPE plist [<!ENTITY x 'bad'>]><plist/>",
+                   "x" * 1048577, "Name\tArtist\n" + "Song\tArtist\n" * 1001,
+                   plistlib.dumps({"Tracks":{},"Playlists":[{},{}]}).decode(),
+                   plistlib.dumps({"Tracks":{},"Playlists":[{"Playlist Items":[{"Track ID":2}]}]}).decode()]
+        for content in exports:
+            with self.subTest(length=len(content)), self.assertRaises(ValueError):
+                app.import_playlist({"content":content})
+
+    def test_playlist_import_and_save_in_standby_are_local_and_durable(self):
+        app.STANDBY.set()
+        tracks = app.import_playlist({"content":"Name\tArtist\nSong\tSinger\n"})["tracks"]
+        snapshot = app.library_snapshot()
+        app.save_library({"items":[{"name":"My list","kind":"Playlist","command":"spiel playlist Meine","tracks":tracks}],
+                          "revision":snapshot["revision"]})
+        item = app.apple_music_selection()["items"][0]
+        self.assertEqual(item["tracks"], tracks)
+        self.assertEqual(item["command"], "spiel playlist Meine")
+        self.assertTrue(app.STANDBY.is_set())
+        self.monitor.select.assert_not_called()
+        with self.assertRaises(ValueError):
+            app.playlist_tracks(item["id"])
+        app.STANDBY.clear(); app.READY = True
+        self.assertEqual(app.playlist_tracks(item["id"])["tracks"], tracks)
+
+    def test_imported_playlist_track_playback_validates_membership_and_stale_ids(self):
+        app.READY = True
+        snapshot = app.library_snapshot()
+        entry = {"name":"My list", "kind":"Playlist", "tracks":[{"name":"Song", "artist":"Singer"}]}
+        app.save_library({"items":[entry], "revision":snapshot["revision"]})
+        item = app.apple_music_selection()["items"][0]
+        identity = item["tracks"][0]["id"]
+        with patch.object(app, "play_on_target", return_value={}) as play:
+            app.perform("apple_playlist_track", {"favorite":item["id"], "track_id":identity})
+            self.assertEqual(play.call_args.args[3], "spiel Song von Singer auf Apple Music")
+            self.assertEqual(app.ACTIVE_APPLE["name"], "Song")
+            with self.assertRaises(ValueError):
+                app.perform("apple_playlist_track", {"favorite":item["id"], "track_id":identity+1})
+            entry["tracks"] = [{"name":"Different", "artist":"Singer"}]
+            app.save_library({"items":[entry], "revision":app.library_snapshot()["revision"]})
+            with self.assertRaises(ValueError):
+                app.perform("apple_playlist_track", {"favorite":item["id"], "track_id":identity})
+            self.assertEqual(play.call_count, 1)
+            app.STANDBY.set()
+            with self.assertRaises(RuntimeError):
+                app.perform("apple_playlist_track", {"favorite":item["id"], "track_id":identity})
+            self.assertEqual(play.call_count, 1)
+
+    def test_playlist_import_failure_does_not_replace_library(self):
+        snapshot = app.library_snapshot()
+        with self.assertRaises(ValueError):
+            app.import_playlist({"content":"broken"})
+        self.assertEqual(app.library_snapshot(), snapshot)
+        for entries in ([{"kind":"Album","name":"A","tracks":[]}],
+                        [{"kind":"Playlist","name":"A","tracks":[{"name":"Song","artist":"bad\nartist"}]}]):
+            with self.assertRaises(ValueError):
+                app.save_library({"items":entries,"revision":snapshot["revision"]})
+        self.assertEqual(app.library_snapshot(), snapshot)
+
+    def test_playlist_import_http_accepts_exports_over_64kb_but_remains_bounded(self):
+        content = "Name\tArtist\n" + ("N"*180 + "\t" + "A"*180 + "\n")*200
+        payload = json.dumps({"content":content}).encode()
+        self.assertGreater(len(payload), 65536)
+        handler = object.__new__(app.Handler)
+        handler.client_address = ("172.30.32.2", 1)
+        handler.path = "/api/playlist-import"
+        handler.headers = Message()
+        handler.headers["Content-Type"] = "application/json"
+        handler.headers["Content-Length"] = str(len(payload))
+        handler.rfile = io.BytesIO(payload)
+        handler.reply = Mock()
+        app.STANDBY.set()
+        handler.do_POST()
+        self.assertEqual(handler.reply.call_args.args[0], 200)
+        self.assertEqual(len(handler.reply.call_args.args[1]["tracks"]), 200)
+        handler.reply.reset_mock()
+        handler.headers.replace_header("Content-Length", str(2097153))
+        handler.rfile = io.BytesIO(b"")
+        handler.do_POST()
+        self.assertEqual(handler.reply.call_args.args[0], 400)
+        handler.reply.reset_mock()
+        handler.do_GET()
+        self.assertEqual(handler.reply.call_args.args[0], 405)
 
     def test_library_add_edit_remove_is_durable_and_does_not_change_options(self):
         original = app.options()

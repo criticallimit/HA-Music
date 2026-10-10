@@ -468,11 +468,12 @@ function libraryEditorControls(busy) {
   for (const row of libraryEditorRows) {
     row.name.disabled = busy; row.search.disabled = busy; row.command.disabled = busy; row.remove.disabled = busy;
     if (row.coverButton) row.coverButton.disabled = busy;
+    if (row.importFile) row.importFile.disabled = busy;
   }
 }
 function addLibraryEditorRow(item = {}) {
   const container = document.createElement("div"); container.className = "library-editor-row";
-  const row = {container, albumId:item.album_id};
+  const row = {container, albumId:item.album_id, tracks:item.tracks};
   for (const [field, text] of [["name", "Anzeigename"], ["command", "Text an Alexa"], ["search", "Cover-Suchname"]]) {
     const label = document.createElement("label"); label.textContent = text;
     const input = document.createElement("input"); input.type = "text"; input.maxLength = field === "command" ? 500 : 200;
@@ -490,6 +491,17 @@ function addLibraryEditorRow(item = {}) {
     container.remove();
   });
   container.appendChild(row.remove); libraryEditorRows.push(row); $("library-editor-rows").appendChild(container);
+  if (libraryEditorKind === "Playlist") {
+    const label = document.createElement("label"); label.className = "playlist-import";
+    label.textContent = "Titelliste importieren (Apple-Music-XML, Text oder CSV)";
+    row.importFile = document.createElement("input"); row.importFile.type = "file";
+    row.importFile.accept = ".xml,.txt,.tsv,.csv";
+    row.importStatus = document.createElement("span"); row.importStatus.className = "playlist-import-status";
+    row.importStatus.setAttribute("role", "status");
+    row.importStatus.textContent = item.tracks ? item.tracks.length + " Titel importiert" : "Noch keine Titelliste importiert";
+    row.importFile.addEventListener("change", () => importPlaylistFile(row));
+    label.append(row.importFile, row.importStatus); container.appendChild(label);
+  }
   if (libraryEditorKind === "Album") {
     row.coverButton = document.createElement("button"); row.coverButton.type = "button"; row.coverButton.textContent = "Cover suchen";
     row.coverResults = document.createElement("div"); row.coverResults.className = "album-cover-results";
@@ -500,6 +512,31 @@ function addLibraryEditorRow(item = {}) {
     container.append(row.coverButton,row.coverResults);
   }
   return row;
+}
+async function importPlaylistFile(row) {
+  const file = row.importFile.files?.[0];
+  if (!file || libraryEditorBusy) return;
+  libraryEditorControls(true);
+  row.importStatus.textContent = "Importiere …";
+  try {
+    if (file.size > 1048576) throw new Error("Bitte eine Datei bis 1 MB auswählen");
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    const encoding = bytes[0] === 255 && bytes[1] === 254 ? "utf-16le" : bytes[0] === 254 && bytes[1] === 255 ? "utf-16be" : "utf-8";
+    let content;
+    try { content = new TextDecoder(encoding, {fatal:true}).decode(bytes); }
+    catch (error) {
+      if (encoding !== "utf-8") throw error;
+      content = new TextDecoder("windows-1252").decode(bytes);
+    }
+    const result = await api("playlist-import", {content});
+    row.tracks = result.tracks;
+    row.importStatus.textContent = row.tracks.length + " Titel importiert. Mit Übernehmen speichern.";
+  } catch (error) {
+    row.importStatus.textContent = "Import fehlgeschlagen: " + error.message + (row.tracks ? " – bisherige Titelliste bleibt erhalten." : "");
+  } finally {
+    row.importFile.value = "";
+    libraryEditorControls(false);
+  }
 }
 async function searchEditorAlbumCover(row) {
   if (libraryEditorBusy) return;
@@ -559,7 +596,7 @@ async function submitLibraryEditor(event) {
   if (libraryEditorBusy || !libraryEditorSnapshot) return;
   const items = libraryEditorSnapshot.items.filter(item => item.kind !== libraryEditorKind);
   for (const row of libraryEditorRows)
-    items.push({kind:libraryEditorKind, name:row.name.value.trim(), command:row.command.value, search:row.search.value.trim(), ...(row.albumId ? {album_id:row.albumId} : {})});
+    items.push({kind:libraryEditorKind, name:row.name.value.trim(), command:row.command.value, search:row.search.value.trim(), ...(row.albumId ? {album_id:row.albumId} : {}), ...(row.tracks !== undefined ? {tracks:row.tracks} : {})});
   libraryEditorControls(true); $("library-editor-feedback").textContent = "Speichere …";
   try {
     const result = await api("apple-library", {items, revision:libraryEditorSnapshot.revision});
@@ -607,7 +644,7 @@ function renderAppleSelection(selection) {
         if (kind === "Playlist") label.style.setProperty("--playlist-font-size", (favorite.name.length > 60 ? 11 : favorite.name.length > 30 ? 13 : 17) + "px");
         button.title = favorite.name; button.setAttribute("aria-label", favorite.name);
         button.append(icon,label);
-        button.addEventListener("click", () => kind === "Album" ? openAlbumTracks(favorite.id) : startAppleFavorite(favorite.id));
+        button.addEventListener("click", () => openAlbumTracks(favorite.id));
         appleButtons.set(favorite.id,button);
         if (kind === "Album") {
           const entry = document.createElement("div"); entry.className = "apple-album-entry"; entry.title = favorite.name;
@@ -634,6 +671,7 @@ function renderAppleSelection(selection) {
 }
 let albumDialogFavorite = null;
 let albumDialogGeneration = 0;
+let albumDialogTrackPending = false;
 function setAlbumDialogCover(album) {
   const image = $("album-tracks-cover");
   const url = validAppleImage(album?.image);
@@ -650,56 +688,71 @@ function setAlbumDialogCover(album) {
 function closeAlbumTracks() {
   albumDialogGeneration++;
   albumDialogFavorite = null;
+  albumDialogTrackPending = false;
+  $("album-play-all").disabled = false;
   $("album-tracks-dialog").close();
 }
 $("album-tracks-close").addEventListener("click", closeAlbumTracks);
 $("album-tracks-dialog").addEventListener("cancel", event => { event.preventDefault(); closeAlbumTracks(); });
+$("playlist-import-open").addEventListener("click", () => { closeAlbumTracks(); openLibraryEditor("Playlist"); });
 $("album-play-all").addEventListener("click", async () => {
   const favorite = albumDialogFavorite;
-  if (!favorite) return;
+  if (!favorite || albumDialogTrackPending) return;
   closeAlbumTracks();
   await startAppleFavorite(favorite.id);
 });
 async function openAlbumTracks(id) {
-  if (strictStandby || !radioReadyForViews || stationPending || transportPending || !appleSelection.available) return;
-  const favorite = appleSelection.items.find(item => item.id === id && item.kind === "Album");
+  if (strictStandby || !radioReadyForViews || mediaPreparing || stationPending || transportPending || !appleSelection.available) return;
+  const favorite = appleSelection.items.find(item => item.id === id && (item.kind === "Album" || item.kind === "Playlist"));
   if (!favorite) return;
   albumDialogFavorite = favorite;
   const generation = ++albumDialogGeneration;
   $("album-tracks-title").textContent = favorite.name;
   $("album-tracks-artist").textContent = "";
+  $("album-play-all").textContent = favorite.kind === "Playlist" ? "▶ Ganze Playlist abspielen" : "▶ Ganzes Album abspielen";
+  $("playlist-import-open").hidden = favorite.kind !== "Playlist";
   setAlbumDialogCover(savedAlbumCover(favorite) || albumCoverResults.get(coverKey(favorite))?.album);
   $("album-tracks-feedback").textContent = "Titelliste wird geladen …";
   $("album-tracks-list").replaceChildren();
   $("album-tracks-dialog").showModal();
   try {
-    const result = await api("album-tracks", {favorite:id});
+    const result = await api(favorite.kind === "Playlist" ? "playlist-tracks" : "album-tracks", {favorite:id});
     if (generation !== albumDialogGeneration || albumDialogFavorite?.id !== id) return;
     $("album-tracks-artist").textContent = result.artist || "";
     if (result.image) setAlbumDialogCover(result);
-    $("album-tracks-feedback").textContent = result.tracks?.length ? "" : "Keine Titel im Apple-Katalog gefunden";
+    $("album-tracks-feedback").textContent = result.tracks?.length ? "" : favorite.kind === "Playlist" ? "Die importierte Playlist enthält keine Titel." : "Keine Titel im Apple-Katalog gefunden";
     for (const track of result.tracks || []) {
       const button = document.createElement("button");
       button.type = "button";
       button.className = "album-track-choice";
       const number = document.createElement("span"); number.className = "album-track-number"; number.textContent = track.number + ".";
       const name = document.createElement("span"); name.className = "album-track-name"; name.textContent = track.name;
+      if (favorite.kind === "Playlist") {
+        const artist = document.createElement("small"); artist.className = "playlist-track-artist"; artist.textContent = track.artist;
+        name.appendChild(artist);
+      }
       const play = document.createElement("span"); play.className = "album-track-play"; play.textContent = "▶"; play.setAttribute("aria-hidden", "true");
       button.append(number, name, play);
-      button.setAttribute("aria-label", "Titel " + track.number + ": " + track.name + " abspielen");
+      button.setAttribute("aria-label", "Titel " + track.number + ": " + track.name + (favorite.kind === "Playlist" ? " von " + track.artist : "") + " abspielen");
       button.title = "Titel auf Apple Music abspielen: " + track.name;
       button.addEventListener("click", async () => {
-        if (button.disabled || !albumDialogFavorite || stationPending) return;
-        button.disabled = true;
+        if (button.disabled || albumDialogTrackPending || albumDialogFavorite?.id !== id || generation !== albumDialogGeneration || stationPending || transportPending || strictStandby || !radioReadyForViews || mediaPreparing) return;
+        albumDialogTrackPending = true;
+        for (const choice of $("album-tracks-list").children) choice.disabled = true;
+        $("album-play-all").disabled = true;
         $("album-tracks-feedback").textContent = "Titel wird gestartet …";
         try {
-          await api("apple_album_track", {favorite:id,track_id:track.id});
+          await api(favorite.kind === "Playlist" ? "apple_playlist_track" : "apple_album_track", {favorite:id,track_id:track.id});
+          if (generation !== albumDialogGeneration) return;
           closeAlbumTracks();
           await loadRadioState();
           updateSong();
         } catch (error) {
+          if (generation !== albumDialogGeneration) return;
           $("album-tracks-feedback").textContent = "Wiedergabe fehlgeschlagen: " + error.message;
-          button.disabled = false;
+          albumDialogTrackPending = false;
+          for (const choice of $("album-tracks-list").children) choice.disabled = false;
+          $("album-play-all").disabled = false;
         }
       });
       $("album-tracks-list").appendChild(button);
