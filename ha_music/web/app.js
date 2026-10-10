@@ -329,6 +329,11 @@ async function updateSong() {
     $("playback-state").textContent = info.source_restore_error || (unconfirmedVolumes.length
       ? "Lautstärke von " + unconfirmedVolumes.length + " Echo-Gerät(en) noch nicht bestätigt. Hörbare Wiedergabe nicht bestätigt."
       : info.playing ? "Alexa meldet Wiedergabe" : "Alexa meldet derzeit keine aktive Wiedergabe");
+    if (activeApple?.kind === "Album" && info.apple_verification && !info.source_restore_error) {
+      const verification = info.apple_verification;
+      const prefix = {confirmed:"Album bestätigt", pending:"Albumprüfung läuft", mismatch:"Falsches Album", unverifiable:"Album nicht überprüfbar"}[verification.status];
+      if (prefix) $("playback-state").textContent = prefix + ": " + verification.reason;
+    }
   } catch(e) {
     if (generation === uiGeneration && stationEpoch === epoch && transportRequestEpoch === transportEpoch) {
       $("playback-state").textContent = "Wiedergabestatus nicht verfügbar: " + e.message;
