@@ -60,7 +60,8 @@ nav button.active{background:var(--surface);border-color:var(--accent);box-shado
 .player-row button::after{content:"";display:block;width:22px;height:22px;background-size:contain;background-repeat:no-repeat;background-position:center;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23b9c7d5' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M11 5 6 9H3v6h3l5 4V5Z'/%3E%3Cpath d='M15 9a5 5 0 0 1 0 6'/%3E%3Cpath d='M18 6a9 9 0 0 1 0 12'/%3E%3C/svg%3E")}
 .player-row button.is-muted::after{background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23b9c7d5' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M11 5 6 9H3v6h3l5 4V5Z'/%3E%3Cpath d='m16 9 5 6m0-6-5 6'/%3E%3C/svg%3E")}
 .stations{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin-top:auto}
-.apple-library{display:flex;flex-direction:column;gap:16px;margin-top:auto;width:100%;min-width:0;align-self:stretch;height:var(--ha-library-height,320px);min-height:0;flex-shrink:0}
+.dashboard-right{--panel-content-inset:24px}
+.apple-library{display:flex;flex-direction:column;gap:16px;margin-top:auto;width:100%;min-width:0;align-self:stretch;height:var(--ha-library-height,320px);min-height:0;flex-shrink:0;padding-inline:calc(var(--panel-content-inset) + 1px)}
 .apple-library-section{display:flex;flex-direction:column;flex:1;width:100%;min-width:0;min-height:0;margin:0;padding:0}
 .library-sort{padding:3px 8px;font-size:16px;line-height:1.2;color:var(--text);background:transparent;border:1px solid var(--border);border-radius:6px}
 .library-sort[aria-pressed="true"]{border-color:var(--accent);color:var(--accent)}
@@ -108,6 +109,7 @@ html.ha-dashboard-fit .master-volume{min-height:64px;padding:8px 16px}
 html.ha-dashboard-fit .speaker-list .player-row{min-height:64px;padding:8px 16px;gap:4px 12px}
 html.ha-dashboard-fit .station:not(.apple-favorite){min-height:72px;gap:5px}
 html.ha-dashboard-fit .apple-library{gap:10px}
+html.ha-dashboard-fit .dashboard-right{--panel-content-inset:16px}
 html.ha-dashboard-fit .apple-library-note{font-size:11px;flex-shrink:0}
 html.ha-dashboard-fit .apple-library.ha-library-compact{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));grid-template-rows:minmax(0,1fr);gap:10px}
 html.ha-dashboard-fit .ha-library-compact .library-heading{margin-bottom:4px}
@@ -119,6 +121,7 @@ html.ha-dashboard-fit .ha-library-compact .station-icon{left:16px;top:50%;width:
 html.ha-dashboard-fit .ha-library-compact .apple-empty{min-height:32px;padding:4px;font-size:11px}
 html.ha-dashboard-fit .now:not(.radio-selected) .art img:not([hidden]){object-fit:contain;padding:0}
 @media(max-width:650px){html.ha-dashboard-fit .now{height:260px}html.ha-dashboard-fit .shell{padding:10px}html.ha-dashboard-fit .master-volume,html.ha-dashboard-fit .speaker-list .player-row{padding:8px 12px}}
+@media(max-width:650px){.dashboard-right,html.ha-dashboard-fit .dashboard-right{--panel-content-inset:12px}}
 
 /* One shared tile size; only the lists scroll when their space is exhausted. */
 #apple-playlist-list,#apple-album-list{grid-template-columns:repeat(auto-fill,120px);grid-auto-rows:max-content}

@@ -34,6 +34,7 @@ const artwork='<svg xmlns="http://www.w3.org/2000/svg" width="300" height="300">
     api=async()=>({});radioReadyForViews=true;
     document.documentElement.classList.toggle('ha-dashboard-fit',mode!=='ingress');
     document.getElementById('radio-standby').hidden=true;
+    document.getElementById('master-volume').replaceChildren(volumeRow({entity_id:'media_player.master',name:'Master',state:'playing',volume_level:0.2},new Map(),true));
     const items=Array.from({length:20},(_,i)=>({id:'p'+i,kind:'Playlist',name:'Playlist '+i})).concat(Array.from({length:20},(_,i)=>({id:'a'+i,kind:'Album',name:'Album '+i,album_id:i+1,artwork:{image:'api/album-art/'+(i+1)}})));
     renderAppleSelection({available:true,items});show('apple');displayRadioReadiness(true);
     activeApple=items[20];showAppleArtwork();
@@ -44,10 +45,14 @@ const artwork='<svg xmlns="http://www.w3.org/2000/svg" width="300" height="300">
     const result=await surface.evaluate(()=>{
      const lists=['apple-playlist-list','apple-album-list'].map(id=>{const list=document.getElementById(id);return {id,height:list.clientHeight,scroll:list.scrollHeight,tiles:Array.from(list.querySelectorAll('.apple-favorite')).map(tile=>{const r=tile.getBoundingClientRect();return {width:r.width,height:r.height};})};});
      const image=document.getElementById('current-cover'),r=image.getBoundingClientRect(),art=document.querySelector('.art').getBoundingClientRect(),style=getComputedStyle(image);
-     return {lists,art:{width:art.width,height:art.height},image:{width:r.width,height:r.height,padding:style.padding,fit:style.objectFit,position:style.objectPosition},albumFits:Array.from(document.querySelectorAll('.apple-album-cover')).map(img=>getComputedStyle(img).objectFit)};
+     const master=document.querySelector('#master-volume .player-row > span:first-child').getBoundingClientRect().left;
+     const sections=Array.from(document.querySelectorAll('.apple-library-section')).map(section=>({heading:section.querySelector('h2').getBoundingClientRect().left,tile:section.querySelector('.apple-favorite').getBoundingClientRect().left}));
+     return {master,sections,compact:document.getElementById('apple-library').classList.contains('ha-library-compact')&&document.documentElement.classList.contains('ha-dashboard-fit'),lists,art:{width:art.width,height:art.height},image:{width:r.width,height:r.height,padding:style.padding,fit:style.objectFit,position:style.objectPosition},albumFits:Array.from(document.querySelectorAll('.apple-album-cover')).map(img=>getComputedStyle(img).objectFit)};
     });
     for(const list of result.lists){assert.equal(list.tiles.length,20);assert.ok(list.scroll>list.height);for(const tile of list.tiles){assert.equal(tile.width,120);assert.equal(tile.height,120);}}
     assert.equal(result.image.width,result.art.width);assert.equal(result.image.height,result.art.height);assert.equal(result.image.padding,'0px');assert.equal(result.image.fit,'contain');assert.equal(result.image.position,'50% 0%');assert.ok(result.albumFits.every(fit=>fit==='contain'));
+    for(const section of result.sections){assert.ok(Math.abs(section.heading-section.tile)<1);}
+    for(const section of result.compact?result.sections.slice(0,1):result.sections){assert.ok(Math.abs(section.heading-result.master)<1,'Library and volume labels share their left edge');}
     for(const id of ['apple-playlist-list','apple-album-list']){await surface.locator('#'+id).evaluate(list=>{list.scrollTop=list.scrollHeight;});assert.ok(await surface.locator('#'+id).evaluate(list=>list.scrollTop>0));}
     console.log('PASS: '+mode+', viewport '+width+', library height '+height+', equal 120px squares, independent scrolling, full artwork');
    }

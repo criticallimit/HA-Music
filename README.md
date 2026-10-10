@@ -643,3 +643,16 @@ Ingress und Lovelace verwenden dieselbe Regel.
 Sicherung davor:
 [backup/main-2026-10-10-top-artwork-5d061f5](https://github.com/criticallimit/HA-Music/tree/backup/main-2026-10-10-top-artwork-5d061f5),
 Commit `5d061f5c7eb4b3a212b1865e90cbb4f0d0f55ae8`.
+
+## Gemeinsame linke Kante der rechten Bereiche
+
+Die Bibliothek erhält denselben horizontalen Einzug wie die Beschriftungen
+der Lautstärkebereiche: 24 Pixel in Ingress, 16 Pixel in der Karte und
+12 Pixel auf Mobilgeräten, jeweils einschließlich der Rahmenbreite.
+Überschrift und erste Kachel jedes Bibliotheksbereichs stehen auf derselben
+Kante. Der Browsertest misst diese Positionen in beiden Ansichten; feste
+quadratische Kacheln und internes Scrollen bleiben erhalten.
+
+Sicherung davor:
+[backup/main-2026-10-10-library-alignment-ef38b48](https://github.com/criticallimit/HA-Music/tree/backup/main-2026-10-10-library-alignment-ef38b48),
+Commit `ef38b48af34f9353d60d23f19f9f4630a624c8e3`.
