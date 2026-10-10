@@ -1,5 +1,9 @@
 # Apple-Music-Playlists automatisch vom Mac synchronisieren
 
+Für Einrichtung ohne Terminal/Python gibt es jetzt auch die
+[anklickbare Mac-App](MAC_PLAYLIST_APP.md). Der folgende separate Helfer bleibt
+für einen Zeitplan unabhängig vom geöffneten App-Fenster verfügbar.
+
 Der Mac liest die ausgewählten Playlists aus seiner Musik-App und aktualisiert
 alle 30 Minuten ihre Titellisten in HA Music. Kein Apple-Developer-Konto, keine
 Musikdateien, keine Apple-Zugangsdaten. Die Synchronisierung startet keine
@@ -83,7 +87,9 @@ erlauben. Bei `HTTPError`: Schlüssel, Zielplaylist und Port prüfen; bei
 die Liste nicht. Umbenannte Playlists benötigen eine aktualisierte Zuordnung.
 
 Der Sync-Schlüssel erlaubt ausschließlich das Aktualisieren von Titelname und
-Interpret bereits angelegter Playlists. Er erlaubt weder Wiedergabe noch Zugriff
+Interpret von Playlists und auf ausdrücklichen Wunsch der Mac-App das Anlegen
+neuer Playlist-Favoriten. Dieser ältere Helfer legt keine Favoriten an.
+Der Schlüssel erlaubt weder Wiedergabe noch Zugriff
 auf andere Add-on-Funktionen. Der Netzwerkport ist standardmäßig deaktiviert,
 und ohne gültigen Schlüssel ist auch der Sync-Endpunkt gesperrt.
 

@@ -297,8 +297,25 @@ Breiten- und Höhenfelder sind aus dem Karteneditor entfernt. Alte `width`-/`hei
 
 Playlists können ohne Apple-Developer-Konto automatisch aus der Musik-App auf
 dem Mac synchronisiert werden. Der optionale, durch einen eigenen Schlüssel
-geschützte Endpunkt aktualisiert ausschließlich Titel vorhandener Playlists.
+geschützte Endpunkt aktualisiert Playlist-Titel und kann auf ausdrücklichen Wunsch
+neue Playlist-Favoriten anlegen, ohne Wiedergabe zu starten.
 Der Helfer läuft bei Anmeldung und alle 30 Minuten. Einrichtung und Abschalten:
 [Mac-Playlist-Synchronisierung](tools/MAC_PLAYLIST_SYNC.md).
 
 Rückkehrpunkt vor dieser Erweiterung: [backup/main-2026-10-10-mac-playlist-sync-867020a](https://github.com/criticallimit/HA-Music/tree/backup/main-2026-10-10-mac-playlist-sync-867020a), Commit `867020a2c29a79d9e64926bd0c7dcfdebb49107a`. Keine Versionsänderung und keine Installation durch das Aktualisieren von `main`.
+
+### Anklickbare Mac-App
+
+[HA Music Playlist Sync](tools/MAC_PLAYLIST_APP.md) bietet ein natives Fenster
+mit Playlist-Auswahl, editierbaren Zielnamen, Statusmeldungen und Schlüsselbund.
+Sie benötigt weder Python noch Terminal. GitHub-CI baut ein Universal-App-ZIP
+für Intel und Apple Silicon ab macOS 12, prüft die Übertragung und erzeugt eine
+Vorschau der Oberfläche. Beim nächsten Öffnen kann automatisch synchronisiert
+werden; optional alle 30 Minuten, solange die App offen bleibt. Neue Playlists
+werden nur mit aktivierter Auswahl angelegt. Bestehende Alexa-Befehle, Alben,
+Radio, Standby und Kartenskalierung bleiben erhalten.
+
+Die App ist ad hoc signiert, nicht mit Developer ID signiert/notarisiert;
+der erste Start kann eine macOS-Freigabe benötigen. Keine Release-Veröffentlichung
+und keine Add-on-Versionsänderung. Sicherung davor:
+[backup/main-2026-10-10-mac-click-app-2f4e880](https://github.com/criticallimit/HA-Music/tree/backup/main-2026-10-10-mac-click-app-2f4e880), Commit `2f4e8804e24d421ef12c14c418ef41585e762dc6`.

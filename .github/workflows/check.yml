@@ -7,6 +7,26 @@ on:
 permissions:
   contents: read
 jobs:
+  mac-app:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build universal clickable Mac app
+        run: bash tools/mac-app/build.sh
+      - name: Check native core and transport
+        run: |
+          "build/mac-app/HA Music Playlist Sync.app/Contents/MacOS/HA Music Playlist Sync" --self-test
+          MAC_APP_BIN="$PWD/build/mac-app/HA Music Playlist Sync.app/Contents/MacOS/HA Music Playlist Sync" python3 -m unittest discover -s tests -p 'test_mac_app.py' -v
+      - name: Check native window and capture preview
+        run: '"build/mac-app/HA Music Playlist Sync.app/Contents/MacOS/HA Music Playlist Sync" --ui-smoke "$PWD/build/mac-app/Mac-App-Vorschau.png"'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: HA-Music-Playlist-Sync-Mac
+          path: |
+            build/mac-app/HA-Music-Playlist-Sync.zip
+            build/mac-app/LIESMICH.txt
+            build/mac-app/Mac-App-Vorschau.png
+          retention-days: 90
   validate:
     runs-on: ubuntu-latest
     steps:

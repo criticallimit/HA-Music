@@ -1,0 +1,42 @@
+HA Music Playlist Sync – Mac-App
+
+1. ZIP entpacken und „HA Music Playlist Sync.app“ nach Programme ziehen.
+2. App öffnen. Kein Terminal, kein Python, kein Xcode erforderlich.
+3. Einmalig Musik-Zugriff erlauben und warten, bis die Mac-Musikmediathek aktuell ist.
+4. HA-Music-Adresse eingeben, z.B. http://homeassistant.local:8099.
+5. Einen Schlüssel erzeugen oder den bereits vorhandenen Schlüssel eingeben.
+   „Kopieren“ verwenden und den Schlüssel in den HA-Music-Add-on-Optionen unter
+   „Schlüssel für Mac-Playlist-Synchronisierung“ (playlist_sync_token) speichern.
+6. In HA Music unter Netzwerk den optionalen Port 8099 aktivieren, speichern und
+   das Add-on neu starten. Nur im Heimnetz freigeben, keine Router-Portweiterleitung.
+7. Gewünschte Playlists auswählen, gegebenenfalls den Namen für HA Music ändern,
+   und „Jetzt synchronisieren“ klicken.
+
+HA Music benötigt den aktuellen main-Stand mit Mac-App-Unterstützung.
+Neue Playlists werden nur angelegt, wenn die entsprechende Auswahl aktiv ist.
+Bereits gespeicherte Alexa-Befehle und Alben bleiben erhalten. Die App startet
+keine Wiedergabe. Maximal 50 Favoriten und 1000 Titel pro Playlist.
+Leere oder unvollständige Listen werden nicht übertragen.
+
+Adresse und Auswahl bleiben gespeichert, der Schlüssel liegt im macOS-Schlüsselbund.
+Beim nächsten Öffnen wird mit gespeicherter Einrichtung automatisch synchronisiert,
+wenn „Beim Öffnen synchronisieren“ aktiv ist.
+Optional: alle 30 Minuten, solange die App geöffnet bleibt und der Mac wach ist.
+Nach dem Schließen der App läuft dieser Zeitplan nicht weiter.
+Der bisherige separate Python-Helfer besitzt einen eigenen Zeitplan. Falls er
+schon eingerichtet ist, diesen vor Verwendung des App-Zeitplans abschalten,
+wie in tools/MAC_PLAYLIST_SYNC.md beschrieben.
+
+Kompatibel mit Apple Silicon und Intel, ab macOS 12.
+Die App ist lokal signiert, jedoch nicht mit Apple Developer ID signiert/notarisiert.
+macOS kann den ersten Start daher blockieren. Nur wenn du diese Datei selbst aus
+diesem Projekt bezogen hast: Systemeinstellungen → Datenschutz & Sicherheit →
+Dennoch öffnen; anschließend die Rückfrage bestätigen. Gatekeeper nicht deaktivieren.
+Musik-Zugriff: Datenschutz & Sicherheit → Automation.
+
+Der CI-Build prüft beide Prozessorarchitekturen, die Oberfläche und die Übertragung
+zu einem lokalen Testserver. Zugriff auf deine reale Musikmediathek und die
+macOS-Berechtigungen müssen einmalig auf deinem eigenen Mac geprüft werden.
+
+Projekt und Anleitung:
+https://github.com/criticallimit/HA-Music/blob/main/tools/MAC_PLAYLIST_APP.md

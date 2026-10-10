@@ -91,6 +91,25 @@ class PlaylistSyncTests(unittest.TestCase):
         self.assertEqual(self.request()[0], 400)
         self.assertEqual(app.LIBRARY_FILE.read_bytes(), before)
 
+    def test_optional_creation_is_playlist_only_and_never_overwrites_existing_metadata(self):
+        status, result = self.request(body={"name": "New", "tracks": self.tracks, "create": True,
+                                           "kind": "Album", "command": "untrusted command"})
+        self.assertEqual(status, 200)
+        self.assertTrue(result["created"])
+        item = app.library_snapshot()["items"][-1]
+        self.assertEqual(item["kind"], "Playlist")
+        self.assertEqual(item["command"], "spiel playlist New")
+        status, result = self.request(body={"name": "Mix", "tracks": self.tracks, "create": True,
+                                           "command": "replace command"})
+        self.assertEqual(status, 200)
+        self.assertFalse(result["created"])
+        self.assertEqual(app.library_snapshot()["items"][0]["command"], "spiel meine Playlist")
+        self.assertEqual(self.request(body={"name": "Another", "tracks": self.tracks, "create": "true"})[0], 400)
+        items = [{"kind": "Playlist", "name": str(i), "search": str(i)} for i in range(50)]
+        app.LIBRARY_FILE.write_text(json.dumps(items))
+        self.assertEqual(self.request(body={"name": "Too many", "tracks": self.tracks, "create": True})[0], 400)
+        self.assertEqual(app.library_snapshot()["items"], items)
+
     def test_no_key_wrong_key_browser_origin_and_wrong_content_type_denied(self):
         before = app.LIBRARY_FILE.read_bytes()
         for headers in ({"Authorization": ""}, {"Authorization": "Bearer wrong"},

@@ -382,22 +382,33 @@ def save_library(body):
 
 
 def sync_playlist(body):
-    """Update only tracks of one existing favorite; safe even during standby."""
+    """Update playlist tracks; optionally add a playlist, never issue commands."""
     name = body.get("name")
     if not isinstance(name, str) or not name.strip() or len(name) > 200:
         raise ValueError("Ungültiger Playlistname")
     tracks = normalize_playlist_tracks(body.get("tracks"))
+    if "create" in body and type(body["create"]) is not bool:
+        raise ValueError("Ungültige Auswahl für neue Playlists")
     with LIBRARY_LOCK:
         items = library_snapshot()["items"]
         matches = [item for item in items if item["kind"] == "Playlist" and item["name"] == name]
+        created = False
+        if not matches and body.get("create") is True:
+            if len(items) >= 50:
+                raise ValueError("Bitte höchstens 50 Playlists und Alben eintragen")
+            new_item = normalize_library([{"name": name, "search": name, "kind": "Playlist",
+                                           "command": "spiel playlist " + name, "tracks": tracks}])[0]
+            items.append(new_item)
+            matches = [new_item]
+            created = True
         if len(matches) != 1:
             raise ValueError("Playlist muss in HA Music mit eindeutigem Namen angelegt sein")
-        changed = matches[0].get("tracks") != tracks
+        changed = created or matches[0].get("tracks") != tracks
         if changed:
             matches[0]["tracks"] = tracks
             with LOCK:
                 write_durable_json(LIBRARY_FILE, items)
-        return {"ok": True, "changed": changed, "tracks": len(tracks)}
+        return {"ok": True, "changed": changed, "created": created, "tracks": len(tracks)}
 
 
 def artwork_url(value, host):
