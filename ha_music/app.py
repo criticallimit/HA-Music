@@ -56,6 +56,7 @@ NETWORK_ERRORS = (RuntimeError, OSError, ValueError, HTTPException)
 STANDBY_UNTIL = 0.0
 LAST_POWER = "off"
 ACTIVE_APPLE = None
+APPLE_VERIFICATION_STARTED = None
 RECOVERING = False
 RECOVERED_SESSION = False
 SOURCE_UNCONFIRMED = False
@@ -1282,7 +1283,7 @@ def play_on_target(generation, target, media_type, content):
 
 
 def play_apple_music(favorite_id, generation, *, startup=False):
-    global ACTIVE_APPLE, SOURCE_UNCONFIRMED, SOURCE_RESTORE_ERROR
+    global ACTIVE_APPLE, SOURCE_UNCONFIRMED, SOURCE_RESTORE_ERROR, APPLE_VERIFICATION_STARTED
     selection = apple_music_selection()
     favorite = next((item for item in selection["items"] if item["id"] == favorite_id), None)
     if favorite is None:
@@ -1303,6 +1304,7 @@ def play_apple_music(favorite_id, generation, *, startup=False):
         save_selected_source("apple", favorite_id)
         save_selected_view("apple")
         ACTIVE_APPLE = {**favorite, "target": selection["target"]}
+        APPLE_VERIFICATION_STARTED = time.monotonic()
         SOURCE_UNCONFIRMED = False
         SOURCE_RESTORE_ERROR = None
         MONITOR.select("")  # Apple playback no longer needs a radio metadata stream.
@@ -1454,11 +1456,35 @@ def track_transport_state(states):
     return result
 
 
+def verify_apple_album(favorite, metadata, elapsed):
+    """Conservative post-playback validation; never issues another Alexa command."""
+    if not favorite or favorite.get("kind") != "Album":
+        return None
+    if elapsed is None:
+        return {"status": "unverifiable", "reason": "Keine neue Albumprüfung aktiv"}
+    if elapsed < 20:
+        return {"status": "pending", "reason": "Warte auf Alexa-Metadaten"}
+    if not metadata or metadata.get("state") not in ("playing", "paused"):
+        return {"status": "unverifiable", "reason": "Keine aktive Wiedergabe bestätigt"}
+    actual = metadata.get("album")
+    if not isinstance(actual, str) or not actual.strip():
+        return {"status": "unverifiable", "reason": "Alexa liefert keinen Albumnamen"}
+    expected = favorite.get("name", "")
+    def normalize(value):
+        return re.sub(r"[^\\w]+", "", unicodedata.normalize("NFKC", value).casefold())
+    if normalize(actual) != normalize(expected):
+        return {"status": "mismatch", "reason": "Alexa meldet anderes Album: " + actual[:160]}
+    # Album title match alone cannot establish the exact recording or edition.
+    return {"status": "confirmed", "reason": "Alexa meldet das erwartete Album: " + actual[:160]}
+
+
 def playback_status():
     states = state_snapshot(fresh=True)
     with STATE_LOCK:
         target = ACTIVE_APPLE["target"] if ACTIVE_APPLE else apple_music_selection()["target"] if SOURCE_UNCONFIRMED else "media_player.wohnzimmer"
         apple = ACTIVE_APPLE is not None
+        verification_favorite = deepcopy(ACTIVE_APPLE)
+        verification_elapsed = time.monotonic() - APPLE_VERIFICATION_STARTED if APPLE_VERIFICATION_STARTED is not None else None
         unconfirmed_source = SOURCE_UNCONFIRMED
         source_restore_error = SOURCE_RESTORE_ERROR
         for entity, confirmation in list(VOLUME_CONFIRMATION.items()):
@@ -1506,6 +1532,7 @@ def playback_status():
             "track_transport": track_transport,
             "volume_confirmation":volume_confirmation,
             "source_restore_error":source_restore_error,
+            "apple_verification": verify_apple_album(verification_favorite, details, verification_elapsed) if apple else None,
             "details": details}
 
 
