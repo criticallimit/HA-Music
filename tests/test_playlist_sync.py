@@ -156,6 +156,21 @@ class PlaylistSyncTests(unittest.TestCase):
         self.assertEqual(result["skipped_empty"], 1)
         self.assertEqual(app.library_snapshot()["items"][-1]["tracks"][0]["name"], "Across the Border")
 
+    def test_original_resolution_cover_up_to_three_megabytes(self):
+        # Uncompressed test bytes mimic large image uploads; the server stores bytes unchanged.
+        picture = b"\\x89PNG\\r\\n\\x1a\\n" + b"pixel" * 450000
+        identity = hashlib.sha256(picture).hexdigest()
+        payload = {"cover": identity, "data": base64.b64encode(picture).decode()}
+        status, result = self.request(path="/api/playlist-artwork-sync", body=payload)
+        self.assertEqual(status, 200, result)
+        self.assertEqual(app.local_playlist_image(identity)[0], picture)
+        self.assertFalse(self.request(path="/api/playlist-artwork-sync", body=payload)[1]["changed"])
+        too_big = b"\\x89PNG\\r\\n\\x1a\\n" + b"x" * (3 * 1024 * 1024)
+        status, _ = self.request(path="/api/playlist-artwork-sync",
+             body={"cover": hashlib.sha256(too_big).hexdigest(),
+                   "data": base64.b64encode(too_big).decode()})
+        self.assertEqual(status, 400)
+
     def test_authenticated_cover_upload_deduplicates_and_track_sync_keeps_local_image(self):
         picture = b"\x89PNG\r\n\x1a\nlocal fixture"
         identity = hashlib.sha256(picture).hexdigest()
