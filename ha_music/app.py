@@ -716,6 +716,22 @@ def local_playlist_image(identity):
     return data, image_mime(data)
 
 
+def check_ipad_cover_presence(body):
+    """Return which authenticated image hashes are already stored and valid."""
+    hashes = body.get("covers")
+    if not isinstance(hashes, list) or len(hashes) > 1000:
+        raise ValueError("Bitte höchstens 1000 Cover-Hashes abfragen")
+    if any(not isinstance(value, str) or not re.fullmatch(r"[a-f0-9]{64}", value) for value in hashes):
+        raise ValueError("Ungültiger Cover-Hash")
+    missing = []
+    for digest in dict.fromkeys(hashes):
+        try:
+            local_playlist_image(digest)
+        except (OSError, ValueError):
+            missing.append(digest)
+    return {"ok": True, "missing": missing, "checked": len(set(hashes))}
+
+
 def sync_playlist_artwork(body):
     """Authenticated local upload; content addressed, deduplicated, no network or HA."""
     identity, encoded = body.get("cover"), body.get("data")
@@ -2713,7 +2729,7 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(content)
 
     def do_POST(self):
-        if self.path in ("/api/playlist-sync", "/api/playlist-artwork-sync", "/api/ipad-playlists-sync"):
+        if self.path in ("/api/playlist-sync", "/api/playlist-artwork-sync", "/api/ipad-playlists-sync", "/api/playlist-artwork-check"):
             # The optional host port exposes only this capability. Never accept
             # a Supervisor/HA token or trust forwarded ingress headers here.
             token = options().get("playlist_sync_token", "")
@@ -2730,7 +2746,7 @@ class Handler(BaseHTTPRequestHandler):
                 body = json.loads(self.read_request_body(4 * 1024 * 1024 + 4096 if artwork else (32 * 1024 * 1024 if self.path == "/api/ipad-playlists-sync" else 2097152)))
                 if not isinstance(body, dict):
                     raise ValueError("Invalid body")
-                return self.reply(200, sync_playlist_artwork(body) if artwork else (sync_all_ipad_playlists(body) if self.path == "/api/ipad-playlists-sync" else sync_playlist(body)))
+                return self.reply(200, check_ipad_cover_presence(body) if self.path == "/api/playlist-artwork-check" else (sync_playlist_artwork(body) if artwork else (sync_all_ipad_playlists(body) if self.path == "/api/ipad-playlists-sync" else sync_playlist(body))))
             except (ValueError, TypeError) as exc:
                 return self.reply(400, {"error": str(exc)})
             except OSError:
