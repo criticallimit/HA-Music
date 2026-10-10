@@ -1291,7 +1291,7 @@ def play_apple_music(favorite_id, generation, *, startup=False):
     startup_allowed = startup and READY and PREPARING and selection["target"] in enabled_device_ids()
     if not selection["available"] and not startup_allowed:
         raise ValueError("Apple-Music-Steuergerät ist nicht freigegeben oder HA Music ist noch nicht bereit")
-    media_type = "custom"
+    media_type = "APPLE_MUSIC"
     phrase = favorite.get("command", ("spiel playlist " if favorite["kind"] == "Playlist" else "spiel album ") + favorite["name"])
     print("[HA Music] Apple playback request: " + json.dumps({"name":favorite["name"],
           "playback_name":favorite["name"], "kind":favorite["kind"], "target":selection["target"],
