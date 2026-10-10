@@ -557,3 +557,27 @@ konkreten Echo-Geräten.
 Sicherung davor:
 [backup/main-2026-10-10-regression-audit-5506e4b](https://github.com/criticallimit/HA-Music/tree/backup/main-2026-10-10-regression-audit-5506e4b),
 Commit `5506e4bba5c9bf21b73ca0ee332e926e232171f9`.
+
+
+## Einheitliche quadratische Bibliotheksbuttons
+
+Album- und Playlistbuttons verwenden eine gemeinsame feste Größe von 120 × 120
+Pixeln innerhalb der Ansicht. Zu wenig Höhe verändert diese Größe nicht:
+die beiden Listen scrollen auf der Ingress-Seite und in der Lovelace-Karte
+unabhängig intern. Beide Ansichten verwenden dieselbe Berechnung des verfügbaren
+Bibliotheksplatzes. Die bisherige Sonderregel, die
+Kacheln in der kompakten Ansicht zu schmalen Zeilen verkleinerte, entfällt.
+Albumcover bleiben vollständig innerhalb ihrer quadratischen Buttons sichtbar.
+Die äußere Lovelace-Skalierung bleibt erhalten.
+
+Der neue Chromium-Test prüft die tatsächlich berechneten Größen und Bildregeln
+auf Desktop und Mobilgerät in beiden Ansichten mit je 20 Einträgen pro Liste
+und mehreren verfügbaren Listenhöhen. Er läuft in der GitHub-CI mit einer fest gepinnten Playwright-Version.
+Die ausgelieferte HTML-Seite bindet CSS und JavaScript außerdem an einen
+gemeinsamen Inhaltsfingerabdruck. Nach einem Neubau erhalten geänderte Dateien
+neue URLs, damit alte Ansichtsdateien nicht aus einem Cache übernommen werden.
+Das ersetzt nicht den Neubau eines noch älteren installierten Add-ons.
+
+Sicherung davor:
+[backup/main-2026-10-10-square-albums-11e4ba2](https://github.com/criticallimit/HA-Music/tree/backup/main-2026-10-10-square-albums-11e4ba2),
+Commit `11e4ba26da535010a986074731676ee0a4a8bd5a`.

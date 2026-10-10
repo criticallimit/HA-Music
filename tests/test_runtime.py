@@ -2764,6 +2764,35 @@ class SecurityTests(unittest.TestCase):
             handler.do_POST()
         handler.reply.assert_called_once_with(200, {"ok": True, "volume": 0.45})
 
+    def test_frontend_build_links_change_together_and_query_assets_are_served(self):
+        with tempfile.TemporaryDirectory() as folder:
+            web = Path(folder)
+            (web / "index.html").write_bytes(b'<link href="style.css"><script src="app.js"></script>')
+            (web / "style.css").write_bytes(b'first css')
+            (web / "app.js").write_bytes(b'script')
+            def request(path):
+                handler = object.__new__(app.Handler)
+                handler.path = path
+                handler.ingress_allowed = Mock(return_value=True)
+                handler.send_response = Mock()
+                handler.send_header = Mock()
+                handler.end_headers = Mock()
+                handler.wfile = io.BytesIO()
+                handler.do_GET()
+                handler.send_response.assert_called_once_with(200)
+                return handler.wfile.getvalue()
+            with patch.object(app, "WEB", web):
+                first = request("/index.html")
+                revision = app.hashlib.sha256(b'first cssscript').hexdigest()[:16].encode()
+                self.assertIn(b'style.css?layout=' + revision, first)
+                self.assertIn(b'app.js?layout=' + revision, first)
+                self.assertEqual(request("/style.css?layout=" + revision.decode()), b'first css')
+                (web / "style.css").write_bytes(b'changed css')
+                second = request("/index.html")
+                self.assertNotEqual(first, second)
+                self.assertNotIn(revision, second)
+                self.assertEqual(request("/app.js?layout=changed"), b'script')
+
     def test_ingress_peer(self):
         handler = object.__new__(app.Handler)
         handler.client_address = ("172.30.33.8", 1234)

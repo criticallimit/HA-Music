@@ -2532,6 +2532,12 @@ class Handler(BaseHTTPRequestHandler):
             self.send_error(404)
             return
         content = (WEB / name).read_bytes()
+        if name == "index.html":
+            # Bind styles and script to the same actual build, even if an outer
+            # dashboard cache retains previously used asset URLs.
+            revision = hashlib.sha256((WEB / "style.css").read_bytes() + (WEB / "app.js").read_bytes()).hexdigest()[:16]
+            content = content.replace(b'href="style.css"', ('href="style.css?layout=' + revision + '"').encode())
+            content = content.replace(b'src="app.js"', ('src="app.js?layout=' + revision + '"').encode())
         mime = {"index.html": "text/html", "style.css": "text/css", "app.js": "application/javascript", "1live.svg": "image/svg+xml", "wdr2.svg": "image/svg+xml", "swr3.svg": "image/svg+xml"}[name]
         self.send_response(200)
         self.send_header("Content-Type", mime + "; charset=utf-8")

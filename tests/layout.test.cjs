@@ -4,9 +4,9 @@ const fs = require('fs');
 const vm = require('vm');
 const path = require('path');
 
-function embeddedLayout() {
+function embeddedLayout(embedded = true) {
   const app = fs.readFileSync(path.join(__dirname,'../ha_music/web/app.js'),'utf8');
-  const reporter = app.slice(app.indexOf('// Report actual'),app.indexOf('const $ ='));
+  const reporter = app.slice(app.indexOf('// Fit both libraries'),app.indexOf('const $ ='));
   const styles = () => ({values:{},setProperty(k,v){this.values[k]=v;}});
   const classes = () => ({values:new Set(),add(k){this.values.add(k);},toggle(k,on){if(on)this.values.add(k);else this.values.delete(k);}});
   const rect = (height,top=80,width=600) => ({height,top,width});
@@ -30,6 +30,7 @@ function embeddedLayout() {
   const parent = {postMessage(message){messages.push(message);}};
   const window = {parent,location:{search:'?ha_music_card=1',origin:'http://ha.test'},frameElement:null,
     addEventListener(name,handler){events[name]=handler;}};
+  if (!embedded) { window.parent = window; window.location.search = ""; }
   class ResizeObserver {constructor(callback){this.callback=callback;}observe(node){observations.push({type:'resize',node,callback:this.callback});}}
   class MutationObserver {constructor(callback){this.callback=callback;}observe(node,options){observations.push({type:'mutation',node,options,callback:this.callback});}}
   window.ResizeObserver=ResizeObserver;window.MutationObserver=MutationObserver;
@@ -101,4 +102,24 @@ test('embedded album art fills its frame while radio logos remain uncropped with
  const declarations=selector=>Array.from(css.matchAll(/([^{}]+)\{([^{}]+)\}/g)).filter(match=>match[1].trim()===selector).at(-1)?.[2];
  assert.match(declarations('html.ha-dashboard-fit .now:not(.radio-selected) .art img:not([hidden])'),/object-fit:cover;padding:0/);
  assert.match(declarations('.now.radio-selected .art img:not([hidden])'),/object-fit:contain;padding:0/);
+});
+
+
+test('short libraries scroll without introducing another tile size',()=>{
+ const h=embeddedLayout();h.flush();
+ h.right.getBoundingClientRect=()=>({top:400,width:390,height:410});h.events.resize();h.flush();
+ assert.equal(h.library.style.values['--ha-library-height'],'80px');
+ assert.equal(h.library.style.values['--ha-library-square-size'],undefined);
+ const css=fs.readFileSync(path.join(__dirname,'../ha_music/web/style.css'),'utf8');
+ assert.equal(css.includes('--ha-library-tile-height'),false);
+ assert.match(css,/#apple-playlist-list \.station\.apple-playlist,#apple-album-list \.station\.apple-album\{aspect-ratio:1 \/ 1;height:120px;width:120px/);
+ assert.match(css,/#apple-album-list \.apple-album-cover\{width:100%;height:100%;object-fit:contain/);
+});
+
+
+test('Ingress uses the same library budget without Lovelace-only styling or parent messages',()=>{
+ const h=embeddedLayout(false);h.flush();
+ assert.equal(h.library.style.values['--ha-library-height'],'384px');
+ assert.equal(h.root.classList.values.has('ha-dashboard-fit'),false);
+ assert.equal(h.messages.length,0);
 });

@@ -18,14 +18,15 @@ if (window.parent !== window) {
   window.parent.postMessage({type:"ha-music-theme-request"}, window.location.origin);
 }
 
-// Report actual visible content height to the Lovelace host.
+// Fit both libraries to the available space; report height only to a Lovelace host.
 // ResizeObserver reacts when the radio powers on/off or speaker controls change.
-if (new URLSearchParams(window.location.search).get("ha_music_card") === "1" && window.parent !== window) {
-  document.documentElement.classList.add("ha-dashboard-fit");
+if (typeof requestAnimationFrame === "function") {
+  const embeddedCard = new URLSearchParams(window.location.search).get("ha_music_card") === "1" && window.parent !== window;
+  if (embeddedCard) document.documentElement.classList.add("ha-dashboard-fit");
   let pendingHeightFrame = 0;
   let lastReportedHeight = 0;
   const setAvailableHeight = height => {
-    if (Number.isFinite(height) && height > 0 && height <= 10000)
+    if (embeddedCard && Number.isFinite(height) && height > 0 && height <= 10000)
       document.documentElement.style.setProperty("--ha-card-available-height", height + "px");
   };
   const fitAppleLibrary = () => {
@@ -57,14 +58,12 @@ if (new URLSearchParams(window.location.search).get("ha_music_card") === "1" && 
     const budget = Math.max(72, Math.floor(referenceHeight - controlsHeight));
     library.style.setProperty("--ha-library-height", budget + "px");
     library.classList.toggle("ha-library-compact", budget < 200);
-    for (const grid of library.querySelectorAll(".stations")) {
-      grid.style.setProperty("--ha-library-tile-height", Math.max(32, Math.min(120, grid.clientHeight)) + "px");
-    }
   };
   const reportHeight = () => {
     pendingHeightFrame = 0;
     setAvailableHeight(window.frameElement?.parentElement?.clientHeight);
     fitAppleLibrary();
+    if (!embeddedCard) return;
     const shell = document.querySelector(".shell");
     if (!shell) return;
     const height = Math.ceil(shell.getBoundingClientRect().height);
@@ -89,7 +88,7 @@ if (new URLSearchParams(window.location.search).get("ha_music_card") === "1" && 
   window.addEventListener("load", scheduleHeight);
   window.addEventListener("resize", scheduleHeight);
   window.addEventListener("message", event => {
-    if (event.source !== window.parent || event.origin !== window.location.origin || event.data?.type !== "ha-music-available-height") return;
+    if (!embeddedCard || event.source !== window.parent || event.origin !== window.location.origin || event.data?.type !== "ha-music-available-height") return;
     setAvailableHeight(Number(event.data.height));
     scheduleHeight();
   });

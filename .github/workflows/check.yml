@@ -57,3 +57,11 @@ jobs:
           node --test tests/frontend.test.cjs
           node --test tests/layout.test.cjs
 
+      - name: Install pinned browser test runtime
+        run: |
+          npm install --prefix "$RUNNER_TEMP/ha-music-browser" --no-save --package-lock=false playwright@1.62.1
+          "$RUNNER_TEMP/ha-music-browser/node_modules/.bin/playwright" install --with-deps chromium
+      - name: Check actual mobile and desktop layout in Chromium
+        env:
+          NODE_PATH: ${{ runner.temp }}/ha-music-browser/node_modules
+        run: node tests/browser_layout.cjs
