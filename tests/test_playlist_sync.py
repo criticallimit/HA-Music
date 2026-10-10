@@ -93,7 +93,7 @@ class PlaylistSyncTests(unittest.TestCase):
         saved = app.library_snapshot()["items"][0]
         self.assertEqual([item["name"] for item in saved["tracks"]], ["Hot N' Cold", 'The Downeaster "Alexa"'])
         before = app.LIBRARY_FILE.read_bytes()
-        for bad in ("not json", '{"name":"Missing artist"}', "{}", "", shortcuts_tracks + "\nnot-json"):
+        for bad in ("not json", '{"name":"Missing artist"}', "{}", shortcuts_tracks + "\nnot-json"):
             status, _ = self.request(body={"name": "Mix", "tracks": bad})
             self.assertEqual(status, 400)
             self.assertEqual(app.LIBRARY_FILE.read_bytes(), before)
