@@ -638,7 +638,7 @@ function renderAppleSelection(selection) {
   }
   $("apple-library-note").textContent = items.length && !appleSelection.available && radioReadyForViews && !mediaPreparing
     ? "Apple-Music-Steuergerät unter Add-on → Konfiguration auswählen und unter Alexa-Geräte auf Aktiv setzen."
-    : "Playlists und Alben über das Plus neben der Überschrift verwalten. Dein Apple-Music-Konto muss in Alexa verknüpft sein.";
+    : "Playlists und Alben über Music Assistant importieren oder mit Plus manuell ergänzen. Apple Music muss in Alexa verknüpft sein.";
   queueAlbumCovers();
 }
 async function startAppleFavorite(id) {
