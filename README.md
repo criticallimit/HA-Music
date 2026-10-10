@@ -656,3 +656,15 @@ quadratische Kacheln und internes Scrollen bleiben erhalten.
 Sicherung davor:
 [backup/main-2026-10-10-library-alignment-ef38b48](https://github.com/criticallimit/HA-Music/tree/backup/main-2026-10-10-library-alignment-ef38b48),
 Commit `ef38b48af34f9353d60d23f19f9f4630a624c8e3`.
+
+## Radiologos wieder vertikal zentrieren
+
+Die oberen Bildkanten bleiben nur für Album- und Titelcover ausgerichtet.
+1LIVE, WDR 2 und SWR3 werden vollständig proportional skaliert und vertikal
+zentriert, damit breite Senderlogos nicht am oberen Kartenrand stehen.
+Der Browsertest verwendet jetzt breite Radio-Testbilder und prüft alle drei
+Sender einschließlich Seitenwechsel in Ingress und echter Lovelace-Karte.
+
+Sicherung davor:
+[backup/main-2026-10-10-center-radio-ed82495](https://github.com/criticallimit/HA-Music/tree/backup/main-2026-10-10-center-radio-ed82495),
+Commit `ed82495e18f81c9af470b429e2c106d18685a0bf`.

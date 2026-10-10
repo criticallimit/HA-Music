@@ -23,7 +23,7 @@ nav button.active{background:var(--surface);border-color:var(--accent);box-shado
 /* RADIO: image has the full available rectangle and scales down uniformly.
    Do not constrain it by natural SVG dimensions or by absolute pixel width. */
 .now.radio-selected .art{background:#fff}
-.now.radio-selected .art img:not([hidden]){object-fit:contain;padding:0}
+.now.radio-selected .art img:not([hidden]){object-fit:contain;padding:0;object-position:center}
 /* Music artwork scales uniformly into the available rectangle without cropping. */
 .now:not(.radio-selected) .art{background:#17191d}
 .now:not(.radio-selected) .art img:not([hidden]){object-fit:contain;padding:0}

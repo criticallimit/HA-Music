@@ -8,6 +8,10 @@ const artwork='<svg xmlns="http://www.w3.org/2000/svg" width="300" height="300">
 (async()=>{
  const server=http.createServer((req,res)=>{
   const file=new URL(req.url,'http://localhost').pathname;
+  if(['/wdr2.svg','/1live.svg','/swr3.svg'].includes(file)){
+   res.writeHead(200,{'Content-Type':'image/svg+xml'});
+   res.end('<svg xmlns="http://www.w3.org/2000/svg" width="600" height="180"><rect width="600" height="180" fill="red"/></svg>');return;
+  }
   if(file==='/card-test'){
    res.writeHead(200,{'Content-Type':'text/html'});
    res.end(`<style>body{margin:0}ha-music-card{display:block}</style><script src="/card.js"></script><ha-music-card></ha-music-card><script>const card=document.querySelector('ha-music-card');card.shadowRoot.innerHTML='<ha-card style="display:block;overflow:hidden"><iframe style="border:0" src="/?ha_music_card=1"></iframe></ha-card>';card._iframe=card.shadowRoot.querySelector('iframe');card._applyDimensions();card._iframe.addEventListener('load',()=>{card._lastFitIframe=null;card._applyDimensions()});</script>`);return;
@@ -55,6 +59,12 @@ const artwork='<svg xmlns="http://www.w3.org/2000/svg" width="300" height="300">
     for(const section of result.compact?result.sections.slice(0,1):result.sections){assert.ok(Math.abs(section.heading-result.master)<1,'Library and volume labels share their left edge');}
     for(const id of ['apple-playlist-list','apple-album-list']){await surface.locator('#'+id).evaluate(list=>{list.scrollTop=list.scrollHeight;});assert.ok(await surface.locator('#'+id).evaluate(list=>list.scrollTop>0));}
     console.log('PASS: '+mode+', viewport '+width+', library height '+height+', equal 120px squares, independent scrolling, full artwork');
+   }
+   for(const station of ['wdr2','1live','swr3']){
+    await surface.evaluate(station=>{activeApple=null;selectedStation=station;updateStationLogo(station);show('radio');show('apple');show('radio');},station);
+    await surface.waitForFunction(()=>!document.getElementById('current-cover').hidden);
+    const logo=await surface.locator('#current-cover').evaluate(image=>({fit:getComputedStyle(image).objectFit,position:getComputedStyle(image).objectPosition,padding:getComputedStyle(image).padding,width:image.naturalWidth,height:image.naturalHeight}));
+    assert.equal(logo.fit,'contain');assert.equal(logo.position,'50% 50%');assert.equal(logo.padding,'0px');assert.ok(logo.width>logo.height);
    }
    await surface.evaluate(async()=>{
     activeApple=null;selectedStation='wdr2';updateStationLogo(selectedStation);show('radio');
