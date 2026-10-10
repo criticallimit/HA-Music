@@ -470,3 +470,9 @@ ZIP-SHA256: `5fd7cd47ccbb66a802916d6bd3ac550aedbff7bd7e1ed228986b898e4e8d85fb`.
 Sicherung vor der erneuerten ZIP:
 [backup/main-2026-10-10-single-track-mac-zip-e7f6603](https://github.com/criticallimit/HA-Music/tree/backup/main-2026-10-10-single-track-mac-zip-e7f6603),
 Commit `e7f6603193446b62b71ea328870915acb0a7a03a`.
+
+Auch Masteränderungen speichern den neuen positiven Entstumm-Wert je betroffenem
+Raum. Master-Stumm erhält diesen Wert, statt nach Neustart einen älteren Raumwert
+zum Entstummen zu verwenden. Sicherung vor dieser Ergänzung:
+[backup/main-2026-10-10-master-unmute-memory-dcf0ae0](https://github.com/criticallimit/HA-Music/tree/backup/main-2026-10-10-master-unmute-memory-dcf0ae0),
+Commit `dcf0ae03051caaa1f8fdf75d9526564a529666c7`.

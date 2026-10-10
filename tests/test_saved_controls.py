@@ -57,6 +57,27 @@ class SavedControlsTests(unittest.TestCase):
         self.assertEqual(app.speaker_levels()["media_player.bad"], 1)
         self.assertEqual(json.loads(app.SPEAKER_FILE.read_text())["_version"], 2)
 
+    def test_master_change_and_mute_persist_latest_room_unmute_value(self):
+        app.READY = True
+        app.save_speaker_levels({"media_player.wohnung": .2, "media_player.bad": .13, "media_player.kueche": 0})
+        app.save_remembered("media_player.bad", .13)
+        devices = {"groups": [{"entity_id": "media_player.wohnung", "volume": .5}],
+                   "players": [{"entity_id": "media_player.bad", "volume": .5}, {"entity_id": "media_player.kueche", "volume": .5}]}
+        with patch.object(app, "classify_devices", return_value=devices), patch.object(app, "ha_request", return_value={}) as request:
+            app.perform("volume", {"entity_id": "media_player.wohnung", "volume": .6})
+            app.perform("volume", {"entity_id": "media_player.wohnung", "volume": 0})
+            app.ROOM_TARGETS.clear()
+            app.ROOM_REMEMBERED.clear()
+            self.assertEqual(app.remembered()["media_player.bad"], .6)
+            self.assertEqual(app.displayed_speaker_levels()["media_player.bad"], 0)
+            result = app.perform("room_audio", {"entity_id": "media_player.bad", "on": True})
+            self.assertEqual(result["volume"], .6)
+            self.assertEqual([call.args[1] for call in request.call_args_list], [
+                {"entity_id": "media_player.bad", "volume_level": .6},
+                {"entity_id": "media_player.bad", "volume_level": 0},
+                {"entity_id": "media_player.bad", "volume_level": .6}])
+            self.assertEqual(app.speaker_levels()["media_player.kueche"], 0)
+
     def test_duration_metadata_is_optional_validated_and_survives_xml_import(self):
         xml = plistlib.dumps({"Tracks": {"1": {"Name": "Song", "Artist": "Band", "Total Time": 243500}},
                               "Playlists": [{"Name": "Mix", "Playlist Items": [{"Track ID": 1}]}]}).decode()

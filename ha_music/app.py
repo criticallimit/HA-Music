@@ -2277,6 +2277,9 @@ def perform_control(action, body, generation):
                                      **(changed if level > 0 else room_intent)})
                 for changed_entity in changed:
                     VOLUME_CONFIRMATION.pop(changed_entity, None)
+                    restore = float(level) if level > 0 else room_intent[changed_entity]
+                    if restore > 0:
+                        save_remembered(changed_entity, restore)
                 if level > 0:
                     save_remembered(entity, level)
             if failed:
