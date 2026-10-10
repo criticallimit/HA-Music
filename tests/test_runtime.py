@@ -2767,7 +2767,7 @@ class SecurityTests(unittest.TestCase):
     def test_frontend_build_links_change_together_and_query_assets_are_served(self):
         with tempfile.TemporaryDirectory() as folder:
             web = Path(folder)
-            (web / "index.html").write_bytes(b'<link href="style.css"><script src="app.js"></script>')
+            (web / "index.html").write_bytes(b'<link href="style.css"><script src="app.js"></script><code id="frontend-revision">__HA_MUSIC_FRONTEND_REVISION__</code>')
             (web / "style.css").write_bytes(b'first css')
             (web / "app.js").write_bytes(b'script')
             def request(path):
@@ -2786,6 +2786,8 @@ class SecurityTests(unittest.TestCase):
                 revision = app.hashlib.sha256(b'first cssscript').hexdigest()[:16].encode()
                 self.assertIn(b'style.css?layout=' + revision, first)
                 self.assertIn(b'app.js?layout=' + revision, first)
+                self.assertIn(b'<code id="frontend-revision">' + revision + b'</code>', first)
+                self.assertNotIn(b'__HA_MUSIC_FRONTEND_REVISION__', first)
                 self.assertEqual(request("/style.css?layout=" + revision.decode()), b'first css')
                 (web / "style.css").write_bytes(b'changed css')
                 second = request("/index.html")

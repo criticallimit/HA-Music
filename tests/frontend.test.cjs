@@ -1478,6 +1478,22 @@ test('cached cover fallback preserves Alexa artwork for Amazon and unverified al
  h.run('activeApple=null;selectedStation="charts"');await h.run('updateSong()');assert.equal(h.get('current-cover').src,'https://example.test/current.jpg');
 });
 
+test('Charts rejects delayed broadcast metadata including ingress and absolute station logos',async()=>{
+ const h=harness();h.run('radioReadyForViews=true;selectedStation="charts";activeApple=null');
+ for(const details of [
+  {title:'WDR 2',image:'wdr2.svg'},
+  {title:'WDR 2',image:'/api/hassio_ingress/session/wdr2.svg?cache=1'},
+  {title:'SWR3',image:'https://ha.test/api/hassio_ingress/session/swr3.svg'},
+  {title:'Old radio',image:'https://example.test/station.jpg',content_type:'radio'},
+  {title:'Old channel',image:'https://example.test/station.jpg',content_type:'channel'}
+ ]){
+  h.context.reply=async()=>({details});h.run('api=reply');await h.run('updateSong()');
+  assert.equal(h.get('current-cover').hidden,true);assert.equal(h.get('now-ticker').hidden,true);
+ }
+ h.context.reply=async()=>({details:{title:'Song',artist:'Artist',image:'https://example.test/music.jpg',content_type:'music'}});
+ h.run('api=reply');await h.run('updateSong()');assert.equal(h.get('current-cover').src,'https://example.test/music.jpg');
+});
+
 
 test('browsing Apple and Radio keeps the playing station branding and clears leftover artwork padding',()=>{
  const h=harness();

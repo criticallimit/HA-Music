@@ -409,8 +409,12 @@ async function updateSong() {
       renderGroupTransport();
     }
     let details = info.details;
-    if (activeApple && (Object.values(STATION_LOGOS).some(logo => details?.image === logo || details?.image === "/" + logo) || ["radio", "channel"].includes(details?.content_type))) details = null;
     const isRadio = !activeApple && ["wdr2","1live","swr3"].includes(station);
+    // Alexa can keep the previous broadcast metadata after accepting a music
+    // command. Never turn that stale station logo into a music cover.
+    const imagePath = typeof details?.image === "string" ? details.image.split(/[?#]/)[0] : "";
+    const broadcastLogo = Object.values(STATION_LOGOS).some(logo => imagePath === logo || imagePath.endsWith("/" + logo));
+    if (!isRadio && (broadcastLogo || ["radio", "channel"].includes(details?.content_type))) details = null;
     if (isRadio && info.radio_metadata) applyRadioMetadata(info.radio_metadata);
     $("current-title").textContent = activeApple ? (details?.title || activeApple.name) : STATIONS.find(s => s[0] === station)?.[1] || details?.title || "Kein Sender ausgewählt";
     if (!isRadio) {

@@ -581,3 +581,25 @@ Das ersetzt nicht den Neubau eines noch älteren installierten Add-ons.
 Sicherung davor:
 [backup/main-2026-10-10-square-albums-11e4ba2](https://github.com/criticallimit/HA-Music/tree/backup/main-2026-10-10-square-albums-11e4ba2),
 Commit `11e4ba26da535010a986074731676ee0a4a8bd5a`.
+
+## Quellenwechsel und Prüfung des geladenen Ansichtsstands
+
+Verspätete Sender-Metadaten werden auch beim Wechsel zu Amazon-Musikpresets
+wie Charts verworfen. Bekannte Senderlogos werden einschließlich absoluter
+Ingress-Adressen erkannt. Ein späteres Musikcover kann anschließend normal
+angezeigt werden; vorhandene Albumcover bleiben sofort verfügbar.
+
+Der Browsertest lädt zusätzlich die echte Lovelace-Karte mit ihrem iframe,
+Höhenmeldungen und Skalierung. Auf Mobilgerät und Desktop prüft er beide
+Bibliotheken sowie WDR 2 → Charts und Seitenwechsel. Die Buttons bleiben
+quadratisch und beide Listen intern scrollbar.
+
+Im Einstellungsdialog (Zahnrad) steht jetzt der **Ansichtsstand**, derselbe
+Inhaltsfingerabdruck wie in den ausgelieferten CSS- und JavaScript-Adressen.
+So lassen sich Ingress und Karte direkt vergleichen. Fehlt diese Angabe,
+wird noch eine ältere Ansicht ausgeliefert. Ein Commit auf GitHub allein
+aktualisiert kein bereits installiertes Add-on.
+
+Sicherung davor:
+[backup/main-2026-10-10-source-cover-ca8b6f3](https://github.com/criticallimit/HA-Music/tree/backup/main-2026-10-10-source-cover-ca8b6f3),
+Commit `ca8b6f3971d624caf32622668b94d828f136ca68`.
