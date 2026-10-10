@@ -126,6 +126,25 @@ class PlaylistSyncTests(unittest.TestCase):
         self.assertEqual(self.request(path="/api/ipad-playlists-sync", body=body,
                          headers={"Authorization":"Bearer wrong"})[0], 403)
 
+    def test_ipad_duration_album_and_album_artist(self):
+        cases = [("4:21", 261.0), ("1:02:15", 3735.0), ("261", 261.0), ("261.5", 261.5)]
+        for source, expected in cases:
+            with self.subTest(source=source):
+                status, result = self.request(path="/api/ipad-playlists-sync", body={"playlists": [
+                    {"name":"Mix", "tracks":[{"name":"Track", "artist":"Singer", "album":"Record",
+                                              "album_artist":"Various Artists", "duration":source}]}]})
+                self.assertEqual(status, 200, result)
+                track = app.library_snapshot()["items"][0]["tracks"][0]
+                self.assertEqual(track["duration"], expected)
+                self.assertEqual(track["album"], "Record")
+                self.assertEqual(track["album_artist"], "Various Artists")
+        before = app.LIBRARY_FILE.read_bytes()
+        for invalid in ("4:99", "foo", "0:00", "24:01:00", "", "3:2:1:4"):
+            status, _ = self.request(path="/api/ipad-playlists-sync", body={"playlists": [
+                {"name":"Mix", "tracks":[{"name":"Track", "artist":"Singer", "duration":invalid}]}]})
+            self.assertEqual(status, 400)
+            self.assertEqual(app.LIBRARY_FILE.read_bytes(), before)
+
     def test_real_ipad_nested_repeat_results(self):
         song = json.dumps({"name": "Across the Border", "artist": "Electric Light Orchestra"})
         playlists = [{"name": "Playlist", "tracks": [song]},
