@@ -2,6 +2,7 @@ import Foundation
 import Security
 import AppKit
 import CryptoKit
+import ImageIO
 
 struct SyncFailure: LocalizedError {
     let message: String
@@ -165,29 +166,31 @@ enum SyncCore {
     }
 
     static func thumbnail(_ data: Data) -> Data? {
-        guard data.count <= 8 * 1024 * 1024, let source = NSBitmapImageRep(data: data),
-              source.pixelsWide > 0, source.pixelsHigh > 0,
-              source.pixelsWide <= 8192, source.pixelsHigh <= 8192,
-              let bitmap = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 320, pixelsHigh: 320,
-                bitsPerSample: 8, samplesPerPixel: 3, hasAlpha: false, isPlanar: false,
-                colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0),
-              let context = NSGraphicsContext(bitmapImageRep: bitmap) else { return nil }
-        let image = NSImage(size: NSSize(width: CGFloat(source.pixelsWide), height: CGFloat(source.pixelsHigh)))
-        image.addRepresentation(source)
-        NSGraphicsContext.saveGraphicsState()
-        NSGraphicsContext.current = context
-        context.imageInterpolation = .high
-        NSColor.black.setFill()
-        NSRect(x: 0, y: 0, width: 320, height: 320).fill()
-        let scale = min(320 / CGFloat(source.pixelsWide), 320 / CGFloat(source.pixelsHigh))
-        let width = CGFloat(source.pixelsWide) * scale, height = CGFloat(source.pixelsHigh) * scale
-        image.draw(in: NSRect(x: (320-width)/2, y: (320-height)/2, width: width, height: height),
-                   from: .zero, operation: .sourceOver, fraction: 1)
-        context.flushGraphics()
-        NSGraphicsContext.restoreGraphicsState()
-        guard let result = bitmap.representation(using: .jpeg, properties: [.compressionFactor: 0.75]),
-              result.count <= 128 * 1024 else { return nil }
-        return result
+        guard data.count <= 8 * 1024 * 1024,
+              let source = CGImageSourceCreateWithData(data as CFData, [kCGImageSourceShouldCache: false] as CFDictionary),
+              let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+              let originalWidth = properties[kCGImagePropertyPixelWidth] as? Int,
+              let originalHeight = properties[kCGImagePropertyPixelHeight] as? Int,
+              (1...8192).contains(originalWidth), (1...8192).contains(originalHeight),
+              let image = CGImageSourceCreateThumbnailAtIndex(source, 0, [
+                kCGImageSourceCreateThumbnailFromImageAlways: true,
+                kCGImageSourceCreateThumbnailWithTransform: true,
+                kCGImageSourceThumbnailMaxPixelSize: 320] as CFDictionary),
+              let context = CGContext(data: nil, width: 320, height: 320, bitsPerComponent: 8,
+                bytesPerRow: 320 * 4, space: CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue) else { return nil }
+        context.setFillColor(CGColor(gray: 0, alpha: 1))
+        context.fill(CGRect(x: 0, y: 0, width: 320, height: 320))
+        context.interpolationQuality = .high
+        let scale = min(320 / CGFloat(image.width), 320 / CGFloat(image.height))
+        let width = CGFloat(image.width) * scale, height = CGFloat(image.height) * scale
+        context.draw(image, in: CGRect(x: (320-width)/2, y: (320-height)/2, width: width, height: height))
+        let output = NSMutableData()
+        guard let canvas = context.makeImage(),
+              let destination = CGImageDestinationCreateWithData(output, "public.jpeg" as CFString, 1, nil) else { return nil }
+        CGImageDestinationAddImage(destination, canvas, [kCGImageDestinationLossyCompressionQuality: 0.75] as CFDictionary)
+        guard CGImageDestinationFinalize(destination), output.length <= 128 * 1024 else { return nil }
+        return output as Data
     }
 
     static func coverIdentity(_ data: Data) -> String {

@@ -369,11 +369,8 @@ if CommandLine.arguments.contains("--self-test") {
         let decoded = try JSONDecoder().decode([MusicTrack].self, from: JSONEncoder().encode(tracks))
         assert(decoded[0].album == "Debut" && decoded[0].albumArtist == "Björk")
         assert(object["create"] as! Bool)
-        let bitmap = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 64, pixelsHigh: 32,
-            bitsPerSample: 8, samplesPerPixel: 3, hasAlpha: false, isPlanar: false,
-            colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)!
-        for x in 0..<64 { for y in 0..<32 { bitmap.setColor(.blue, atX: x, y: y) } }
-        let thumbnail = SyncCore.thumbnail(bitmap.representation(using: .png, properties: [:])!)!
+        let fixture = Data(base64Encoded: "iVBORw0KGgoAAAANSUhEUgAAAEAAAAAgCAIAAAAt/+nTAAAATElEQVR4nNXOQREAMAjAsK7+PTMRPLhGQR4MZRIncRIncRIncRIncRIncRIncRIncRIncRIncRIncRIncRIncRIncRIncRIncRIncV4Htj4imAE/t2tu2AAAAABJRU5ErkJggg==")!
+        let thumbnail = SyncCore.thumbnail(fixture)!
         let decodedImage = NSBitmapImageRep(data: thumbnail)!
         assert(decodedImage.pixelsWide == 320 && decodedImage.pixelsHigh == 320)
         assert(decodedImage.colorAt(x: 160, y: 160)!.usingColorSpace(.deviceRGB)!.blueComponent > 0.8)
@@ -384,7 +381,7 @@ if CommandLine.arguments.contains("--self-test") {
         assert(Data(base64Encoded: imagePayload["data"]!) == thumbnail && imagePayload["cover"] == illustrated.cover)
         let illustratedPayload = try JSONSerialization.jsonObject(with: SyncCore.payload(name: "Mix", tracks: [illustrated], create: false)) as! [String: Any]
         let illustratedTrack = (illustratedPayload["tracks"] as! [[String: Any]])[0]
-        assert(illustratedTrack["cover"] as! String == illustrated.cover && illustratedTrack["artworkData"] == nil)
+        assert((illustratedTrack["cover"] as? String) == illustrated.cover && illustratedTrack["artworkData"] == nil)
         let scriptFolder = FileManager.default.temporaryDirectory.appendingPathComponent("ha-music-script-" + UUID().uuidString)
         try FileManager.default.createDirectory(at: scriptFolder, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: scriptFolder) }
